@@ -1,0 +1,21 @@
+{
+  "name": "receptionist",
+  "version": "0.1.0",
+  "description": "LLM clinic receptionist: Twilio turn-based voice loop, Whisper STT, DeepSeek assistant, Picktime booking.",
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "start": "node dist/server.js"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.4.1",
+    "typescript": "^7.0.2"
+  }
+}
