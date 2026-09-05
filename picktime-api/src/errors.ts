@@ -3,6 +3,7 @@ export type ErrorCode =
   | 'validation'
   | 'unknown-service'
   | 'unknown-doctor'
+  | 'unknown-location'
   | 'unknown-hold'
   | 'invented-slot'
   | 'slot-taken'
@@ -34,6 +35,10 @@ export function unknownService(id: string): ApiError {
 
 export function unknownDoctor(id: string): ApiError {
   return new ApiError(404, 'unknown-doctor', `unknown doctor: ${id}`);
+}
+
+export function unknownLocation(id: string): ApiError {
+  return new ApiError(404, 'unknown-location', `unknown location: ${id}`);
 }
 
 export function unknownHold(id: string): ApiError {

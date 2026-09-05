@@ -28,7 +28,6 @@ async function liveClient(): Promise<Client> {
   const driver = new PlaywrightDriver({ pageId: PAGE_ID });
   drivers.push(driver);
   const api = createApp({
-    bearerKey: 'secret',
     checkReadiness: () => driver.checkHealth(),
     logEvent: (e) => console.log(JSON.stringify(e)),
     pageId: PAGE_ID,
@@ -38,7 +37,7 @@ async function liveClient(): Promise<Client> {
   }).listen(0);
   servers.push(api);
   const addr = api.address() as AddressInfo;
-  return createClient({ baseUrl: `http://127.0.0.1:${addr.port}`, bearerKey: 'secret' });
+  return createClient({ baseUrl: `http://127.0.0.1:${addr.port}` });
 }
 
 function nextWeekdayWindow(): { from: string; to: string } {
@@ -53,7 +52,7 @@ describe('live page (env-gated)', () => {
     const meta = await client.meta();
     assert.ok(meta.services.length >= 1);
     assert.ok(meta.doctors.length >= 1);
-    assert.ok(meta.location.id);
+    assert.ok(meta.locations.length >= 1 && typeof meta.locations[0].id === 'string');
     const text = JSON.stringify(meta);
     for (const banned of ['scanToken', 'browserId', 'csrf', 'slotBlocker', 'picktime.com']) {
       assert.equal(text.includes(banned), false);
@@ -69,6 +68,10 @@ describe('live page (env-gated)', () => {
       () => client.slots({ serviceId: meta.services[0].id, doctorId: 'no-such-doctor', from, to }),
       /404/,
     );
+    await assert.rejects(
+      () => client.slots({ serviceId: meta.services[0].id, locationId: 'no-such-location', from, to }),
+      /404/,
+    );
   });
 
   it('holds, heartbeats, and releases with no residue', { skip: !LIVE }, async () => {
@@ -77,13 +80,14 @@ describe('live page (env-gated)', () => {
     const client = await liveClient();
     const meta = await client.meta();
     const doctorId = meta.doctors[0].id;
+    const locationId = meta.locations[0].id;
     const serviceId = meta.services[0].id;
     const { from, to } = nextWeekdayWindow();
-    const found = await client.slots({ serviceId, doctorId, from, to });
+    const found = await client.slots({ serviceId, doctorId, locationId, from, to });
     let roundTrips = 0;
     for (const slot of found.slots.slice(0, 8)) {
       try {
-        const hold = await client.hold({ serviceId, doctorId, slotStart: slot.start });
+        const hold = await client.hold({ serviceId, doctorId, locationId: slot.locationId, slotStart: slot.start });
         await client.releaseHold(hold.holdId);
         await assert.rejects(() => client.releaseHold(hold.holdId), /404/);
         roundTrips += 1;
@@ -98,13 +102,14 @@ describe('live page (env-gated)', () => {
     const client = await liveClient();
     const meta = await client.meta();
     const doctorId = meta.doctors[0].id;
+    const locationId = meta.locations[0].id;
     const serviceId = meta.services[0].id;
     const { from, to } = nextWeekdayWindow();
-    const found = await client.slots({ serviceId, doctorId, from, to });
+    const found = await client.slots({ serviceId, doctorId, locationId, from, to });
     let proven = false;
     for (const slot of found.slots.slice(0, 8)) {
       try {
-        const dry = await client.book({ serviceId, doctorId, slotStart: slot.start, patientName: 'Dry', patientPhone: 'Run', dryRun: true });
+        const dry = await client.book({ serviceId, doctorId, locationId: slot.locationId, slotStart: slot.start, patientName: 'Dry', patientPhone: 'Run', dryRun: true });
         assert.ok('saved' in dry && dry.saved === false);
         proven = true;
         break;

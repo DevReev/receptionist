@@ -31,7 +31,6 @@ describe('live save (explicit opt-in only)', () => {
     const driver = new PlaywrightDriver({ pageId: PAGE_ID });
     drivers.push(driver);
     const api = createApp({
-      bearerKey: 'secret',
       checkReadiness: () => driver.checkHealth(),
       logEvent: (e) => console.log(JSON.stringify(e)),
       pageId: PAGE_ID,
@@ -41,16 +40,18 @@ describe('live save (explicit opt-in only)', () => {
     }).listen(0);
     servers.push(api);
     const addr = api.address() as AddressInfo;
-    const client = createClient({ baseUrl: `http://127.0.0.1:${addr.port}`, bearerKey: 'secret' });
+    const client = createClient({ baseUrl: `http://127.0.0.1:${addr.port}` });
     const meta = await client.meta();
     const from = new Date(Date.now() + 21 * 86_400_000).toISOString().slice(0, 10);
     const to = new Date(Date.now() + 25 * 86_400_000).toISOString().slice(0, 10);
-    const found = await client.slots({ serviceId: meta.services[0].id, from, to });
+    const found = await client.slots({ serviceId: meta.services[0].id, locationId: meta.locations[0].id, from, to });
     assert.ok(found.slots.length > 0);
     const slotStart = found.slots[0].start;
     const key = `live-save-${Date.now()}`;
     const first = await client.book({
       serviceId: meta.services[0].id,
+      doctorId: found.slots[0].doctorId,
+      locationId: found.slots[0].locationId,
       slotStart,
       patientName: 'Tool API Test',
       patientPhone: TEST_PHONE,
@@ -59,6 +60,8 @@ describe('live save (explicit opt-in only)', () => {
     assert.ok('bookingId' in first);
     const replay = await client.book({
       serviceId: meta.services[0].id,
+      doctorId: found.slots[0].doctorId,
+      locationId: found.slots[0].locationId,
       slotStart,
       patientName: 'Tool API Test',
       patientPhone: TEST_PHONE,

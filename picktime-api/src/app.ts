@@ -8,16 +8,15 @@ import { openapiDocument } from './openapi.ts';
 import { dateWindowDays, isDateOnly, isSlotStart, normalizeSlotStart, nowLocalISO } from './time.ts';
 
 export interface AppDeps {
-  bearerKey: string;
   checkReadiness: () => Promise<void>;
   logEvent: (event: Record<string, unknown>) => void;
   pageId?: string;
-  staffId?: string;
   timeZone?: string;
   driver?: PicktimeDriver;
   pool?: Pool;
   holdTtlMs?: number;
   heartbeatIntervalMs?: number;
+  rateLimitPerMinute?: number;
 }
 
 interface HeldEntry {
@@ -34,20 +33,24 @@ interface StoredResponse {
 const MAX_WINDOW_DAYS = 31;
 const HOLD_TTL_MS = 10 * 60 * 1000;
 const HEARTBEAT_MS = 60 * 1000;
-const NATURAL_KEY_MS = 10 * 60 * 1000;
+const MAX_BODY_BYTES = '16kb';
+const DEFAULT_RATE_LIMIT_PER_MINUTE = 60;
+const E164_PHONE = /^\+[1-9]\d{7,14}$/;
 
 export function createApp(deps: AppDeps): Express {
   const app = express();
-  app.use(express.json());
+  app.set('trust proxy', true);
+  app.use(express.json({ limit: MAX_BODY_BYTES }));
   const pageId = deps.pageId ?? 'unknown';
   const timeZone = deps.timeZone ?? 'Asia/Kolkata';
   const driver = deps.driver ?? new MemoryDriver();
   const pool = deps.pool ?? new Pool(4);
   const holdTtlMs = deps.holdTtlMs ?? HOLD_TTL_MS;
   const heartbeatMs = deps.heartbeatIntervalMs ?? HEARTBEAT_MS;
+  const rateLimitPerMinute = Math.max(1, deps.rateLimitPerMinute ?? DEFAULT_RATE_LIMIT_PER_MINUTE);
   const held = new Map<string, HeldEntry>();
   const byKey = new Map<string, { hash: string; response: StoredResponse }>();
-  const byNatural = new Map<string, { response: StoredResponse; storedAt: number }>();
+  const rateBuckets = new Map<string, { count: number; resetAt: number }>();
 
   app.get('/health', async (_req: Request, res: Response) => {
     try {
@@ -66,8 +69,19 @@ export function createApp(deps: AppDeps): Express {
   });
 
   app.use('/v1', (req: Request, res: Response, next: NextFunction) => {
-    if (req.headers.authorization !== `Bearer ${deps.bearerKey}`) {
-      res.status(401).json({ error: 'unauthorized' });
+    const now = Date.now();
+    const key = req.ip || req.socket.remoteAddress || 'unknown';
+    let bucket = rateBuckets.get(key);
+    if (!bucket || bucket.resetAt <= now) {
+      bucket = { count: 0, resetAt: now + 60_000 };
+      rateBuckets.set(key, bucket);
+    }
+    bucket.count += 1;
+    res.setHeader('RateLimit-Limit', String(rateLimitPerMinute));
+    res.setHeader('RateLimit-Remaining', String(Math.max(0, rateLimitPerMinute - bucket.count)));
+    if (bucket.count > rateLimitPerMinute) {
+      res.setHeader('Retry-After', String(Math.max(1, Math.ceil((bucket.resetAt - now) / 1000))));
+      res.status(429).json({ error: 'rate-limit', message: 'too many requests' });
       return;
     }
     next();
@@ -79,7 +93,7 @@ export function createApp(deps: AppDeps): Express {
       res.json({
         timeZone,
         fetchedAt: directory.fetchedAt,
-        location: directory.location,
+        locations: directory.locations,
         services: directory.services,
         doctors: directory.doctors,
       });
@@ -88,9 +102,10 @@ export function createApp(deps: AppDeps): Express {
     }
   });
 
-  app.get('/v1/slots', async (req: Request, res: Response) => {
+  app.get(['/v1/slots', '/v1/get_available_slots'], async (req: Request, res: Response) => {
     const serviceId = singleQuery(req.query.serviceId);
     const doctorParam = singleQuery(req.query.doctorId);
+    const locationParam = singleQuery(req.query.locationId);
     const from = singleQuery(req.query.from);
     const to = singleQuery(req.query.to);
     if (!serviceId) return validation(res, deps.logEvent, pageId, 'slots', 'serviceId is required');
@@ -105,10 +120,13 @@ export function createApp(deps: AppDeps): Express {
       return validation(res, deps.logEvent, pageId, 'slots', 'window capped at 31 days');
     }
     try {
-      const doctorIds = await resolveDoctorIds(driver, pool, deps.staffId, doctorParam);
+      const doctorIds = await resolveDoctorIds(driver, pool, doctorParam);
+      const locationIds = await resolveLocationIds(driver, pool, locationParam);
       const fetched = await pool.run(async () => {
         const perDoctor = await Promise.all(
-          doctorIds.map((doctorId) => driver.listSlots({ serviceId, doctorId, from, to })),
+          doctorIds.flatMap((doctorId) =>
+            locationIds.map((locationId) => driver.listSlots({ serviceId, doctorId, locationId, from, to })),
+          ),
         );
         const merged: SlotEntry[] = [];
         let fetchedAt = '';
@@ -137,15 +155,17 @@ export function createApp(deps: AppDeps): Express {
     const body = (req.body ?? {}) as Record<string, unknown>;
     const serviceId = asString(body.serviceId);
     const doctorParam = asString(body.doctorId);
+    const locationId = asString(body.locationId);
     const slotRaw = asString(body.slotStart);
     if (!serviceId) return validation(res, deps.logEvent, pageId, 'hold', 'serviceId is required');
+    if (!locationId) return validation(res, deps.logEvent, pageId, 'hold', 'locationId is required');
     if (!slotRaw || !isSlotStart(slotRaw)) {
       return validation(res, deps.logEvent, pageId, 'hold', 'slotStart must be YYYY-MM-DDTHH:mm:00');
     }
     const slotStart = normalizeSlotStart(slotRaw);
     try {
-      const doctorId = await resolveSingleDoctor(driver, pool, deps.staffId, doctorParam);
-      const hold = await pool.run(() => driver.holdSlot({ serviceId, doctorId, slotStart }));
+      const doctorId = await resolveSingleDoctor(driver, pool, doctorParam);
+      const hold = await pool.run(() => driver.holdSlot({ serviceId, doctorId, locationId, slotStart }));
       trackHold(hold);
       deps.logEvent({ kind: 'hold', pageId, holdId: hold.holdId, slotStart, doctorId });
       res.status(201).json({ ...hold, timeZone });
@@ -178,8 +198,12 @@ export function createApp(deps: AppDeps): Express {
     res.json(openapiDocument);
   });
 
-  app.post('/v1/bookings', async (req: Request, res: Response) => {
-    const body = (req.body ?? {}) as Record<string, unknown>;
+  app.post(['/v1/bookings', '/v1/book_appointment'], async (req: Request, res: Response) => {
+    if (!isRecord(req.body)) {
+      validation(res, deps.logEvent, pageId, 'booking', 'request body must be a JSON object');
+      return;
+    }
+    const body = req.body;
     if (body.dryRun === true) {
       await handleDryRun(body, res);
       return;
@@ -190,9 +214,14 @@ export function createApp(deps: AppDeps): Express {
   async function handleDryRun(body: Record<string, unknown>, res: Response): Promise<void> {
     const serviceId = asString(body.serviceId);
     const doctorParam = asString(body.doctorId);
+    const locationId = asString(body.locationId);
     const slotRaw = asString(body.slotStart);
     if (!serviceId) {
       validation(res, deps.logEvent, pageId, 'booking', 'serviceId is required');
+      return;
+    }
+    if (!locationId) {
+      validation(res, deps.logEvent, pageId, 'booking', 'locationId is required');
       return;
     }
     if (!slotRaw || !isSlotStart(slotRaw)) {
@@ -201,9 +230,9 @@ export function createApp(deps: AppDeps): Express {
     }
     const slotStart = normalizeSlotStart(slotRaw);
     try {
-      const doctorId = await resolveSingleDoctor(driver, pool, deps.staffId, doctorParam);
+      const doctorId = await resolveSingleDoctor(driver, pool, doctorParam);
       await pool.run(async () => {
-        const hold = await driver.holdSlot({ serviceId, doctorId, slotStart });
+        const hold = await driver.holdSlot({ serviceId, doctorId, locationId, slotStart });
         try {
           return hold;
         } finally {
@@ -211,7 +240,7 @@ export function createApp(deps: AppDeps): Express {
         }
       });
       deps.logEvent({ kind: 'booking', pageId, dryRun: true, slotStart, doctorId, held: true });
-      res.json({ dryRun: true, held: true, saved: false, serviceId, doctorId, slotStart, timeZone });
+      res.json({ dryRun: true, held: true, saved: false, serviceId, doctorId, locationId, slotStart, timeZone });
     } catch (err) {
       sendDriverError(res, deps.logEvent, pageId, 'booking', err, { slotStart });
     }
@@ -224,13 +253,21 @@ export function createApp(deps: AppDeps): Express {
   ): Promise<void> {
     const serviceId = asString(body.serviceId);
     const doctorParam = asString(body.doctorId);
+    const locationParam = asString(body.locationId);
     const slotRaw = asString(body.slotStart);
     const patientName = asString(body.patientName);
     const patientPhone = asString(body.patientPhone);
     const holdId = asString(body.holdId);
     const headerText = Array.isArray(headerKey) ? headerKey[0] : headerKey;
-    const explicitKey =
-      typeof headerText === 'string' && headerText.length > 0 ? headerText : asString(body.idempotencyKey);
+    const explicitKey = typeof headerText === 'string' ? asString(headerText) : undefined;
+    if (!explicitKey) {
+      validation(res, deps.logEvent, pageId, 'booking', 'Idempotency-Key header is required for real bookings');
+      return;
+    }
+    if (explicitKey.length > 200) {
+      validation(res, deps.logEvent, pageId, 'booking', 'Idempotency-Key must be at most 200 characters');
+      return;
+    }
     if (!serviceId && !holdId) {
       validation(res, deps.logEvent, pageId, 'booking', 'serviceId is required');
       return;
@@ -243,8 +280,20 @@ export function createApp(deps: AppDeps): Express {
       validation(res, deps.logEvent, pageId, 'booking', 'patientName is required');
       return;
     }
+    if (patientName.length > 200) {
+      validation(res, deps.logEvent, pageId, 'booking', 'patientName must be at most 200 characters');
+      return;
+    }
     if (!patientPhone) {
       validation(res, deps.logEvent, pageId, 'booking', 'patientPhone is required');
+      return;
+    }
+    if (!E164_PHONE.test(patientPhone)) {
+      validation(res, deps.logEvent, pageId, 'booking', 'patientPhone must be an E.164 phone number');
+      return;
+    }
+    if (!holdId && !locationParam) {
+      validation(res, deps.logEvent, pageId, 'booking', 'locationId is required');
       return;
     }
     try {
@@ -254,34 +303,30 @@ export function createApp(deps: AppDeps): Express {
         return;
       }
       const storedHold = holdId ? held.get(holdId)?.hold : undefined;
-      const doctorId = storedHold?.doctorId ?? (await resolveSingleDoctor(driver, pool, deps.staffId, doctorParam));
+      const doctorId = storedHold?.doctorId ?? (await resolveSingleDoctor(driver, pool, doctorParam));
+      const locationId = storedHold?.locationId ?? locationParam;
       const slotStart = storedHold?.slotStart ?? normalizeSlotStart(slotRaw as string);
       const effectiveService = storedHold?.serviceId ?? serviceId;
       if (!effectiveService) {
         validation(res, deps.logEvent, pageId, 'booking', 'serviceId is required');
         return;
       }
+      if (!locationId) {
+        validation(res, deps.logEvent, pageId, 'booking', 'locationId is required');
+        return;
+      }
       await enforceContactPrefs(body);
       const payloadHash = createHash('sha256')
-        .update(JSON.stringify({ serviceId: effectiveService, doctorId, slotStart, patientName, patientPhone, holdId: holdId ?? null }))
+        .update(JSON.stringify({ serviceId: effectiveService, doctorId, locationId, slotStart, patientName, patientPhone, holdId: holdId ?? null }))
         .digest('hex');
-      if (explicitKey) {
-        const seen = byKey.get(explicitKey);
-        if (seen) {
-          if (seen.hash !== payloadHash) {
-            deps.logEvent({ kind: 'booking', pageId, reason: 'conflict', message: 'idempotency key re-used with different payload' });
-            res.status(409).json({ error: 'conflict', message: 'idempotency key re-used with different payload' });
-            return;
-          }
-          res.status(seen.response.status).json(seen.response.body);
+      const seen = byKey.get(explicitKey);
+      if (seen) {
+        if (seen.hash !== payloadHash) {
+          deps.logEvent({ kind: 'booking', pageId, reason: 'conflict', message: 'idempotency key re-used with different payload' });
+          res.status(409).json({ error: 'conflict', message: 'idempotency key re-used with different payload' });
           return;
         }
-      }
-      const naturalKey = `${patientPhone}|${effectiveService}|${doctorId}|${slotStart}`;
-      const natural = byNatural.get(naturalKey);
-      if (natural && Date.now() - natural.storedAt < NATURAL_KEY_MS) {
-        if (explicitKey) byKey.set(explicitKey, { hash: payloadHash, response: natural.response });
-        res.status(natural.response.status).json(natural.response.body);
+        res.status(seen.response.status).json(seen.response.body);
         return;
       }
       const booking = await pool.run(() => {
@@ -291,6 +336,7 @@ export function createApp(deps: AppDeps): Express {
             holdId,
             serviceId: effectiveService,
             doctorId,
+            locationId,
             slotStart,
             patientName: patientName as string,
             patientPhone: patientPhone as string,
@@ -300,6 +346,7 @@ export function createApp(deps: AppDeps): Express {
         const input: ConfirmInput = {
           serviceId: effectiveService,
           doctorId,
+          locationId,
           slotStart,
           patientName: patientName as string,
           patientPhone: patientPhone as string,
@@ -311,12 +358,12 @@ export function createApp(deps: AppDeps): Express {
         bookingId: booking.bookingId,
         serviceId: booking.serviceId,
         doctorId: booking.doctorId,
+        locationId: booking.locationId,
         slotStart: booking.slotStart,
         timeZone,
       };
       const stored: StoredResponse = { status: 201, body: responseBody };
-      byNatural.set(naturalKey, { response: stored, storedAt: Date.now() });
-      if (explicitKey) byKey.set(explicitKey, { hash: payloadHash, response: stored });
+      byKey.set(explicitKey, { hash: payloadHash, response: stored });
       deps.logEvent({ kind: 'booking', pageId, bookingId: booking.bookingId, slotStart: booking.slotStart, doctorId });
       res.status(201).json(responseBody);
     } catch (err) {
@@ -377,17 +424,38 @@ export function createApp(deps: AppDeps): Express {
     held.delete(holdId);
   }
 
+  app.use((err: unknown, _req: Request, res: Response, next: NextFunction) => {
+    if (isRecord(err)) {
+      const status = typeof err.status === 'number' ? err.status : err.type === 'entity.parse.failed' ? 400 : undefined;
+      if (status !== undefined && (status === 400 || status === 413)) {
+        const error = status === 413 ? 'request-too-large' : 'validation';
+        deps.logEvent({ kind: 'request', pageId, reason: error });
+        res.status(status).json({ error, message: status === 413 ? 'request body too large' : 'invalid JSON body' });
+        return;
+      }
+    }
+    next(err);
+  });
+
   return app;
+}
+
+async function resolveLocationIds(
+  driver: PicktimeDriver,
+  pool: Pool,
+  param: string | undefined,
+): Promise<string[]> {
+  if (param) return [param];
+  const directory = await pool.run(() => driver.getDirectory());
+  return directory.locations.map((l) => l.id);
 }
 
 async function resolveDoctorIds(
   driver: PicktimeDriver,
   pool: Pool,
-  configured: string | undefined,
   param: string | undefined,
 ): Promise<string[]> {
   if (param) return [param];
-  if (configured) return [configured];
   const directory = await pool.run(() => driver.getDirectory());
   return directory.doctors.map((d) => d.id);
 }
@@ -395,15 +463,18 @@ async function resolveDoctorIds(
 async function resolveSingleDoctor(
   driver: PicktimeDriver,
   pool: Pool,
-  configured: string | undefined,
   param: string | undefined,
 ): Promise<string> {
   if (param) return param;
-  if (configured) return configured;
   const directory = await pool.run(() => driver.getDirectory());
   if (directory.doctors.length === 1) return directory.doctors[0].id;
   throw pickADoctor(directory.doctors);
 }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 
 function singleQuery(value: unknown): string | undefined {
   if (typeof value === 'string' && value.length > 0) return value;

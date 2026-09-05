@@ -15,18 +15,18 @@ export function main(): void {
         pageId: config.pageId,
         navigationTimeoutMs: config.navigationTimeoutMs,
         actionTimeoutMs: config.actionTimeoutMs,
+        headed: false,
       })
     : new MemoryDriver();
   const pool = new Pool(config.poolSize);
   const app = createApp({
-    bearerKey: config.bearerKey,
     checkReadiness: () => driver.checkHealth(),
     logEvent: (event) => console.log(formatLogLine(event)),
     pageId: config.pageId,
-    staffId: config.staffId,
     timeZone: config.timeZone,
     driver,
     pool,
+    rateLimitPerMinute: config.rateLimitPerMinute,
   });
   app.listen(config.port, () => {
     console.log(formatLogLine({ kind: 'ready', pageId: config.pageId, port: config.port }));

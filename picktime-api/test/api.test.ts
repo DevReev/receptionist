@@ -10,21 +10,19 @@ afterEach(() => {
 });
 
 async function start(
-  overrides: { bearerKey?: string; checkReadiness?: () => Promise<void>; logEvent?: (e: Record<string, unknown>) => void } = {},
+  overrides: { checkReadiness?: () => Promise<void>; logEvent?: (e: Record<string, unknown>) => void; rateLimitPerMinute?: number } = {},
 ) {
   const server = createApp({
-    bearerKey: overrides.bearerKey ?? 'secret',
     checkReadiness: overrides.checkReadiness ?? (async () => {}),
     logEvent: overrides.logEvent ?? (() => {}),
+    rateLimitPerMinute: overrides.rateLimitPerMinute,
   }).listen(0);
   servers.push(server);
   const addr = server.address() as AddressInfo;
   const url = `http://127.0.0.1:${addr.port}`;
   return {
-    get: async (path: string, key?: string) => {
-      const headers: Record<string, string> = {};
-      if (key !== undefined) headers.authorization = `Bearer ${key}`;
-      const res = await fetch(`${url}${path}`, { headers });
+    get: async (path: string) => {
+      const res = await fetch(`${url}${path}`);
       const text = await res.text();
       let body: Record<string, unknown>;
       try {
@@ -32,7 +30,7 @@ async function start(
       } catch {
         body = { raw: text };
       }
-      return { status: res.status, body };
+      return { status: res.status, body, headers: res.headers };
     },
   };
 }
@@ -61,11 +59,17 @@ describe('health', () => {
   });
 });
 
-describe('auth', () => {
-  it('rejects versioned calls without a bearer key and routes them with one', async () => {
+describe('public API', () => {
+  it('routes versioned calls without credentials', async () => {
     const api = await start();
-    assert.equal((await api.get('/v1/nope')).status, 401);
-    assert.equal((await api.get('/v1/nope', 'wrong')).status, 401);
-    assert.equal((await api.get('/v1/nope', 'secret')).status, 404);
+    assert.equal((await api.get('/v1/nope')).status, 404);
+  });
+
+  it('rate-limits public versioned calls and provides retry guidance', async () => {
+    const api = await start({ rateLimitPerMinute: 1 });
+    assert.equal((await api.get('/v1/nope')).status, 404);
+    const limited = await api.get('/v1/nope');
+    assert.equal(limited.status, 429);
+    assert.ok(limited.headers.get('retry-after'));
   });
 });

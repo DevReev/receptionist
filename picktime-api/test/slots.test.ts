@@ -13,7 +13,6 @@ afterEach(() => {
 
 async function start(
   options: {
-    staffId?: string;
     driver?: MemoryDriver;
     pool?: Pool;
     timeZone?: string;
@@ -21,11 +20,9 @@ async function start(
 ) {
   const driver = options.driver ?? new MemoryDriver();
   const api = createApp({
-    bearerKey: 'secret',
     checkReadiness: async () => {},
     logEvent: () => {},
     pageId: 'page-1',
-    staffId: options.staffId ?? 'doc-veer',
     timeZone: options.timeZone ?? 'Asia/Kolkata',
     driver,
     pool: options.pool ?? new Pool(4),
@@ -38,7 +35,7 @@ async function start(
     fetch: async (path: string, init?: RequestInit) => {
       const res = await fetch(`${base}${path}`, {
         ...init,
-        headers: { authorization: 'Bearer secret', ...(init?.headers ?? {}) },
+        headers: { ...(init?.headers ?? {}) },
       });
       const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
       return { status: res.status, body, headers: res.headers };
@@ -53,16 +50,17 @@ function futureWindow(daysFromNow = 30): { from: string; to: string } {
 }
 
 describe('directory and slot listing', () => {
-  it('returns services, doctors, and location with stable IDs and no page internals', async () => {
+  it('returns services, doctors, and locations with stable IDs and no page internals', async () => {
     const api = await start();
     const { status, body } = await api.fetch('/v1/meta');
     assert.equal(status, 200);
     assert.equal(body.timeZone, 'Asia/Kolkata');
     const services = body.services as Array<Record<string, unknown>>;
     const doctors = body.doctors as Array<Record<string, unknown>>;
+    const locations = body.locations as Array<Record<string, unknown>>;
     assert.ok(services.length >= 1 && typeof services[0].id === 'string');
     assert.ok(doctors.length >= 1 && typeof doctors[0].id === 'string');
-    assert.ok((body.location as Record<string, unknown>).id);
+    assert.ok(locations.length > 1 && locations.every((l) => typeof l.id === 'string'));
     const text = JSON.stringify(body);
     assert.match(text, /svc-sample|doc-veer/);
     for (const banned of ['scanToken', 'browserId', 'csrf', 'slotBlocker', 'YYYYMMDDHHMM', 'picktime.com']) {
@@ -73,46 +71,31 @@ describe('directory and slot listing', () => {
   it('lists slots as ISO local with timezone, omitting past times', async () => {
     const api = await start();
     const { from, to } = futureWindow();
-    const serviceId = ((await api.fetch('/v1/meta')).body.services as Array<{ id: string }>)[0].id;
+    const meta = (await api.fetch('/v1/meta')).body;
+    const serviceId = (meta.services as Array<{ id: string }>)[0].id;
+    const doctorIds = new Set((meta.doctors as Array<{ id: string }>).map((d) => d.id));
+    const locationIds = new Set((meta.locations as Array<{ id: string }>).map((l) => l.id));
     const { status, body } = await api.fetch(
-      `/v1/slots?serviceId=${serviceId}&from=${from}&to=${to}`,
+      `/v1/get_available_slots?serviceId=${serviceId}&from=${from}&to=${to}`, 
     );
     assert.equal(status, 200);
     assert.equal(body.timeZone, 'Asia/Kolkata');
-    const slots = body.slots as Array<{ start: string; doctorId: string }>;
+    const slots = body.slots as Array<{ start: string; doctorId: string; locationId: string }>;
     assert.ok(slots.length > 0);
     assert.match(slots[0].start, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00$/);
-    assert.equal(slots[0].doctorId, 'doc-veer');
+    assert.ok(slots.every((s) => doctorIds.has(s.doctorId)));
+    assert.ok(slots.every((s) => locationIds.has(s.locationId)));
   });
 
-  it('resolves an absent doctor to the configured single doctor', async () => {
-    const api = await start({ staffId: 'doc-veer2' });
-    const { from, to } = futureWindow();
-    const { body } = await api.fetch(`/v1/slots?serviceId=svc-sample&from=${from}&to=${to}`);
-    const slots = body.slots as Array<{ doctorId: string }>;
-    assert.ok(slots.length > 0);
-    assert.ok(slots.every((s) => s.doctorId === 'doc-veer2'));
-  });
 
-  it('keeps per-doctor grouping when no doctor is configured', async () => {
-    const api = await start({ staffId: undefined });
-    const app2 = createApp({
-      bearerKey: 'secret',
-      checkReadiness: async () => {},
-      logEvent: () => {},
-      pageId: 'page-1',
-      timeZone: 'Asia/Kolkata',
-      driver: api.driver,
-      pool: new Pool(4),
-    }).listen(0);
-    servers.push(app2);
-    const addr = app2.address() as AddressInfo;
-    const res = await fetch(`http://127.0.0.1:${addr.port}/v1/slots?serviceId=svc-sample&from=2099-09-07&to=2099-09-11`, {
-      headers: { authorization: 'Bearer secret' },
-    });
-    const body = (await res.json()) as { slots: Array<{ doctorId: string }> };
-    const seen = new Set(body.slots.map((s) => s.doctorId));
-    assert.ok(seen.size > 1, `expected grouped doctors, saw ${[...seen]}`);
+  it('keeps per-doctor per-location grouping when neither is passed', async () => {
+    const api = await start();
+    const { body } = await api.fetch('/v1/slots?serviceId=svc-sample&from=2099-09-07&to=2099-09-11');
+    const slots = body.slots as Array<{ doctorId: string; locationId: string }>;
+    const seenDoctors = new Set(slots.map((s) => s.doctorId));
+    const seenLocations = new Set(slots.map((s) => s.locationId));
+    assert.ok(seenDoctors.size > 1, `expected grouped doctors, saw ${[...seenDoctors]}`);
+    assert.ok(seenLocations.size > 1, `expected grouped locations, saw ${[...seenLocations]}`);
   });
 
   it('returns an explicit none-available reason instead of an ambiguous empty reply', async () => {
@@ -152,7 +135,7 @@ describe('directory and slot listing', () => {
     );
   });
 
-  it('rejects unknown service and doctor IDs', async () => {
+  it('rejects unknown service, doctor, and location IDs', async () => {
     const api = await start();
     const { status: s1, body: b1 } = await api.fetch(
       '/v1/slots?serviceId=nope&from=2099-09-07&to=2099-09-11',
@@ -164,5 +147,10 @@ describe('directory and slot listing', () => {
     );
     assert.equal(s2, 404);
     assert.equal(b2.error, 'unknown-doctor');
+    const { status: s3, body: b3 } = await api.fetch(
+      '/v1/slots?serviceId=svc-sample&locationId=nope&from=2099-09-07&to=2099-09-11',
+    );
+    assert.equal(s3, 404);
+    assert.equal(b3.error, 'unknown-location');
   });
 });

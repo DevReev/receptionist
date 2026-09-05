@@ -9,13 +9,15 @@ import type {
   PicktimeDriver,
   SlotEntry,
 } from './driver.ts';
-import { inventedSlot, pageDown, saveFailed, slotTaken, unknownDoctor, unknownService, validation } from './errors.ts';
+import { inventedSlot, pageDown, saveFailed, slotTaken, unknownDoctor, unknownLocation, unknownService, validation } from './errors.ts';
 import { eachDateOnly, isoToSlotInt, normalizeSlotStart, slotIntToISO } from './time.ts';
 
 export interface PlaywrightDriverOptions {
   pageId: string;
   navigationTimeoutMs?: number;
   actionTimeoutMs?: number;
+  /** Headed Chromium for watched runs. Booking is XHR, not clicks: the window shows page loads, not the save itself. */
+  headed?: boolean;
 }
 
 interface Bootstrap {
@@ -23,11 +25,11 @@ interface Bootstrap {
   browserId: string;
   csrf: string;
 }
-
 interface ParsedDirectory {
-  services: Array<{ id: string; name: string; durationMin: number }>;
+  services: Array<{ id: string; name: string; durationMin: number; cost: number }>;
   doctors: Array<{ id: string; name: string }>;
-  location: { id: string; name: string };
+  locations: Array<{ id: string; name: string }>;
+  accountId: string;
   requiredContactFields: string[];
   slotGranularity: number;
   timeZone: string;
@@ -42,11 +44,13 @@ export class PlaywrightDriver implements PicktimeDriver {
   #pageId: string;
   #navigationTimeoutMs: number;
   #actionTimeoutMs: number;
+  #headed: boolean;
 
   constructor(options: PlaywrightDriverOptions) {
     this.#pageId = options.pageId;
     this.#navigationTimeoutMs = options.navigationTimeoutMs ?? 10_000;
     this.#actionTimeoutMs = options.actionTimeoutMs ?? 5_000;
+    this.#headed = options.headed ?? false;
   }
 
   async checkHealth(): Promise<void> {
@@ -75,9 +79,9 @@ export class PlaywrightDriver implements PicktimeDriver {
     return this.withAuthed(async (request, bootstrap) => {
       const parsed = await this.loadParsedDirectory(request, bootstrap);
       return {
-        services: parsed.services.map((s) => ({ id: s.id, name: s.name, durationMin: s.durationMin })),
+        services: parsed.services.map((s) => ({ id: s.id, name: s.name, durationMin: s.durationMin, cost: s.cost })),
         doctors: parsed.doctors.map((d) => ({ id: d.id, name: d.name })),
-        location: { ...parsed.location },
+        locations: parsed.locations.map((l) => ({ id: l.id, name: l.name })),
         requiredContactFields: [...parsed.requiredContactFields],
         fetchedAt: new Date().toISOString(),
       };
@@ -87,6 +91,7 @@ export class PlaywrightDriver implements PicktimeDriver {
   async listSlots(args: {
     serviceId: string;
     doctorId: string;
+    locationId: string;
     from: string;
     to: string;
   }): Promise<{ slots: SlotEntry[]; fetchedAt: string }> {
@@ -96,55 +101,73 @@ export class PlaywrightDriver implements PicktimeDriver {
       if (!service) throw unknownService(args.serviceId);
       const doctor = parsed.doctors.find((d) => d.id === args.doctorId);
       if (!doctor) throw unknownDoctor(args.doctorId);
+      if (!parsed.locations.some((l) => l.id === args.locationId)) throw unknownLocation(args.locationId);
       // The page answers one day per query (weekend starts fall back to earliest),
       // so fan out per day and keep only slots inside the requested window.
       const slots: SlotEntry[] = [];
       for (const day of eachDateOnly(args.from, args.to)) {
-        slots.push(...(await this.fetchDay(request, bootstrap, parsed, args.serviceId, args.doctorId, day)));
+        slots.push(...(await this.fetchDay(request, bootstrap, parsed, args.serviceId, args.doctorId, args.locationId, day)));
       }
       return { slots, fetchedAt: new Date().toISOString() };
     });
   }
 
-  async holdSlot(args: { serviceId: string; doctorId: string; slotStart: string }): Promise<HoldRecord> {
+  async holdSlot(args: { serviceId: string; doctorId: string; locationId: string; slotStart: string }): Promise<HoldRecord> {
     const start = normalizeSlotStart(args.slotStart);
     return this.withAuthed(async (request, bootstrap) => {
       const parsed = await this.loadParsedDirectory(request, bootstrap);
-      const service = parsed.services.find((s) => s.id === args.serviceId);
-      if (!service) throw unknownService(args.serviceId);
-      if (!parsed.doctors.some((d) => d.id === args.doctorId)) throw unknownDoctor(args.doctorId);
-      const day = start.slice(0, 10);
-      const availability = await this.listSlotsVia(request, bootstrap, parsed, args.serviceId, args.doctorId, day, day);
-      if (!availability.some((s) => s.start === start)) throw inventedSlot(start);
-      const slotInt = isoToSlotInt(start);
-      const endInt = addMinutesToSlotInt(slotInt, service.durationMin);
-      let payload: Record<string, unknown>;
-      try {
-        payload = await this.apiPost(request, bootstrap, '/endpoint/1.0.0/ia/holdSlot', {
-          accountKey: this.#pageId,
-          type: 'service',
-          staffKey: args.doctorId,
-          serviceKey: args.serviceId,
-          startDateAndTimeGMT: slotInt,
-          endDateAndTimeGMT: endInt,
-          timezone: parsed.timeZone,
-          anyStaff: false,
-          locationId: parsed.location.id,
-        });
-      } catch (err) {
-        throw mapHoldError(err, start);
-      }
-      const data = (payload.data ?? {}) as Record<string, unknown>;
-      const blockerKey = typeof data.blockerKey === 'string' ? data.blockerKey : undefined;
-      if (!blockerKey) throw mapHoldError(new Error('hold rejected without blocker'), start);
-      return {
-        holdId: blockerKey,
+      return this.holdVia(request, bootstrap, parsed, {
         serviceId: args.serviceId,
         doctorId: args.doctorId,
+        locationId: args.locationId,
         slotStart: start,
-        expiresAt: expiresToISO(data.expiresAt, parsed.timeZone),
-      };
+      });
     });
+  }
+
+  /** Hold and its follow-ups must share one session: the page ties blockers to the bootstrap. */
+  private async holdVia(
+    request: APIRequestContext,
+    bootstrap: Bootstrap,
+    parsed: ParsedDirectory,
+    args: { serviceId: string; doctorId: string; locationId: string; slotStart: string },
+  ): Promise<HoldRecord> {
+    const service = parsed.services.find((s) => s.id === args.serviceId);
+    if (!service) throw unknownService(args.serviceId);
+    if (!parsed.doctors.some((d) => d.id === args.doctorId)) throw unknownDoctor(args.doctorId);
+    if (!parsed.locations.some((l) => l.id === args.locationId)) throw unknownLocation(args.locationId);
+    const day = args.slotStart.slice(0, 10);
+    const availability = await this.listSlotsVia(request, bootstrap, parsed, args.serviceId, args.doctorId, args.locationId, day, day);
+    if (!availability.some((s) => s.start === args.slotStart)) throw inventedSlot(args.slotStart);
+    const slotInt = isoToSlotInt(args.slotStart);
+    const endInt = addMinutesToSlotInt(slotInt, service.durationMin);
+    let payload: Record<string, unknown>;
+    try {
+      payload = await this.apiPost(request, bootstrap, '/endpoint/1.0.0/ia/holdSlot', {
+        accountKey: this.#pageId,
+        type: 'service',
+        staffKey: args.doctorId,
+        serviceKey: args.serviceId,
+        startDateAndTimeGMT: slotInt,
+        endDateAndTimeGMT: endInt,
+        timezone: parsed.timeZone,
+        anyStaff: false,
+        locationId: args.locationId,
+      });
+    } catch (err) {
+      throw mapHoldError(err, args.slotStart);
+    }
+    const data = (payload.data ?? {}) as Record<string, unknown>;
+    const blockerKey = typeof data.blockerKey === 'string' ? data.blockerKey : undefined;
+    if (!blockerKey) throw mapHoldError(new Error('hold rejected without blocker'), args.slotStart);
+    return {
+      holdId: blockerKey,
+      serviceId: args.serviceId,
+      doctorId: args.doctorId,
+      locationId: args.locationId,
+      slotStart: args.slotStart,
+      expiresAt: expiresToISO(data.expiresAt, parsed.timeZone),
+    };
   }
 
   async heartbeat(holdId: string): Promise<void> {
@@ -155,8 +178,12 @@ export class PlaywrightDriver implements PicktimeDriver {
 
   async releaseHold(holdId: string): Promise<void> {
     await this.withAuthed(async (request, bootstrap) => {
-      await this.apiPost(request, bootstrap, '/endpoint/1.0.0/ia/releaseSlot', { blockerKey: holdId });
+      await this.releaseVia(request, bootstrap, holdId);
     });
+  }
+
+  private async releaseVia(request: APIRequestContext, bootstrap: Bootstrap, holdId: string): Promise<void> {
+    await this.apiPost(request, bootstrap, '/endpoint/1.0.0/ia/releaseSlot', { blockerKey: holdId });
   }
 
   async confirmBooking(args: ConfirmHeldInput | ({ holdId?: never } & ConfirmInput)): Promise<BookingRecord> {
@@ -168,6 +195,7 @@ export class PlaywrightDriver implements PicktimeDriver {
           blockerKey: held.holdId,
           serviceId: held.serviceId,
           doctorId: held.doctorId,
+          locationId: held.locationId,
           slotStart: normalizeSlotStart(held.slotStart),
           patientName: held.patientName,
           patientPhone: held.patientPhone,
@@ -177,21 +205,30 @@ export class PlaywrightDriver implements PicktimeDriver {
     }
     const direct = args as ConfirmInput;
     const slotStart = normalizeSlotStart(direct.slotStart);
-    const hold = await this.holdSlot({ serviceId: direct.serviceId, doctorId: direct.doctorId, slotStart });
-    try {
-      return await this.confirmBooking({
-        holdId: hold.holdId,
+    return this.withAuthed(async (request, bootstrap) => {
+      const parsed = await this.loadParsedDirectory(request, bootstrap);
+      const hold = await this.holdVia(request, bootstrap, parsed, {
         serviceId: direct.serviceId,
         doctorId: direct.doctorId,
+        locationId: direct.locationId,
         slotStart,
-        patientName: direct.patientName,
-        patientPhone: direct.patientPhone,
-        extraContact: direct.extraContact,
       });
-    } catch (err) {
-      await this.releaseHold(hold.holdId).catch(() => {});
-      throw err;
-    }
+      try {
+        return await this.saveVia(request, bootstrap, parsed, {
+          blockerKey: hold.holdId,
+          serviceId: direct.serviceId,
+          doctorId: direct.doctorId,
+          locationId: direct.locationId,
+          slotStart,
+          patientName: direct.patientName,
+          patientPhone: direct.patientPhone,
+          extraContact: direct.extraContact,
+        });
+      } catch (err) {
+        await this.releaseVia(request, bootstrap, hold.holdId).catch(() => {});
+        throw err;
+      }
+    });
   }
 
   private async saveVia(
@@ -202,6 +239,7 @@ export class PlaywrightDriver implements PicktimeDriver {
       blockerKey: string;
       serviceId: string;
       doctorId: string;
+      locationId: string;
       slotStart: string;
       patientName: string;
       patientPhone: string;
@@ -214,21 +252,24 @@ export class PlaywrightDriver implements PicktimeDriver {
     let payload: Record<string, unknown>;
     try {
       payload = await this.apiPost(request, bootstrap, '/endpoint/1.0.0/ia/save/event', {
-        accountKey: this.#pageId,
-        serviceKey: args.serviceId,
-        staffKey: args.doctorId,
-        locationId: parsed.location.id,
-        dateTime: isoToSlotInt(args.slotStart),
+        account_id: parsed.accountId || this.#pageId,
+        type: 'appointment',
+        services: [args.serviceId],
+        team: [args.doctorId],
+        location: args.locationId,
+        start_date_time: isoToSlotInt(args.slotStart),
         duration: service.durationMin,
+        cost: service.cost,
         timezone: parsed.timeZone,
         fname: args.patientName,
-        lname: extra.lastName ?? '',
-        email: extra.email ?? '',
+        lname: extra.lastName ?? null,
+        email: extra.email ?? null,
         mobile_number: args.patientPhone,
-        address: extra.address ?? '',
-        comments: extra.comments ?? '',
+        address: extra.address ?? null,
+        notes: extra.comments ?? null,
         slotBlockerKey: args.blockerKey,
         pay_later: true,
+        send_sms: true,
       });
     } catch (err) {
       throw mapSaveError(err, args.slotStart);
@@ -242,7 +283,7 @@ export class PlaywrightDriver implements PicktimeDriver {
           : typeof data.eventId === 'string'
             ? data.eventId
             : args.blockerKey;
-    return { bookingId, serviceId: args.serviceId, doctorId: args.doctorId, slotStart: args.slotStart };
+    return { bookingId, serviceId: args.serviceId, doctorId: args.doctorId, locationId: args.locationId, slotStart: args.slotStart };
   }
 
   private async listSlotsVia(
@@ -251,6 +292,7 @@ export class PlaywrightDriver implements PicktimeDriver {
     parsed: ParsedDirectory,
     serviceId: string,
     doctorId: string,
+    locationId: string,
     from: string,
     to: string,
   ): Promise<SlotEntry[]> {
@@ -258,7 +300,7 @@ export class PlaywrightDriver implements PicktimeDriver {
     if (!service) throw unknownService(serviceId);
     const slots: SlotEntry[] = [];
     for (const day of eachDateOnly(from, to)) {
-      slots.push(...(await this.fetchDay(request, bootstrap, parsed, serviceId, doctorId, day)));
+      slots.push(...(await this.fetchDay(request, bootstrap, parsed, serviceId, doctorId, locationId, day)));
     }
     return slots;
   }
@@ -269,6 +311,7 @@ export class PlaywrightDriver implements PicktimeDriver {
     parsed: ParsedDirectory,
     serviceId: string,
     doctorId: string,
+    locationId: string,
     day: string,
   ): Promise<SlotEntry[]> {
     const service = parsed.services.find((s) => s.id === serviceId);
@@ -278,7 +321,7 @@ export class PlaywrightDriver implements PicktimeDriver {
       dateAndTime: `${compact}0000`,
       endDate: `${compact}0000`,
       schedulerId: doctorId,
-      locationId: parsed.location.id,
+      locationId,
       duration: String(service.durationMin),
       slot: String(parsed.slotGranularity),
       offBooking: 'false',
@@ -293,7 +336,7 @@ export class PlaywrightDriver implements PicktimeDriver {
     const slots: SlotEntry[] = [];
     for (const n of ints) {
       const start = slotIntToISO(String(n));
-      if (start.slice(0, 10) === day) slots.push({ serviceId, doctorId, start });
+      if (start.slice(0, 10) === day) slots.push({ serviceId, doctorId, locationId, start });
     }
     return slots;
   }
@@ -340,7 +383,7 @@ export class PlaywrightDriver implements PicktimeDriver {
   private async ensureBrowser(): Promise<Browser> {
     if (!this.#browser) {
       this.#browser = await chromium.launch({
-        headless: true,
+        headless: !this.#headed,
         args: ['--no-sandbox', '--disable-setuid-sandbox'],
       });
     }
@@ -430,6 +473,7 @@ function parseDirectory(load: Record<string, unknown>, flow: Record<string, unkn
       id: String(s.id ?? ''),
       name: String(s.name ?? ''),
       durationMin: typeof s.duration === 'number' ? s.duration : 30,
+      cost: typeof s.cost === 'number' ? s.cost : 0,
     }))
     .filter((s) => s.id && s.name);
   const doctors = rawTeam
@@ -439,13 +483,17 @@ function parseDirectory(load: Record<string, unknown>, flow: Record<string, unkn
       name: `${String(t.fname ?? '')} ${String(t.lname ?? '')}`.trim() || String(t.fname ?? t.id ?? ''),
     }))
     .filter((d) => d.id);
-  const firstLocation = rawLocations[0] ?? {};
-  const locationName = [firstLocation.name, firstLocation.address, firstLocation.city]
-    .map((part) => (typeof part === 'string' ? part.trim() : ''))
-    .filter((part) => part.length > 0)
-    .join(', ');
-  if (services.length === 0 || doctors.length === 0 || !firstLocation.id) {
-    throw pageDown('page directory missing services, team, or location');
+  const locations = rawLocations
+    .map((loc) => {
+      const name = [loc.name, loc.address, loc.city]
+        .map((part) => (typeof part === 'string' ? part.trim() : ''))
+        .filter((part) => part.length > 0)
+        .join(', ');
+      return { id: String(loc.id ?? ''), name: name || 'clinic' };
+    })
+    .filter((l) => l.id);
+  if (services.length === 0 || doctors.length === 0 || locations.length === 0) {
+    throw pageDown('page directory missing services, team, or locations');
   }
   const required = Array.isArray(prefs.contact_form_req_fields)
     ? (prefs.contact_form_req_fields as unknown[]).map((f) => String(f))
@@ -453,7 +501,8 @@ function parseDirectory(load: Record<string, unknown>, flow: Record<string, unkn
   return {
     services,
     doctors,
-    location: { id: String(firstLocation.id), name: locationName || 'clinic' },
+    locations,
+    accountId: String((data.account as Record<string, unknown> | undefined)?.id ?? ''),
     requiredContactFields: required,
     slotGranularity: typeof prefs.booking_slot === 'number' ? prefs.booking_slot : 15,
     timeZone: typeof data.accountTimezoneID === 'string' ? data.accountTimezoneID : 'Asia/Kolkata',

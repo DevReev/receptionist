@@ -4,6 +4,7 @@ export interface ServiceEntry {
   id: string;
   name: string;
   durationMin: number;
+  cost: number;
 }
 
 export interface DoctorEntry {
@@ -19,7 +20,7 @@ export interface LocationEntry {
 export interface Directory {
   services: ServiceEntry[];
   doctors: DoctorEntry[];
-  location: LocationEntry;
+  locations: LocationEntry[];
   /** Live contact prefs re-read per call; e.g. ["firstName"], maybe + phone/email. */
   requiredContactFields: string[];
   fetchedAt: string;
@@ -28,6 +29,7 @@ export interface Directory {
 export interface SlotEntry {
   serviceId: string;
   doctorId: string;
+  locationId: string;
   /** ISO local `YYYY-MM-DDTHH:mm:00`; timezone rides top-level, never per-slot math. */
   start: string;
 }
@@ -36,6 +38,7 @@ export interface HoldRecord {
   holdId: string;
   serviceId: string;
   doctorId: string;
+  locationId: string;
   slotStart: string;
   expiresAt: string;
 }
@@ -44,12 +47,14 @@ export interface BookingRecord {
   bookingId: string;
   serviceId: string;
   doctorId: string;
+  locationId: string;
   slotStart: string;
 }
 
 export interface ConfirmInput {
   serviceId: string;
   doctorId: string;
+  locationId: string;
   slotStart: string;
   patientName: string;
   patientPhone: string;
@@ -60,6 +65,7 @@ export interface ConfirmHeldInput {
   holdId: string;
   serviceId: string;
   doctorId: string;
+  locationId: string;
   slotStart: string;
   patientName: string;
   patientPhone: string;
@@ -72,10 +78,11 @@ export interface PicktimeDriver {
   listSlots(args: {
     serviceId: string;
     doctorId: string;
+    locationId: string;
     from: string;
     to: string;
   }): Promise<{ slots: SlotEntry[]; fetchedAt: string }>;
-  holdSlot(args: { serviceId: string; doctorId: string; slotStart: string }): Promise<HoldRecord>;
+  holdSlot(args: { serviceId: string; doctorId: string; locationId: string; slotStart: string }): Promise<HoldRecord>;
   heartbeat(holdId: string): Promise<void>;
   releaseHold(holdId: string): Promise<void>;
   confirmBooking(args: ConfirmHeldInput | ({ holdId?: never } & ConfirmInput)): Promise<BookingRecord>;

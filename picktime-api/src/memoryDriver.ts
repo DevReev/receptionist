@@ -8,16 +8,19 @@ import type {
   PicktimeDriver,
   SlotEntry,
 } from './driver.ts';
-import { inventedSlot, pageDown, slotTaken, unknownDoctor, unknownService } from './errors.ts';
+import { inventedSlot, pageDown, slotTaken, unknownDoctor, unknownLocation, unknownService } from './errors.ts';
 import { eachDateOnly, isDateOnly, normalizeSlotStart } from './time.ts';
 
-const SERVICE = { id: 'svc-sample', name: 'Sample Service', durationMin: 30 };
+const SERVICE = { id: 'svc-sample', name: 'Sample Service', durationMin: 30, cost: 0 };
 const DOCTORS = [
   { id: 'doc-veer', name: 'Veer Maruthesh' },
   { id: 'doc-veer2', name: 'veer2' },
   { id: 'doc-veeer', name: 'veeer' },
 ];
-const LOCATION = { id: 'loc-bobby-home', name: 'bobby home, nallurhalli, Bangalore' };
+const LOCATIONS = [
+  { id: 'loc-bobby-home', name: 'bobby home, nallurhalli, Bangalore' },
+  { id: 'loc-downtown', name: 'downtown clinic, MG Road, Bangalore' },
+];
 
 const HOLD_TTL_MS = 10 * 60 * 1000;
 
@@ -28,7 +31,7 @@ function isWeekday(dateOnly: string): boolean {
 }
 
 /** Deterministic weekday 09:00-16:30 IST slots every 15 min. No page ints leak out. */
-function generateSlots(serviceId: string, doctorId: string, from: string, to: string): SlotEntry[] {
+function generateSlots(serviceId: string, doctorId: string, locationId: string, from: string, to: string): SlotEntry[] {
   const slots: SlotEntry[] = [];
   for (const date of eachDateOnly(from, to)) {
     if (!isWeekday(date)) continue;
@@ -36,7 +39,7 @@ function generateSlots(serviceId: string, doctorId: string, from: string, to: st
       for (const min of [0, 15, 30, 45]) {
         if (h === 16 && min > 30) continue;
         const start = `${date}T${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}:00`;
-        slots.push({ serviceId, doctorId, start });
+        slots.push({ serviceId, doctorId, locationId, start });
       }
     }
   }
@@ -64,8 +67,8 @@ export class MemoryDriver implements PicktimeDriver {
     this.down = down;
   }
 
-  private key(serviceId: string, doctorId: string, slotStart: string): string {
-    return `${serviceId}|${doctorId}|${normalizeSlotStart(slotStart)}`;
+  private key(serviceId: string, doctorId: string, locationId: string, slotStart: string): string {
+    return `${serviceId}|${doctorId}|${locationId}|${normalizeSlotStart(slotStart)}`;
   }
 
   async checkHealth(): Promise<void> {
@@ -77,7 +80,7 @@ export class MemoryDriver implements PicktimeDriver {
     return {
       services: [{ ...SERVICE }],
       doctors: DOCTORS.map((d) => ({ ...d })),
-      location: { ...LOCATION },
+      locations: LOCATIONS.map((l) => ({ ...l })),
       requiredContactFields: ['firstName'],
       fetchedAt: new Date().toISOString(),
     };
@@ -86,17 +89,19 @@ export class MemoryDriver implements PicktimeDriver {
   async listSlots(args: {
     serviceId: string;
     doctorId: string;
+    locationId: string;
     from: string;
     to: string;
   }): Promise<{ slots: SlotEntry[]; fetchedAt: string }> {
     if (this.down) throw pageDown('slots unreachable');
     if (args.serviceId !== SERVICE.id) throw unknownService(args.serviceId);
     if (!DOCTORS.some((d) => d.id === args.doctorId)) throw unknownDoctor(args.doctorId);
+    if (!LOCATIONS.some((l) => l.id === args.locationId)) throw unknownLocation(args.locationId);
     if (!isDateOnly(args.from) || !isDateOnly(args.to)) {
       throw pageDown('unreachable: invalid date window passed driver check');
     }
-    const slots = generateSlots(args.serviceId, args.doctorId, args.from, args.to).filter(
-      (s) => !this.booked.has(this.key(s.serviceId, s.doctorId, s.start)),
+    const slots = generateSlots(args.serviceId, args.doctorId, args.locationId, args.from, args.to).filter(
+      (s) => !this.booked.has(this.key(s.serviceId, s.doctorId, s.locationId, s.start)),
     );
     return { slots, fetchedAt: new Date().toISOString() };
   }
@@ -104,23 +109,26 @@ export class MemoryDriver implements PicktimeDriver {
   async holdSlot(args: {
     serviceId: string;
     doctorId: string;
+    locationId: string;
     slotStart: string;
   }): Promise<HoldRecord> {
     if (this.down) throw pageDown('hold unreachable');
     if (args.serviceId !== SERVICE.id) throw unknownService(args.serviceId);
     if (!DOCTORS.some((d) => d.id === args.doctorId)) throw unknownDoctor(args.doctorId);
+    if (!LOCATIONS.some((l) => l.id === args.locationId)) throw unknownLocation(args.locationId);
     const start = normalizeSlotStart(args.slotStart);
-    const availability = generateSlots(args.serviceId, args.doctorId, start.slice(0, 10), start.slice(0, 10));
+    const availability = generateSlots(args.serviceId, args.doctorId, args.locationId, start.slice(0, 10), start.slice(0, 10));
     if (!availability.some((s) => s.start === start)) throw inventedSlot(start);
-    const k = this.key(args.serviceId, args.doctorId, start);
+    const k = this.key(args.serviceId, args.doctorId, args.locationId, start);
     if (this.booked.has(k)) throw slotTaken(start);
     for (const h of this.holds.values()) {
-      if (this.key(h.serviceId, h.doctorId, h.slotStart) === k) throw slotTaken(start);
+      if (this.key(h.serviceId, h.doctorId, h.locationId, h.slotStart) === k) throw slotTaken(start);
     }
     const hold: HoldRecord = {
       holdId: randomUUID(),
       serviceId: args.serviceId,
       doctorId: args.doctorId,
+      locationId: args.locationId,
       slotStart: start,
       expiresAt: new Date(Date.now() + this.holdTtlMs).toISOString(),
     };
@@ -148,7 +156,7 @@ export class MemoryDriver implements PicktimeDriver {
     if ('holdId' in args && args.holdId !== undefined) {
       const hold = this.holds.get(args.holdId);
       if (!hold) throw inventedSlot(args.holdId);
-      const k = this.key(hold.serviceId, hold.doctorId, hold.slotStart);
+      const k = this.key(hold.serviceId, hold.doctorId, hold.locationId, hold.slotStart);
       if (this.booked.has(k)) throw slotTaken(hold.slotStart);
       this.booked.add(k);
       this.holds.delete(args.holdId);
@@ -156,6 +164,7 @@ export class MemoryDriver implements PicktimeDriver {
         bookingId: randomUUID(),
         serviceId: hold.serviceId,
         doctorId: hold.doctorId,
+        locationId: hold.locationId,
         slotStart: hold.slotStart,
       };
     }
@@ -163,6 +172,7 @@ export class MemoryDriver implements PicktimeDriver {
     const hold = await this.holdSlot({
       serviceId: input.serviceId,
       doctorId: input.doctorId,
+      locationId: input.locationId,
       slotStart: input.slotStart,
     });
     try {
@@ -170,6 +180,7 @@ export class MemoryDriver implements PicktimeDriver {
         holdId: hold.holdId,
         serviceId: hold.serviceId,
         doctorId: hold.doctorId,
+        locationId: hold.locationId,
         slotStart: hold.slotStart,
         patientName: input.patientName,
         patientPhone: input.patientPhone,
@@ -182,10 +193,10 @@ export class MemoryDriver implements PicktimeDriver {
   }
 
   /** Test hook: is this slot currently held? */
-  hasHoldFor(serviceId: string, doctorId: string, slotStart: string): boolean {
-    const k = this.key(serviceId, doctorId, slotStart);
+  hasHoldFor(serviceId: string, doctorId: string, locationId: string, slotStart: string): boolean {
+    const k = this.key(serviceId, doctorId, locationId, slotStart);
     for (const h of this.holds.values()) {
-      if (this.key(h.serviceId, h.doctorId, h.slotStart) === k) return true;
+      if (this.key(h.serviceId, h.doctorId, h.locationId, h.slotStart) === k) return true;
     }
     return false;
   }
