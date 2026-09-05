@@ -43,23 +43,22 @@ export interface RecordingFetcher {
 }
 export type FailureReason = 'save-failed' | 'low-confidence' | 'unknown-question' | 'phone-fallback';
 
-export interface FailureEvent {
+export interface CallIdentity {
   callSid: string;
   turn: number;
-  reason: FailureReason;
   excerpt: string;
+}
+
+export interface FailureEvent extends CallIdentity {
+  reason: FailureReason;
   detail?: string;
 }
 
-export interface TurnEvent {
-  callSid: string;
-  turn: number;
-  excerpt: string;
+export interface TurnEvent extends CallIdentity {
   reply: string;
   endCall: boolean;
   miss: boolean;
 }
-
 export interface ProposedSlot {
   service: string;
   date: string;
@@ -178,15 +177,19 @@ export function createApp(deps: AppDeps): Express {
     state.turn += 1;
     const guide = await loadClinicGuide(deps.guidePath);
 
+    const emitTurn = (excerpt: string, reply: string, endCall: boolean, miss: boolean): void => {
+      deps.logTurn?.({ callSid, turn: state.turn, excerpt, reply, endCall, miss });
+    };
+
     const miss = (excerpt: string, detail?: string): void => {
       state.misses += 1;
       if (state.misses <= 1) {
-        deps.logTurn?.({ callSid, turn: state.turn, excerpt, reply: REPROMPT_LINE, endCall: false, miss: true });
+        emitTurn(excerpt, REPROMPT_LINE, false, true);
         sendTwiml(res, twiml(say(REPROMPT_LINE, voiceOpts), listenAgain()));
         return;
       }
       deps.logFailure({ callSid, turn: state.turn, reason: 'low-confidence', excerpt, detail });
-      deps.logTurn?.({ callSid, turn: state.turn, excerpt, reply: goodbyeFor(guide), endCall: true, miss: true });
+      emitTurn(excerpt, goodbyeFor(guide), true, true);
       sendTwiml(res, twiml(say(goodbyeFor(guide), voiceOpts), hangup()));
     };
     const recordingUrl = req.body?.RecordingUrl ? String(req.body.RecordingUrl) : '';
@@ -236,12 +239,12 @@ export function createApp(deps: AppDeps): Express {
         excerpt: tx.text,
         detail: errorDetail('assistant-error', err),
       });
-      deps.logTurn?.({ callSid, turn: state.turn, excerpt: tx.text, reply: FAILURE_LINE, endCall: true, miss: false });
+      emitTurn(tx.text, FAILURE_LINE, true, false);
       sendTwiml(res, twiml(say(FAILURE_LINE, voiceOpts), hangup()));
       return;
     }
     calls.pushHistory(callSid, { role: 'receptionist', text: reply.text });
-    deps.logTurn?.({ callSid, turn: state.turn, excerpt: tx.text, reply: reply.text, endCall: reply.endCall, miss: false });
+    emitTurn(tx.text, reply.text, reply.endCall, false);
     if (reply.endCall) {
       sendTwiml(res, twiml(say(reply.text, voiceOpts), hangup()));
       return;

@@ -22,8 +22,7 @@ export function main(): void {
     sayLanguage: config.sayLanguage,
     recordTimeout: config.recordTimeout,
     recordMaxLength: config.recordMaxLength,
-    twilioAuthToken: config.twilioAuthToken,
-    transcriber: new WhisperTranscriber({ apiKey: config.sttApiKey, baseUrl: config.whisperBaseUrl, model: config.whisperModel }),
+    transcriber: new WhisperTranscriber({ stt: config.stt }),
     assistant: new OpenRouterAssistant({ apiKey: config.llmApiKey, model: config.openrouterModel }),
     recordingFetcher: new TwilioRecordingFetcher({
       accountSid: config.twilioAccountSid,

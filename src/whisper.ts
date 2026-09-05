@@ -7,16 +7,18 @@ interface VerboseSegment {
   no_speech_prob?: unknown;
 }
 
+export interface SttConfig {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+}
+
 export class WhisperTranscriber implements Transcriber {
-  private readonly apiKey: string;
-  private readonly baseUrl: string;
-  private readonly model: string;
+  private readonly stt: SttConfig;
   private readonly fetchFn: typeof fetch;
 
-  constructor(opts: { apiKey: string; baseUrl?: string; model?: string; fetchFn?: typeof fetch }) {
-    this.apiKey = opts.apiKey;
-    this.baseUrl = opts.baseUrl ?? 'https://api.openai.com/v1';
-    this.model = opts.model ?? 'whisper-1';
+  constructor(opts: { stt: SttConfig; fetchFn?: typeof fetch }) {
+    this.stt = opts.stt;
     this.fetchFn = opts.fetchFn ?? fetch;
   }
 
@@ -24,12 +26,12 @@ export class WhisperTranscriber implements Transcriber {
     const bytes = new Uint8Array(audio);
     const form = new FormData();
     form.append('file', new Blob([bytes.buffer as ArrayBuffer], { type: contentType || 'audio/mpeg' }), 'turn.mp3');
-    form.append('model', this.model);
+    form.append('model', this.stt.model);
     form.append('language', 'en');
     form.append('response_format', 'verbose_json');
-    const res = await this.fetchFn(`${this.baseUrl}/audio/transcriptions`, {
+    const res = await this.fetchFn(`${this.stt.baseUrl}/audio/transcriptions`, {
       method: 'POST',
-      headers: { Authorization: `Bearer ${this.apiKey}` },
+      headers: { Authorization: `Bearer ${this.stt.apiKey}` },
       body: form,
     });
     if (!res.ok) throw new Error(`whisper-http-${res.status}`);

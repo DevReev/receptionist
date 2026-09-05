@@ -28,7 +28,7 @@ function assistantCtx(overrides: Partial<AssistantContext> = {}): AssistantConte
 describe('WhisperTranscriber', () => {
   it('returns the transcript text', async () => {
     const t = new WhisperTranscriber({
-      apiKey: 'k',
+      stt: { apiKey: 'k', baseUrl: 'http://stub-whisper/v1', model: 'stub-model' },
       fetchFn: (async () =>
         jsonResponse({ text: 'hello clinic', segments: [{ no_speech_prob: 0.05 }] })) as typeof fetch,
     });
@@ -39,7 +39,7 @@ describe('WhisperTranscriber', () => {
 
   it('flags hallucination-prone audio as no-speech', async () => {
     const t = new WhisperTranscriber({
-      apiKey: 'k',
+      stt: { apiKey: 'k', baseUrl: 'http://stub-whisper/v1', model: 'stub-model' },
       fetchFn: (async () =>
         jsonResponse({ text: 'background music', segments: [{ no_speech_prob: 0.95 }] })) as typeof fetch,
     });
@@ -49,7 +49,7 @@ describe('WhisperTranscriber', () => {
 
   it('throws on provider errors', async () => {
     const t = new WhisperTranscriber({
-      apiKey: 'k',
+      stt: { apiKey: 'k', baseUrl: 'http://stub-whisper/v1', model: 'stub-model' },
       fetchFn: (async () => jsonResponse({ error: 'boom' }, 500)) as typeof fetch,
     });
     await assert.rejects(() => t.transcribe(Buffer.from('audio'), 'audio/mpeg'));
@@ -252,9 +252,7 @@ describe('WhisperTranscriber configuration', () => {
       return jsonResponse({ text: 'hi', segments: [] });
     }) as unknown as typeof fetch;
     const t = new WhisperTranscriber({
-      apiKey: 'k',
-      baseUrl: 'http://stub-whisper/v1',
-      model: 'stub-model',
+      stt: { apiKey: 'k', baseUrl: 'http://stub-whisper/v1', model: 'stub-model' },
       fetchFn,
     });
     await t.transcribe(Buffer.from('audio'), 'audio/mpeg');

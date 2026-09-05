@@ -1,5 +1,11 @@
-export const OPENAI_WHISPER_BASE_URL = 'https://api.openai.com/v1';
-export const GROQ_WHISPER_BASE_URL = 'https://api.groq.com/openai/v1';
+import type { SttConfig } from './whisper.ts';
+
+const STT_PROVIDER_DEFAULTS = {
+  openai: { baseUrl: 'https://api.openai.com/v1', model: 'whisper-1' },
+  groq: { baseUrl: 'https://api.groq.com/openai/v1', model: 'whisper-large-v3-turbo' },
+} as const;
+
+type SttProvider = keyof typeof STT_PROVIDER_DEFAULTS;
 
 export interface Config {
   port: number;
@@ -10,10 +16,8 @@ export interface Config {
   recordMaxLength: number;
   twilioAccountSid: string;
   twilioAuthToken: string;
-  sttApiKey: string;
+  stt: SttConfig;
   llmApiKey: string;
-  whisperBaseUrl: string;
-  whisperModel: string;
   openrouterModel: string;
 }
 
@@ -45,10 +49,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   // same OpenAI-compatible transcription shape for whisper-large models.
   const sttApiKey = env.OPENAI_API_KEY ?? env.GROQ_API_KEY ?? '';
   if (!sttApiKey) missing.push('OPENAI_API_KEY or GROQ_API_KEY');
-  const llmApiKey = env.OPENROUTER_API_KEY ?? env.OPEN_ROUTER ?? '';
-  if (!llmApiKey) missing.push('OPENROUTER_API_KEY or OPEN_ROUTER');
+  const llmApiKey = required(env, 'OPENROUTER_API_KEY', missing);
   if (missing.length > 0) throw new Error(`missing required env: ${missing.join(', ')}`);
-  const viaGroq = env.OPENAI_API_KEY === undefined && env.GROQ_API_KEY !== undefined;
+  // Groq defaults apply only when the Groq key is the sole STT key; an
+  // explicit OPENAI_API_KEY (or WHISPER_* overrides below) always wins.
+  const useGroqDefaults: boolean = env.OPENAI_API_KEY === undefined && env.GROQ_API_KEY !== undefined;
+  const provider: SttProvider = useGroqDefaults ? 'groq' : 'openai';
+  const defaults = STT_PROVIDER_DEFAULTS[provider];
   return {
     port: int(env, 'PORT', 3000),
     guidePath: optional(env, 'CLINIC_GUIDE_PATH', './clinic.md'),
@@ -58,10 +65,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     recordMaxLength: int(env, 'RECORD_MAX_LENGTH', 30),
     twilioAccountSid,
     twilioAuthToken,
-    sttApiKey,
+    stt: {
+      apiKey: sttApiKey,
+      baseUrl: optional(env, 'WHISPER_BASE_URL', defaults.baseUrl),
+      model: optional(env, 'WHISPER_MODEL', defaults.model),
+    },
     llmApiKey,
-    whisperBaseUrl: optional(env, 'WHISPER_BASE_URL', viaGroq ? GROQ_WHISPER_BASE_URL : OPENAI_WHISPER_BASE_URL),
-    whisperModel: optional(env, 'WHISPER_MODEL', viaGroq ? 'whisper-large-v3-turbo' : 'whisper-1'),
     openrouterModel: optional(env, 'OPENROUTER_MODEL', 'deepseek/deepseek-v4-flash-0731'),
   };
 }
