@@ -1,7 +1,5 @@
 import type { Transcriber, Transcription } from './app.ts';
 
-const ENDPOINT = 'https://api.openai.com/v1/audio/transcriptions';
-
 /** Average segment no_speech_prob above this counts as non-speech (music, noise, silence). */
 const NO_SPEECH_THRESHOLD = 0.6;
 
@@ -11,21 +9,25 @@ interface VerboseSegment {
 
 export class WhisperTranscriber implements Transcriber {
   private readonly apiKey: string;
+  private readonly baseUrl: string;
+  private readonly model: string;
   private readonly fetchFn: typeof fetch;
 
-  constructor(opts: { apiKey: string; fetchFn?: typeof fetch }) {
+  constructor(opts: { apiKey: string; baseUrl?: string; model?: string; fetchFn?: typeof fetch }) {
     this.apiKey = opts.apiKey;
+    this.baseUrl = opts.baseUrl ?? 'https://api.openai.com/v1';
+    this.model = opts.model ?? 'whisper-1';
     this.fetchFn = opts.fetchFn ?? fetch;
   }
 
   async transcribe(audio: Buffer, contentType: string): Promise<Transcription> {
-    const form = new FormData();
     const bytes = new Uint8Array(audio);
+    const form = new FormData();
     form.append('file', new Blob([bytes.buffer as ArrayBuffer], { type: contentType || 'audio/mpeg' }), 'turn.mp3');
-    form.append('model', 'whisper-1');
+    form.append('model', this.model);
     form.append('language', 'en');
     form.append('response_format', 'verbose_json');
-    const res = await this.fetchFn(ENDPOINT, {
+    const res = await this.fetchFn(`${this.baseUrl}/audio/transcriptions`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${this.apiKey}` },
       body: form,

@@ -1,6 +1,6 @@
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createApp, type FailureEvent } from './app.ts';
+import { createApp, type FailureEvent, type TurnEvent } from './app.ts';
 import { createInterimGuardrail } from './booking.ts';
 import { loadConfig } from './config.ts';
 import { formatFailureLine } from './log.ts';
@@ -13,6 +13,9 @@ export function main(): void {
   const logFailure = (event: FailureEvent): void => {
     console.log(formatFailureLine(event));
   };
+  const logTurn = (event: TurnEvent): void => {
+    console.log(JSON.stringify({ ts: new Date().toISOString(), kind: 'turn', ...event }));
+  };
   const app = createApp({
     guidePath: config.guidePath,
     sayVoice: config.sayVoice,
@@ -20,13 +23,14 @@ export function main(): void {
     recordTimeout: config.recordTimeout,
     recordMaxLength: config.recordMaxLength,
     twilioAuthToken: config.twilioAuthToken,
-    transcriber: new WhisperTranscriber({ apiKey: config.openaiApiKey }),
-    assistant: new OpenRouterAssistant({ apiKey: config.openrouterApiKey, model: config.openrouterModel }),
+    transcriber: new WhisperTranscriber({ apiKey: config.sttApiKey, baseUrl: config.whisperBaseUrl, model: config.whisperModel }),
+    assistant: new OpenRouterAssistant({ apiKey: config.llmApiKey, model: config.openrouterModel }),
     recordingFetcher: new TwilioRecordingFetcher({
       accountSid: config.twilioAccountSid,
       authToken: config.twilioAuthToken,
     }),
     logFailure,
+    logTurn,
     onProposeBooking: createInterimGuardrail(logFailure),
   });
   app.listen(config.port, () => {

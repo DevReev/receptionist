@@ -241,3 +241,24 @@ describe('TwilioRecordingFetcher', () => {
     await assert.rejects(() => f.fetch('https://api.twilio.com/x'));
   });
 });
+
+describe('WhisperTranscriber configuration', () => {
+  it('posts to the configured endpoint with the configured model', async () => {
+    let url = '';
+    let model = '';
+    const fetchFn = (async (u: string, init: { body: FormData }) => {
+      url = String(u);
+      model = String(init.body.get('model'));
+      return jsonResponse({ text: 'hi', segments: [] });
+    }) as unknown as typeof fetch;
+    const t = new WhisperTranscriber({
+      apiKey: 'k',
+      baseUrl: 'http://stub-whisper/v1',
+      model: 'stub-model',
+      fetchFn,
+    });
+    await t.transcribe(Buffer.from('audio'), 'audio/mpeg');
+    assert.equal(url, 'http://stub-whisper/v1/audio/transcriptions');
+    assert.equal(model, 'stub-model');
+  });
+});

@@ -7,7 +7,22 @@ import type { FailureEvent } from '../src/app.ts';
 
 describe('config', () => {
   it('fails fast listing every missing credential', () => {
-    assert.throws(() => loadConfig({}), /OPENAI_API_KEY.*OPENROUTER_API_KEY|OPENROUTER_API_KEY.*OPENAI_API_KEY/);
+    assert.throws(() => loadConfig({}), /GROQ_API_KEY.*OPEN_ROUTER|OPEN_ROUTER.*GROQ_API_KEY/);
+  });
+
+  it('prefers explicit whisper overrides over inferred provider defaults', () => {
+    const cfg = loadConfig({
+      GROQ_API_KEY: 'g',
+      OPEN_ROUTER: 'o',
+      TWILIO_ACCOUNT_SID: 'ACx',
+      TWILIO_AUTH_TOKEN: 't',
+      WHISPER_BASE_URL: 'http://stub-whisper/v1',
+      WHISPER_MODEL: 'stub-model',
+    });
+    assert.equal(cfg.whisperBaseUrl, 'http://stub-whisper/v1');
+    assert.equal(cfg.whisperModel, 'stub-model');
+    assert.equal(cfg.sttApiKey, 'g');
+    assert.equal(cfg.llmApiKey, 'o');
   });
 });
 

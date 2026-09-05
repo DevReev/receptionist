@@ -4,7 +4,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { createApp, type AppDeps, type FailureEvent } from '../src/app.ts';
+import { createApp, type AppDeps, type FailureEvent, type TurnEvent } from '../src/app.ts';
 
 const GUIDE_V1 = `# Clinic Guide — Maple Clinic
 
@@ -16,8 +16,9 @@ const GUIDE_V1 = `# Clinic Guide — Maple Clinic
 let dir: string;
 let guidePath: string;
 
-function stubDeps(overrides: Partial<AppDeps> = {}): { deps: AppDeps; failures: FailureEvent[] } {
+function stubDeps(overrides: Partial<AppDeps> = {}): { deps: AppDeps; failures: FailureEvent[]; turns: TurnEvent[] } {
   const failures: FailureEvent[] = [];
+  const turns: TurnEvent[] = [];
   const deps: AppDeps = {
     guidePath,
     sayVoice: 'alice',
@@ -32,25 +33,28 @@ function stubDeps(overrides: Partial<AppDeps> = {}): { deps: AppDeps; failures: 
       fetch: async () => ({ audio: Buffer.from('fake-audio'), contentType: 'audio/mpeg' }),
     },
     logFailure: (e) => failures.push(e),
+    logTurn: (e) => turns.push(e),
     onProposeBooking: async () => ({ ok: false as const, reason: 'booking-not-wired' }),
     ...overrides,
   };
-  return { deps, failures };
+  return { deps, failures, turns };
 }
 
 interface TestServer {
   failures: FailureEvent[];
+  turns: TurnEvent[];
   close: () => void;
   post: (path: string, params: Record<string, string>) => Promise<{ status: number; text: string }>;
 }
 
 function startTestServer(overrides: Partial<AppDeps> = {}): TestServer {
-  const { deps, failures } = stubDeps(overrides);
+  const { deps, failures, turns } = stubDeps(overrides);
   const server = createApp(deps).listen(0);
   const addr = server.address() as AddressInfo;
   const url = `http://127.0.0.1:${addr.port}`;
   return {
     failures,
+    turns,
     close: () => server.close(),
     post: async (path, params) => {
       const res = await fetch(`${url}${path}`, {
@@ -216,6 +220,35 @@ describe('clinic guide edits', () => {
       assert.match(second.text, /Oak Clinic/);
     } finally {
       writeFileSync(guidePath, GUIDE_V1);
+    }
+  });
+});
+
+describe('turn log', () => {
+  it('records excerpt and spoken reply for answered turns', async () => {
+    const srv = startTestServer();
+    try {
+      await srv.post('/voice/incoming', { CallSid: 'CA888', From: '+911234567890' });
+      await srv.post('/voice/turn', { CallSid: 'CA888', RecordingUrl: 'https://api.twilio.com/RE8' });
+      assert.equal(srv.turns.length, 1);
+      assert.equal(srv.turns[0].callSid, 'CA888');
+      assert.equal(srv.turns[0].excerpt, 'what are your hours');
+      assert.equal(srv.turns[0].reply, 'We are open Monday to Friday.');
+      assert.equal(srv.turns[0].miss, false);
+    } finally {
+      srv.close();
+    }
+  });
+
+  it('marks reprompts as misses', async () => {
+    const srv = startTestServer();
+    try {
+      await srv.post('/voice/turn', { CallSid: 'CA889', From: '+911234567890' });
+      assert.equal(srv.turns.length, 1);
+      assert.equal(srv.turns[0].miss, true);
+      assert.equal(srv.turns[0].endCall, false);
+    } finally {
+      srv.close();
     }
   });
 });
