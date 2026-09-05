@@ -5,7 +5,7 @@
 
 ## Hours
 
-- Mon–Sat 09:00–17:00 IST. Sunday: {closed / hours}.
+- Mon–Fri 09:00–17:00 IST. Weekends: {closed / hours}.
 - After-hours behavior: {take a message / book anyway}.
 
 ## Address
