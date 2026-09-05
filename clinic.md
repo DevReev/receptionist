@@ -1,11 +1,11 @@
-# Clinic Guide — {CLINIC NAME — fill in}
+# Clinic Guide — Bobby's Clinic
 
 > Source of truth for the receptionist. Hand-edited; hot-reloaded by file-watch.
 > Facts below marked (Picktime) were read live from the Picktime page — verify each.
 
 ## Hours
 
-- Mon–Fri 09:00–17:00 IST (Picktime). Weekends: {closed / hours}.
+- Mon–Sat 09:00–17:00 IST. Sunday: {closed / hours}.
 - After-hours behavior: {take a message / book anyway}.
 
 ## Address
