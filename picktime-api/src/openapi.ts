@@ -17,6 +17,8 @@ const slotOperation = {
       { name: 'locationId', in: 'query', required: false, schema: { type: 'string' } },
       { name: 'from', in: 'query', required: true, schema: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' } },
       { name: 'to', in: 'query', required: true, schema: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' } },
+      { name: 'startDate', in: 'query', required: false, description: 'Compatibility alias for from when a tool platform reserves the name from.', schema: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' } },
+      { name: 'endDate', in: 'query', required: false, description: 'Compatibility alias for to when a tool platform reserves the name to.', schema: { type: 'string', pattern: '^\\d{4}-\\d{2}-\\d{2}$' } },
     ],
     responses: {
       '200': { description: 'Live slots with timezone and fetch time; empty results carry none-available.' },

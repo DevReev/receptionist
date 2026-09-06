@@ -106,8 +106,8 @@ export function createApp(deps: AppDeps): Express {
     const serviceId = singleQuery(req.query.serviceId);
     const doctorParam = singleQuery(req.query.doctorId);
     const locationParam = singleQuery(req.query.locationId);
-    const from = singleQuery(req.query.from);
-    const to = singleQuery(req.query.to);
+    const from = singleQuery(req.query.from) ?? singleQuery(req.query.startDate);
+    const to = singleQuery(req.query.to) ?? singleQuery(req.query.endDate);
     if (!serviceId) return validation(res, deps.logEvent, pageId, 'slots', 'serviceId is required');
     if (!from || !to) {
       return validation(res, deps.logEvent, pageId, 'slots', 'from and to (YYYY-MM-DD) are required');

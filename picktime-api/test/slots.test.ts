@@ -87,6 +87,15 @@ describe('directory and slot listing', () => {
     assert.ok(slots.every((s) => locationIds.has(s.locationId)));
   });
 
+  it('accepts startDate and endDate aliases for tool platforms reserving from and to', async () => {
+    const api = await start();
+    const { status, body } = await api.fetch(
+      '/v1/get_available_slots?serviceId=svc-sample&locationId=loc-bobby-home&startDate=2099-09-07&endDate=2099-09-07',
+    );
+    assert.equal(status, 200);
+    assert.ok((body.slots as unknown[]).length > 0);
+  });
+
 
   it('keeps per-doctor per-location grouping when neither is passed', async () => {
     const api = await start();
