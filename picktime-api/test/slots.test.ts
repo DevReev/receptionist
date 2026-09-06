@@ -96,6 +96,15 @@ describe('directory and slot listing', () => {
     assert.ok((body.slots as unknown[]).length > 0);
   });
 
+  it('tolerates tool platforms wrapping long query values with newlines', async () => {
+    const api = await start();
+    const { status, body } = await api.fetch(
+      '/v1/get_available_slots?serviceId=svc-sample&locationId=loc-bobby-home&startDate=2026-09%0A-07&endDate=2026-09-07',
+    );
+    assert.equal(status, 200);
+    assert.ok((body.slots as unknown[]).length > 0);
+  });
+
 
   it('keeps per-doctor per-location grouping when neither is passed', async () => {
     const api = await start();

@@ -478,8 +478,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function singleQuery(value: unknown): string | undefined {
   if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (trimmed.length > 0) return trimmed;
+    // Tool platforms (e.g. Sarvam's form) wrap long values with newlines mid-string.
+    // IDs and dates never contain whitespace, so drop it all rather than only trimming.
+    const compacted = value.replace(/\s+/g, '');
+    if (compacted.length > 0) return compacted;
   }
   return undefined;
 }
