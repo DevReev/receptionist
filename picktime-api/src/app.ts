@@ -113,7 +113,7 @@ export function createApp(deps: AppDeps): Express {
       return validation(res, deps.logEvent, pageId, 'slots', 'from and to (YYYY-MM-DD) are required');
     }
     if (!isDateOnly(from) || !isDateOnly(to)) {
-      return validation(res, deps.logEvent, pageId, 'slots', 'from/to must be YYYY-MM-DD');
+      return validation(res, deps.logEvent, pageId, 'slots', `from/to must be YYYY-MM-DD (received from=${JSON.stringify(from)} to=${JSON.stringify(to)})`);
     }
     if (to < from) return validation(res, deps.logEvent, pageId, 'slots', 'to must not precede from');
     if (dateWindowDays(from, to) > MAX_WINDOW_DAYS) {
@@ -477,7 +477,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 
 function singleQuery(value: unknown): string | undefined {
-  if (typeof value === 'string' && value.length > 0) return value;
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (trimmed.length > 0) return trimmed;
+  }
   return undefined;
 }
 
