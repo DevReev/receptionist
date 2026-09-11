@@ -8,7 +8,7 @@ tracker: local-markdown
 
 ## Destination
 
-A live receptionist on a real Twilio number: turn-based call → whisper-large transcription → OpenRouter `deepseek/deepseek-v4-flash-0731` grounded in `clinic.md` + Picktime slots → Twilio `<Say>` reply → booking driven via Picktime page automation, failures to the console log. Done when a test call checks availability and books on the Picktime page.
+A live receptionist on a real Twilio number: Stream session call → endpointed Turns → whisper transcription → OpenRouter `deepseek/deepseek-v4-flash-0731` grounded in `clinic.md` + Picktime slots → sentence-cut OpenAI TTS reply → booking driven via Picktime page automation, failures to the console log. Legacy record-based loop (`<Record>` → whisper → LLM → `<Say>`) retained behind `VOICE_LOOP=legacy`. Done when a test call checks availability and books on the Picktime page.
 
 ## Notes
 
@@ -26,7 +26,7 @@ A live receptionist on a real Twilio number: turn-based call → whisper-large t
 - [Picktime availability and booking surface](tickets/03-picktime-availability-and-booking-surface.md): direct HTTPS XHR (hold → heartbeat → save), no browser; minimum service + doctor + date/time + first name.
 - [Twilio turn-based voice loop](tickets/04-twilio-turn-based-voice-loop.md): `<Gather>` on trial, `<Record>` after upgrade; per-turn state machine, budgets, trial limits.
 - [Receptionist behavior and clinic.md contract](tickets/05-receptionist-behavior-and-clinic-md-contract.md): upgrade-first single path; live-save on read-back yes; phone falls back to caller ID; scripts + JSON log locked; `clinic.md` v1 drafted.
-- [Live validation call and map amendments](tickets/13-live-validation.md) (code-complete, live-gated): `VOICE_LOOP` default flipped to `stream` with `wss://` guard, legacy behind `VOICE_LOOP=legacy`; `scripts/live-validation.sh` carries the automatable preconditions; Twilio account still Trial so the real streaming call waits on upgrade.
+- [Live validation call and map amendments](tickets/13-live-validation.md): `VOICE_LOOP` default flipped to `stream` with `wss://` guard, legacy behind `VOICE_LOOP=legacy`; `scripts/live-validation.sh` carries the automatable preconditions; live-server smoke proven (Connect TwiML + `/stream` session + failure-first logging); tier assumed Full per operator, API last reported Trial — re-run script post-upgrade.
 
 ## Not yet specified
 
