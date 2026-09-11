@@ -6,6 +6,7 @@ import { loadConfig } from './config.ts';
 import { formatFailureLine } from './log.ts';
 import { OpenRouterAssistant } from './openrouter.ts';
 import { TwilioRecordingFetcher } from './recordings.ts';
+import { attachStreamEndpoint } from './stream.ts';
 import { WhisperTranscriber } from './whisper.ts';
 
 export function main(): void {
@@ -22,6 +23,8 @@ export function main(): void {
     sayLanguage: config.sayLanguage,
     recordTimeout: config.recordTimeout,
     recordMaxLength: config.recordMaxLength,
+    voiceLoop: config.voiceLoop,
+    streamWsUrl: config.streamWsUrl,
     transcriber: new WhisperTranscriber({ stt: config.stt }),
     assistant: new OpenRouterAssistant({ apiKey: config.llmApiKey, model: config.openrouterModel }),
     recordingFetcher: new TwilioRecordingFetcher({
@@ -32,9 +35,11 @@ export function main(): void {
     logTurn,
     onProposeBooking: createInterimGuardrail(logFailure),
   });
-  app.listen(config.port, () => {
+  const server = app.listen(config.port, () => {
     console.log(`receptionist listening on :${config.port}`);
   });
+  // Audio handling lands in a later ticket; the skeleton only tracks session lifecycle.
+  attachStreamEndpoint(server, { onAudio: () => {}, onClose: () => {} });
 }
 
 if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

@@ -7,6 +7,8 @@ const STT_PROVIDER_DEFAULTS = {
 
 type SttProvider = keyof typeof STT_PROVIDER_DEFAULTS;
 
+export type VoiceLoop = 'legacy' | 'stream';
+
 export interface Config {
   port: number;
   guidePath: string;
@@ -14,6 +16,8 @@ export interface Config {
   sayLanguage: string;
   recordTimeout: number;
   recordMaxLength: number;
+  voiceLoop: VoiceLoop;
+  streamWsUrl: string;
   twilioAccountSid: string;
   twilioAuthToken: string;
   stt: SttConfig;
@@ -50,6 +54,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const sttApiKey = env.OPENAI_API_KEY ?? env.GROQ_API_KEY ?? '';
   if (!sttApiKey) missing.push('OPENAI_API_KEY or GROQ_API_KEY');
   const llmApiKey = required(env, 'OPENROUTER_API_KEY', missing);
+  const voiceLoopRaw = optional(env, 'VOICE_LOOP', 'legacy');
+  if (voiceLoopRaw !== 'legacy' && voiceLoopRaw !== 'stream') {
+    throw new Error(`invalid VOICE_LOOP: ${voiceLoopRaw} (expected legacy|stream)`);
+  }
+  const voiceLoop: VoiceLoop = voiceLoopRaw;
+  const streamWsUrl =
+    voiceLoop === 'stream' ? required(env, 'STREAM_WS_URL', missing) : optional(env, 'STREAM_WS_URL', '');
   if (missing.length > 0) throw new Error(`missing required env: ${missing.join(', ')}`);
   // Groq defaults apply only when the Groq key is the sole STT key; an
   // explicit OPENAI_API_KEY (or WHISPER_* overrides below) always wins.
@@ -63,6 +74,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sayLanguage: optional(env, 'SAY_LANGUAGE', 'en-IN'),
     recordTimeout: int(env, 'RECORD_TIMEOUT', 5),
     recordMaxLength: int(env, 'RECORD_MAX_LENGTH', 30),
+    voiceLoop,
+    streamWsUrl,
     twilioAccountSid,
     twilioAuthToken,
     stt: {

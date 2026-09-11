@@ -25,6 +25,10 @@ export function recordTurn(opts: {
   );
 }
 
+export function connectStream(url: string): string {
+  return `<Connect><Stream url="${esc(url)}"/></Connect>`;
+}
+
 export function hangup(): string {
   return '<Hangup/>';
 }

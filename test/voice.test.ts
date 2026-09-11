@@ -23,6 +23,8 @@ function stubDeps(overrides: Partial<AppDeps> = {}): { deps: AppDeps; failures: 
     guidePath,
     sayVoice: 'alice',
     sayLanguage: 'en-IN',
+    voiceLoop: 'legacy',
+    streamWsUrl: '',
     transcriber: {
       transcribe: async () => ({ text: 'what are your hours', noSpeech: false }),
     },

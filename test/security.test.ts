@@ -42,6 +42,8 @@ before(() => {
     guidePath,
     sayVoice: 'alice',
     sayLanguage: 'en-IN',
+    voiceLoop: 'legacy',
+    streamWsUrl: '',
     twilioAuthToken: AUTH_TOKEN,
     transcriber: { transcribe: async () => ({ text: 'hi', noSpeech: false }) },
     assistant: { reply: async () => ({ text: 'Hello.', endCall: false }) },

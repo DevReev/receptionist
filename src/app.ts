@@ -4,7 +4,8 @@ import express, { type Express, type NextFunction, type Request, type Response }
 import { loadClinicGuide, type ClinicGuide } from './clinic.ts';
 import { CallStore, type ChatTurn } from './calls.ts';
 import { verifyTwilioSignature } from './signature.ts';
-import { hangup, recordTurn, say, twiml } from './twiml.ts';
+import { hangup, connectStream, recordTurn, say, twiml } from './twiml.ts';
+import type { VoiceLoop } from './config.ts';
 
 export interface Transcription {
   text: string;
@@ -75,6 +76,10 @@ export interface AppDeps {
   sayLanguage: string;
   recordTimeout?: number;
   recordMaxLength?: number;
+  /** Selects the voice loop: legacy record-based Turns, or a live Stream session. */
+  voiceLoop: VoiceLoop;
+  /** Public websocket URL Twilio connects to in streaming mode. */
+  streamWsUrl: string;
   /** When set, every /voice webhook must carry a valid Twilio signature. Unset = dev mode. */
   twilioAuthToken?: string;
   transcriber: Transcriber;
@@ -168,6 +173,10 @@ export function createApp(deps: AppDeps): Express {
   app.post('/voice/incoming', async (req: Request, res: Response) => {
     const callSid = String(req.body?.CallSid ?? 'unknown');
     calls.reset(callSid);
+    if (deps.voiceLoop === 'stream') {
+      sendTwiml(res, twiml(connectStream(deps.streamWsUrl)));
+      return;
+    }
     const guide = await loadClinicGuide(deps.guidePath);
     sendTwiml(res, twiml(say(greetingFor(guide), voiceOpts), listenAgain()));
   });
