@@ -75,7 +75,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const sttApiKey = env.OPENAI_API_KEY ?? env.GROQ_API_KEY ?? '';
   if (!sttApiKey) missing.push('OPENAI_API_KEY or GROQ_API_KEY');
   const llmApiKey = required(env, 'OPENROUTER_API_KEY', missing);
-  const voiceLoopRaw = optional(env, 'VOICE_LOOP', 'legacy');
+  const voiceLoopRaw = optional(env, 'VOICE_LOOP', 'stream');
   if (voiceLoopRaw !== 'legacy' && voiceLoopRaw !== 'stream') {
     throw new Error(`invalid VOICE_LOOP: ${voiceLoopRaw} (expected legacy|stream)`);
   }
@@ -83,6 +83,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const streamWsUrl =
     voiceLoop === 'stream' ? required(env, 'STREAM_WS_URL', missing) : optional(env, 'STREAM_WS_URL', '');
   if (missing.length > 0) throw new Error(`missing required env: ${missing.join(', ')}`);
+  if (voiceLoop === 'stream' && !streamWsUrl.startsWith('wss://')) {
+    throw new Error(`invalid STREAM_WS_URL: ${streamWsUrl} (expected a public wss:// URL for the Connect TwiML)`);
+  }
   // Groq defaults apply only when the Groq key is the sole STT key; an
   // explicit OPENAI_API_KEY (or WHISPER_* overrides below) always wins.
   const useGroqDefaults: boolean = env.OPENAI_API_KEY === undefined && env.GROQ_API_KEY !== undefined;

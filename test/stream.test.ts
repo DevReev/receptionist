@@ -34,8 +34,19 @@ describe('connect TwiML', () => {
 });
 
 describe('voice loop config', () => {
-  it('defaults to the legacy record loop', () => {
-    assert.equal(loadConfig({ ...BASE_ENV }).voiceLoop, 'legacy');
+  it('defaults to the streaming loop (ticket 13)', () => {
+    const cfg = loadConfig({ ...BASE_ENV, STREAM_WS_URL: 'wss://example.com/stream' });
+    assert.equal(cfg.voiceLoop, 'stream');
+  });
+
+  it('requires the public stream url by default', () => {
+    assert.throws(() => loadConfig({ ...BASE_ENV }), /STREAM_WS_URL/);
+  });
+
+  it('keeps the legacy record loop behind the flag', () => {
+    const cfg = loadConfig({ ...BASE_ENV, VOICE_LOOP: 'legacy' });
+    assert.equal(cfg.voiceLoop, 'legacy');
+    assert.equal(cfg.streamWsUrl, '');
   });
 
   it('selects streaming when asked', () => {
@@ -46,6 +57,13 @@ describe('voice loop config', () => {
 
   it('requires the stream url in streaming mode', () => {
     assert.throws(() => loadConfig({ ...BASE_ENV, VOICE_LOOP: 'stream' }), /STREAM_WS_URL/);
+  });
+
+  it('rejects a non-public stream url in streaming mode', () => {
+    assert.throws(
+      () => loadConfig({ ...BASE_ENV, VOICE_LOOP: 'stream', STREAM_WS_URL: 'ws://localhost:3000/stream' }),
+      /public wss:\/\//,
+    );
   });
 
   it('rejects unknown loop values', () => {

@@ -16,6 +16,7 @@ describe('config', () => {
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
+      STREAM_WS_URL: 'wss://example.com/stream',
       WHISPER_BASE_URL: 'http://stub-whisper/v1',
       WHISPER_MODEL: 'stub-model',
     });
@@ -33,6 +34,7 @@ describe('config', () => {
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
+      STREAM_WS_URL: 'wss://example.com/stream',
     });
     assert.equal(cfg.tts.apiKey, 'sk-stt');
     assert.equal(cfg.tts.baseUrl, 'https://api.openai.com/v1');
@@ -43,6 +45,7 @@ describe('config', () => {
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
+      STREAM_WS_URL: 'wss://example.com/stream',
       TTS_MODEL: 'tts-1-hd',
       TTS_VOICE: 'verse',
     });
