@@ -14,7 +14,10 @@ _Avoid_: lock, block
 _Avoid_: test booking
 - **Booking**: confirmed appointment. Written via Picktime page automation (no public Picktime API). Public operation name: `book_appointment`.
 - **Picktime page**: the single configured booking page from env for v1; it currently exposes one service, one doctor, and two Locations.
-- **Turn**: one caller utterance → transcription → reply cycle. Turn-based; no barge-in.
+- **Endpointing**: deciding the caller has stopped speaking; the Receptionist replies only after it.
+_Avoid_: silence timeout
+- **Stream session**: one call's bidirectional audio websocket; it replaces the per-turn webhook chain while live streaming is enabled.
+- **Turn**: one caller utterance → transcription → reply cycle, inside a Stream session while streaming is enabled. No barge-in.
 - **Hosting**: where the public Tool API runs. First production deploy: Render using the Chromium-baked Docker image.
 - **Tunneling**: not required for the Render-hosted Tool API; it is only relevant to the local Twilio receptionist.
 - **Pointing**: setting an external caller or client integration to the deployed API endpoint.
