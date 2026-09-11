@@ -90,6 +90,17 @@ interface ChatMessage {
   tool_call_id?: string;
 }
 
+interface StreamDeltaToolCall {
+  index?: number;
+  id?: string;
+  type?: string;
+  function?: { name?: string; arguments?: string };
+}
+
+interface StreamChunk {
+  choices?: { delta?: { content?: string | null; tool_calls?: StreamDeltaToolCall[] } }[];
+}
+
 export class OpenRouterAssistant implements Assistant {
   private readonly apiKey: string;
   private readonly model: string;
@@ -147,6 +158,45 @@ export class OpenRouterAssistant implements Assistant {
     return message;
   }
 
+  /** SSE token stream for one chat request; same model and tools as `reply`. */
+  private async *postStream(body: Record<string, unknown>): AsyncGenerator<StreamChunk> {
+    const res = await this.fetchFn(ENDPOINT, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${this.apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ ...body, stream: true }),
+    });
+    if (!res.ok) throw new Error(`openrouter-http-${res.status}`);
+    if (!res.body) throw new Error('openrouter-empty-stream');
+    const decoder = new TextDecoder();
+    let buffered = '';
+    const chunks: StreamChunk[] = [];
+    const emitLines = (text: string): void => {
+      buffered += text;
+      let idx: number;
+      while ((idx = buffered.indexOf('\n')) >= 0) {
+        const line = buffered.slice(0, idx).trim();
+        buffered = buffered.slice(idx + 1);
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice('data:'.length).trim();
+        if (!payload || payload === '[DONE]') continue;
+        try {
+          chunks.push(JSON.parse(payload) as StreamChunk);
+        } catch {
+          // Skip keep-alive or partial lines; the next chunk completes them.
+        }
+      }
+    };
+    for await (const piece of res.body as unknown as AsyncIterable<Uint8Array>) {
+      emitLines(decoder.decode(piece, { stream: true }));
+      while (chunks.length > 0) yield chunks.shift()!;
+    }
+    emitLines(decoder.decode());
+    while (chunks.length > 0) yield chunks.shift()!;
+  }
+
   async reply(ctx: AssistantContext): Promise<AssistantReply> {
     const body = this.requestBody(ctx);
     const message = await this.complete(body);
@@ -167,5 +217,54 @@ export class OpenRouterAssistant implements Assistant {
       ],
     });
     return { text: followUp.content ?? '', endCall: false };
+  }
+
+  /**
+   * Streaming twin of `reply`: same model, same single `propose_booking`
+   * tool, same single-attempt rule — but speakable text is yielded as it
+   * arrives so the live session can cut sentences into speech early.
+   */
+  async *replyStream(ctx: AssistantContext): AsyncGenerator<string> {
+    const body = this.requestBody(ctx);
+    const toolIds = new Map<number, string>();
+    const toolNames = new Map<number, string>();
+    const toolArgs = new Map<number, string>();
+    for await (const chunk of this.postStream(body)) {
+      const delta = chunk.choices?.[0]?.delta;
+      if (!delta) continue;
+      if (typeof delta.content === 'string' && delta.content) yield delta.content;
+      for (const tc of delta.tool_calls ?? []) {
+        const index = tc.index ?? 0;
+        if (tc.id) toolIds.set(index, tc.id);
+        if (tc.function?.name) toolNames.set(index, tc.function.name);
+        if (typeof tc.function?.arguments === 'string') {
+          toolArgs.set(index, (toolArgs.get(index) ?? '') + tc.function.arguments);
+        }
+      }
+    }
+    const name = toolNames.get(0);
+    if (name !== 'propose_booking') return;
+    const id = toolIds.get(0) ?? 'call_0';
+    const argsText = toolArgs.get(0) ?? '';
+    const slot = parseSlot(argsText);
+    const outcome: BookingOutcome = slot
+      ? await ctx.proposeBooking(slot)
+      : { ok: false, reason: 'invalid booking details; ask for service, date, time, name, and phone again' };
+    const followUp = {
+      ...body,
+      messages: [
+        ...(body.messages as ChatMessage[]),
+        {
+          role: 'assistant',
+          content: null,
+          tool_calls: [{ id, type: 'function', function: { name: 'propose_booking', arguments: argsText } }],
+        },
+        { role: 'tool', tool_call_id: id, content: JSON.stringify(outcome) },
+      ],
+    };
+    for await (const chunk of this.postStream(followUp)) {
+      const content = chunk.choices?.[0]?.delta?.content;
+      if (typeof content === 'string' && content) yield content;
+    }
   }
 }

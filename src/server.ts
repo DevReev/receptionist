@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createApp, type FailureEvent, type TurnEvent } from './app.ts';
+import { createApp, availabilityPlaceholder, type FailureEvent, type TurnEvent } from './app.ts';
 import { createInterimGuardrail } from './booking.ts';
 import { CallStore } from './calls.ts';
 import { loadClinicGuide } from './clinic.ts';
@@ -68,6 +68,8 @@ export async function main(): Promise<void> {
       model: config.tts.model,
       voice: config.tts.voice,
     });
+    const liveAssistant = new OpenRouterAssistant({ apiKey: config.llmApiKey, model: config.openrouterModel });
+    const liveProposeBooking = createInterimGuardrail(logFailure);
     const lives = new Map<string, LiveCallSession>();
     attachStreamEndpoint(server, {
       onOpen: (identity, session) => {
@@ -87,6 +89,9 @@ export async function main(): Promise<void> {
           tts,
           guide: { raw: '', name: 'the clinic' },
           loadGuide: () => loadClinicGuide(config.guidePath),
+          assistant: liveAssistant,
+          availability: () => availabilityPlaceholder(),
+          onProposeBooking: (args) => liveProposeBooking(args),
           calls,
           logTurn,
           logFailure,

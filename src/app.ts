@@ -23,6 +23,13 @@ export interface AssistantReply {
 
 export interface Assistant {
   reply(ctx: AssistantContext): Promise<AssistantReply>;
+  /**
+   * Token stream of the final spoken reply. Handles the single
+   * `propose_booking` tool internally (same single-attempt rule as
+   * `reply`) and yields only speakable text. The live Stream session
+   * prefers this when present and falls back to `reply` otherwise.
+   */
+  replyStream?(ctx: AssistantContext): AsyncIterable<string>;
 }
 
 export interface AssistantContext {
