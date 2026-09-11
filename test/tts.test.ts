@@ -35,7 +35,25 @@ describe('OpenAiTts', () => {
     assert.equal(body.model, 'tts-1');
     assert.equal(body.voice, 'alloy');
     assert.equal(body.input, 'Welcome to Maple Clinic.');
+    assert.equal(body.response_format, 'wav');
     assert.ok(out.audio.length > 0);
+  });
+
+  it('requests raw pcm when configured and converts it to 8 kHz mulaw', async () => {
+    let body: Record<string, unknown> = {};
+    const pcm = new Int16Array([0, 1000, -1000, 2000, -2000, 3000, -3000, 4000]);
+    const fetchFn = (async (_u: string, init: { headers: Record<string, string>; body: string }) => {
+      body = JSON.parse(init.body) as Record<string, unknown>;
+      return new Response(Buffer.from(pcm.buffer) as unknown as BodyInit, {
+        status: 200,
+        headers: { 'content-type': 'audio/pcm;rate=24000;channels=1' },
+      });
+    }) as unknown as typeof fetch;
+    const tts = new OpenAiTts({ apiKey: 'k', fetchFn, responseFormat: 'pcm', pcmSampleRate: 24000 });
+    const out = await tts.synthesize('hello');
+    assert.equal(body.response_format, 'pcm');
+    // 8 samples @ 24 kHz resample to 8 kHz.
+    assert.equal(out.audio.length, 3);
   });
 
   it('throws on provider errors', async () => {

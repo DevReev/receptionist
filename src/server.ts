@@ -67,6 +67,8 @@ export async function main(): Promise<void> {
       baseUrl: config.tts.baseUrl,
       model: config.tts.model,
       voice: config.tts.voice,
+      responseFormat: config.tts.responseFormat,
+      pcmSampleRate: config.tts.pcmSampleRate,
     });
     const liveAssistant = new OpenRouterAssistant({ apiKey: config.llmApiKey, model: config.openrouterModel });
     const liveProposeBooking = createInterimGuardrail(logFailure);

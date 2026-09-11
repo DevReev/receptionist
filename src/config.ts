@@ -14,6 +14,8 @@ export interface TtsEnv {
   baseUrl: string;
   model: string;
   voice: string;
+  responseFormat: 'wav' | 'pcm';
+  pcmSampleRate: number;
 }
 
 export interface Config {
@@ -91,6 +93,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const useGroqDefaults: boolean = env.OPENAI_API_KEY === undefined && env.GROQ_API_KEY !== undefined;
   const provider: SttProvider = useGroqDefaults ? 'groq' : 'openai';
   const defaults = STT_PROVIDER_DEFAULTS[provider];
+  const ttsResponseFormatRaw = optional(env, 'TTS_RESPONSE_FORMAT', 'pcm');
+  if (ttsResponseFormatRaw !== 'wav' && ttsResponseFormatRaw !== 'pcm') {
+    throw new Error(`invalid TTS_RESPONSE_FORMAT: ${ttsResponseFormatRaw} (expected wav|pcm)`);
+  }
   return {
     port: int(env, 'PORT', 3000),
     guidePath: optional(env, 'CLINIC_GUIDE_PATH', './clinic.md'),
@@ -113,10 +119,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       model: optional(env, 'WHISPER_MODEL', defaults.model),
     },
     tts: {
-      apiKey: optional(env, 'OPENAI_API_KEY', sttApiKey),
-      baseUrl: optional(env, 'TTS_BASE_URL', 'https://api.openai.com/v1'),
-      model: optional(env, 'TTS_MODEL', 'tts-1'),
-      voice: optional(env, 'TTS_VOICE', 'alloy'),
+      // TTS rides on OpenRouter itself: dedicated key wins, else the required
+      // OpenRouter key, else the legacy OpenAI/STT key for an OpenAI base URL.
+      apiKey: env.TTS_API_KEY ?? env.OPENROUTER_API_KEY ?? sttApiKey,
+      baseUrl: optional(env, 'TTS_BASE_URL', 'https://openrouter.ai/api/v1'),
+      model: optional(env, 'TTS_MODEL', 'qwen/qwen-audio-3.0-tts-flash'),
+      voice: optional(env, 'TTS_VOICE', 'loongjohn'),
+      responseFormat: ttsResponseFormatRaw,
+      pcmSampleRate: int(env, 'TTS_PCM_SAMPLE_RATE', 24000),
     },
     llmApiKey,
     openrouterModel: optional(env, 'OPENROUTER_MODEL', 'deepseek/deepseek-v4-flash-0731'),

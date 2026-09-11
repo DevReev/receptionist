@@ -28,7 +28,7 @@ describe('config', () => {
     assert.equal(cfg.llmApiKey, 'o');
   });
 
-  it('reuses the STT key for TTS with overridable model and voice', () => {
+  it('routes TTS through OpenRouter with overridable model and voice', () => {
     const cfg = loadConfig({
       OPENAI_API_KEY: 'sk-stt',
       OPENROUTER_API_KEY: 'o',
@@ -36,21 +36,40 @@ describe('config', () => {
       TWILIO_AUTH_TOKEN: 't',
       STREAM_WS_URL: 'wss://example.com/stream',
     });
-    assert.equal(cfg.tts.apiKey, 'sk-stt');
-    assert.equal(cfg.tts.baseUrl, 'https://api.openai.com/v1');
-    assert.equal(cfg.tts.model, 'tts-1');
-    assert.equal(cfg.tts.voice, 'alloy');
+    assert.equal(cfg.tts.apiKey, 'o');
+    assert.equal(cfg.tts.baseUrl, 'https://openrouter.ai/api/v1');
+    assert.equal(cfg.tts.model, 'qwen/qwen-audio-3.0-tts-flash');
+    assert.equal(cfg.tts.voice, 'loongjohn');
+    assert.equal(cfg.tts.responseFormat, 'pcm');
+    assert.equal(cfg.tts.pcmSampleRate, 24000);
     const custom = loadConfig({
       OPENAI_API_KEY: 'sk-stt',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
       STREAM_WS_URL: 'wss://example.com/stream',
-      TTS_MODEL: 'tts-1-hd',
-      TTS_VOICE: 'verse',
+      TTS_API_KEY: 'sk-tts-dedicated',
+      TTS_MODEL: 'mistralai/voxtral-mini-tts-2603',
+      TTS_VOICE: 'some-voice',
     });
-    assert.equal(custom.tts.model, 'tts-1-hd');
-    assert.equal(custom.tts.voice, 'verse');
+    assert.equal(custom.tts.apiKey, 'sk-tts-dedicated');
+    assert.equal(custom.tts.model, 'mistralai/voxtral-mini-tts-2603');
+    assert.equal(custom.tts.voice, 'some-voice');
+  });
+
+  it('rejects unknown TTS response formats', () => {
+    assert.throws(
+      () =>
+        loadConfig({
+          OPENROUTER_API_KEY: 'o',
+          TWILIO_ACCOUNT_SID: 'ACx',
+          TWILIO_AUTH_TOKEN: 't',
+          GROQ_API_KEY: 'g',
+          STREAM_WS_URL: 'wss://example.com/stream',
+          TTS_RESPONSE_FORMAT: 'wav99',
+        }),
+      /TTS_RESPONSE_FORMAT/,
+    );
   });
 });
 

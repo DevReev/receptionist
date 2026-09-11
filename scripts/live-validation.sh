@@ -31,8 +31,8 @@ esac
 # 3. Credentials present (never printed).
 [ -n "${TWILIO_ACCOUNT_SID:-}" ] || warn "TWILIO_ACCOUNT_SID is unset"
 [ -n "${TWILIO_AUTH_TOKEN:-}" ] || warn "TWILIO_AUTH_TOKEN is unset"
-[ -n "${OPENAI_API_KEY:-${GROQ_API_KEY:-}}" ] || warn "OPENAI_API_KEY or GROQ_API_KEY is unset (STT+TTS)"
-[ -n "${OPENROUTER_API_KEY:-}" ] || warn "OPENROUTER_API_KEY is unset (assistant)"
+[ -n "${OPENAI_API_KEY:-${GROQ_API_KEY:-}}" ] || warn "OPENAI_API_KEY or GROQ_API_KEY is unset (STT)"
+[ -n "${OPENROUTER_API_KEY:-}" ] || warn "OPENROUTER_API_KEY is unset (assistant + TTS)"
 [ "$fail" -eq 0 ] && ok "credentials present (values not printed)"
 
 # 4. VAD model baked for the streaming loop.
