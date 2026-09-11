@@ -9,6 +9,13 @@ type SttProvider = keyof typeof STT_PROVIDER_DEFAULTS;
 
 export type VoiceLoop = 'legacy' | 'stream';
 
+export interface TtsEnv {
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+  voice: string;
+}
+
 export interface Config {
   port: number;
   guidePath: string;
@@ -26,6 +33,7 @@ export interface Config {
   twilioAccountSid: string;
   twilioAuthToken: string;
   stt: SttConfig;
+  tts: TtsEnv;
   llmApiKey: string;
   openrouterModel: string;
 }
@@ -100,6 +108,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       apiKey: sttApiKey,
       baseUrl: optional(env, 'WHISPER_BASE_URL', defaults.baseUrl),
       model: optional(env, 'WHISPER_MODEL', defaults.model),
+    },
+    tts: {
+      apiKey: optional(env, 'OPENAI_API_KEY', sttApiKey),
+      baseUrl: optional(env, 'TTS_BASE_URL', 'https://api.openai.com/v1'),
+      model: optional(env, 'TTS_MODEL', 'tts-1'),
+      voice: optional(env, 'TTS_VOICE', 'alloy'),
     },
     llmApiKey,
     openrouterModel: optional(env, 'OPENROUTER_MODEL', 'deepseek/deepseek-v4-flash-0731'),

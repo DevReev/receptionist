@@ -26,6 +26,29 @@ describe('config', () => {
     });
     assert.equal(cfg.llmApiKey, 'o');
   });
+
+  it('reuses the STT key for TTS with overridable model and voice', () => {
+    const cfg = loadConfig({
+      OPENAI_API_KEY: 'sk-stt',
+      OPENROUTER_API_KEY: 'o',
+      TWILIO_ACCOUNT_SID: 'ACx',
+      TWILIO_AUTH_TOKEN: 't',
+    });
+    assert.equal(cfg.tts.apiKey, 'sk-stt');
+    assert.equal(cfg.tts.baseUrl, 'https://api.openai.com/v1');
+    assert.equal(cfg.tts.model, 'tts-1');
+    assert.equal(cfg.tts.voice, 'alloy');
+    const custom = loadConfig({
+      OPENAI_API_KEY: 'sk-stt',
+      OPENROUTER_API_KEY: 'o',
+      TWILIO_ACCOUNT_SID: 'ACx',
+      TWILIO_AUTH_TOKEN: 't',
+      TTS_MODEL: 'tts-1-hd',
+      TTS_VOICE: 'verse',
+    });
+    assert.equal(custom.tts.model, 'tts-1-hd');
+    assert.equal(custom.tts.voice, 'verse');
+  });
 });
 
 describe('failure log line', () => {

@@ -8,8 +8,10 @@ export interface StreamIdentity {
 }
 
 export interface StreamObserver {
-  onAudio(identity: StreamIdentity, audio: Buffer): void;
-  onClose(identity: StreamIdentity, reason: string): void;
+  onAudio(identity: StreamIdentity, audio: Buffer, session?: StreamSession): void;
+  onClose(identity: StreamIdentity, reason: string, session?: StreamSession): void;
+  /** Fired once when the start frame assigns call identity; greeting hook. */
+  onOpen?(identity: StreamIdentity, session?: StreamSession): void;
 }
 
 /** Minimal surface a media-stream socket must provide; real and fake sockets both fit. */
@@ -39,11 +41,12 @@ export class StreamSession {
   open(identity: StreamIdentity): void {
     if (this.closed) return;
     this.identity = identity;
+    this.observer.onOpen?.(identity, this);
   }
 
   receiveAudio(audio: Buffer): void {
     if (this.closed || !this.identity) return;
-    this.observer.onAudio(this.identity, audio);
+    this.observer.onAudio(this.identity, audio, this);
   }
 
   sendAudio(audio: Buffer): void {
@@ -62,7 +65,7 @@ export class StreamSession {
     if (this.closed) return;
     this.closed = true;
     // Notify even before start so the endpoint always releases the session.
-    this.observer.onClose(this.identity ?? { callSid: 'unknown', streamSid: 'unknown' }, reason);
+    this.observer.onClose(this.identity ?? { callSid: 'unknown', streamSid: 'unknown' }, reason, this);
   }
 }
 
@@ -152,10 +155,11 @@ export function attachStreamEndpoint(
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
       const session = attachStreamSocket(toStreamSocket(ws), {
-        onAudio: observer.onAudio,
-        onClose: (identity, reason) => {
+        onAudio: (identity, audio, sess) => observer.onAudio(identity, audio, sess ?? session),
+        onOpen: (identity, sess) => observer.onOpen?.(identity, sess ?? session),
+        onClose: (identity, reason, sess) => {
           sessions.delete(session);
-          observer.onClose(identity, reason);
+          observer.onClose(identity, reason, sess ?? session);
         },
       });
       sessions.add(session);

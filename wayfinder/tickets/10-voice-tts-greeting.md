@@ -1,6 +1,6 @@
 ---
 label: wayfinder:build
-status: open
+status: closed
 parent: ../map.md
 blocked-by: [07-stream-session-skeleton.md]
 assignee:
@@ -14,7 +14,11 @@ assignee:
 
 **Spec:** `06-live-streaming-voice-loop.md`.
 
-- [ ] New TTS interface (text in, playable audio out) with an OpenAI-backed implementation; stubbed in tests like the transcriber/assistant seams.
-- [ ] Session open speaks the greeting through the session's own TTS path.
-- [ ] Every spoken reply emits a playback-completion signal the endpoint timer can key off.
-- [ ] Verified through the fake driver: greeting audio out on open; text in → audio out + completion event.
+- [x] New TTS interface (text in, playable audio out) with an OpenAI-backed implementation; stubbed in tests like the transcriber/assistant seams.
+- [x] Session open speaks the greeting through the session's own TTS path.
+- [x] Every spoken reply emits a playback-completion signal the endpoint timer can key off.
+- [x] Verified through the fake driver: greeting audio out on open; text in → audio out + completion event.
+
+## Resolution
+
+Implemented: `Tts` seam + `OpenAiTts` (`src/tts.ts`, wav `response_format` → 8 kHz mulaw, reuses STT key, `TTS_MODEL`/`TTS_VOICE`/`TTS_BASE_URL` env in `src/config.ts`); `LiveCallSession.open/speak` greet and speak through the session TTS path with `onPlaybackComplete` per reply and `suspend`/`resume` around playback so the endpoint timer restarts after the Receptionist finishes (no barge-in); `StreamObserver.onOpen` + session-passing in `src/stream.ts`; per-session live wiring in `src/server.ts` stream mode. 6 live/TTS tests through the fake driver. Full suite 69/69 green, typecheck clean. Review fixed an unneeded session cast and one-letter wrapper params.
