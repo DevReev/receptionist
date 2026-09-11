@@ -23,6 +23,11 @@ export class SileroVad implements Vad {
     return new SileroVad(session);
   }
 
+  /** Sealed-session factory for tests: real windowing/carry, stubbed inference. */
+  static fromSession(session: InferenceSession): SileroVad {
+    return new SileroVad(session);
+  }
+
   /** Same model, fresh per-call state. */
   fork(): SileroVad {
     return new SileroVad(this.session);
@@ -39,12 +44,15 @@ export class SileroVad implements Vad {
     combined.set(this.carry, 0);
     combined.set(pcm, this.carry.length);
     const fullWindows = Math.floor(combined.length / WINDOW_SAMPLES);
+    // Keep the remainder even when no full window is ready yet — Twilio
+    // delivers 160-sample frames, so dropping it here would starve the
+    // model forever and endpointing would never fire.
+    this.carry = combined.slice(fullWindows * WINDOW_SAMPLES);
     if (fullWindows === 0) return this.lastProb;
     let prob = this.lastProb;
     for (let i = 0; i < fullWindows; i++) {
       prob = await this.runWindow(combined.subarray(i * WINDOW_SAMPLES, (i + 1) * WINDOW_SAMPLES));
     }
-    this.carry = combined.slice(fullWindows * WINDOW_SAMPLES);
     this.lastProb = prob;
     return prob;
   }
