@@ -135,14 +135,14 @@ describe('live transcription (ticket 09)', () => {
     assert.equal(calls.get('CAmiss').history.length, 0);
   });
 
-  it('says goodbye and closes after the second miss', async () => {
+  it('reprompts twice and says goodbye on the third miss (ticket 12 policy)', async () => {
     const calls = new CallStore();
     const { tts, texts } = stubTts();
     let closed: string | null = null;
     const live = new LiveCallSession({
       identity: { callSid: 'CAbye', streamSid: 'MZbye' },
       sendAudio: () => {},
-      vad: scriptVad([...speech(50), ...silence(50), ...speech(50), ...silence(50)]),
+      vad: scriptVad([...speech(50), ...silence(50), ...speech(50), ...silence(50), ...speech(50), ...silence(50)]),
       policy: POLICY,
       transcriber: { transcribe: async () => ({ text: '', noSpeech: true }) },
       tts,
@@ -160,8 +160,14 @@ describe('live transcription (ticket 09)', () => {
       await live.receiveAudio(Buffer.alloc(FRAME_BYTES, 0xff));
     }
     await live.flush();
-    assert.equal(texts.length, 2);
-    assert.match(texts[1]!, /Goodbye/);
+    assert.match(texts[1]!, /didn't catch that/);
+    assert.equal(closed, null);
+    for (let i = 0; i < 100; i++) {
+      await live.receiveAudio(Buffer.alloc(FRAME_BYTES, 0xff));
+    }
+    await live.flush();
+    assert.equal(texts.length, 3);
+    assert.match(texts[2]!, /Goodbye/);
     assert.equal(closed, 'goodbye');
   });
 });

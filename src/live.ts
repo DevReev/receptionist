@@ -83,7 +83,8 @@ function ttsDetail(err: unknown): string {
 /**
  * One call's live loop slice for tickets 09+10: greeting spoken in-session
  * through TTS, endpointed utterances transcribed through the unchanged
- * transcriber seam, misses counted toward the bounded-reprompt policy.
+ * transcriber seam, misses counted toward the bounded-reprompt policy
+ * (reprompt twice, handoff + close on the third miss per ticket 12).
  * Ticket 11 adds the assistant reply leg: streamed tokens are cut at
  * sentence boundaries and each finished sentence is spoken immediately.
  */
@@ -109,6 +110,11 @@ export class LiveCallSession {
   private pending: Promise<unknown> = Promise.resolve();
   private closed = false;
   private greeted = false;
+  /**
+   * Turn opened by handleUtterance but not yet settled by a Turn log.
+   * close() drains this as a partial Turn so a hangup never goes unlogged.
+   */
+  private activeTurn: { turn: number; excerpt: string; replySoFar: string } | null = null;
 
   constructor(opts: LiveCallOptions) {
     this.identity = opts.identity;
@@ -188,6 +194,20 @@ export class LiveCallSession {
     if (this.closed) return;
     this.closed = true;
     this.endpointer.endSession();
+    // Hangup / dropped socket mid-Turn: log the partial Turn so the clinic
+    // sees what the Caller said and what little was spoken back.
+    if (this.activeTurn) {
+      const partial = this.activeTurn;
+      this.activeTurn = null;
+      this.logTurn?.({
+        callSid: this.identity.callSid,
+        turn: partial.turn,
+        excerpt: partial.excerpt,
+        reply: partial.replySoFar,
+        endCall: true,
+        miss: false,
+      });
+    }
     this.onCloseCb?.(reason);
   }
 
@@ -201,6 +221,7 @@ export class LiveCallSession {
     const state = this.calls.get(this.identity.callSid);
     state.turn += 1;
     const turn = state.turn;
+    this.activeTurn = { turn, excerpt: '', replySoFar: '' };
     let text = '';
     try {
       const wav = encodeWav(utterance.audio);
@@ -218,8 +239,14 @@ export class LiveCallSession {
       return;
     }
     state.misses = 0;
+    this.activeTurn.excerpt = text;
     this.calls.pushHistory(this.identity.callSid, { role: 'caller', text });
-    if (!this.assistant) return;
+    if (!this.assistant) {
+      // Transcribe-only session (tickets 09/10): Turn is complete once the
+      // Caller text lands in history; nothing partial to log on hangup.
+      this.activeTurn = null;
+      return;
+    }
     await this.answerTurn(text, turn);
   }
 
@@ -239,14 +266,22 @@ export class LiveCallSession {
       }
     }
     const assistant = this.assistant;
-    const availability = await this.resolveAvailability();
     const state = this.calls.get(this.identity.callSid);
+    if (this.activeTurn) this.activeTurn.excerpt = excerpt;
+    // Single-attempt per confirmed intent: even a misbehaving model gets one
+    // writer call per Turn; the second proposal is refused without touching
+    // the writer, and a throwing writer surfaces once as a Turn failure.
+    let bookingAttempted = false;
     const ctx = {
       transcript: excerpt,
       history: [...state.history],
       guide: this.guide,
-      availability,
+      availability: '',
       proposeBooking: (slot: ProposedSlot): Promise<BookingOutcome> => {
+        if (bookingAttempted) {
+          return Promise.resolve({ ok: false, reason: 'booking already attempted once for this turn; the clinic will confirm shortly' });
+        }
+        bookingAttempted = true;
         if (!this.onProposeBooking) {
           return Promise.resolve({ ok: false, reason: 'booking is not available yet; the clinic will confirm shortly' });
         }
@@ -257,6 +292,13 @@ export class LiveCallSession {
     let fullReply = '';
     let endCall = false;
     try {
+      try {
+        ctx.availability = await this.resolveAvailability();
+      } catch (err) {
+        throw new Error(`availability-error: ${err instanceof Error ? err.message : String(err)}`, {
+          cause: err,
+        });
+      }
       const tokens: AsyncIterable<string> = assistant.replyStream
         ? assistant.replyStream(ctx)
         : (async function* fallback(): AsyncGenerator<string> {
@@ -268,6 +310,7 @@ export class LiveCallSession {
       for await (const token of tokens) {
         if (this.closed) return;
         fullReply += token;
+        if (this.activeTurn) this.activeTurn.replySoFar = fullReply;
         buffered += token;
         const cut = extractCompleteSentences(buffered);
         buffered = cut.rest;
@@ -292,7 +335,11 @@ export class LiveCallSession {
     } catch (err) {
       if (this.closed) return;
       const detail =
-        err instanceof Error && (err.message.startsWith('tts-error:') || err.message.startsWith('assistant-error:'))
+        err instanceof Error &&
+        (err.message.startsWith('tts-error:') ||
+          err.message.startsWith('assistant-error:') ||
+          err.message.startsWith('availability-error:') ||
+          err.message.startsWith('booking-error:'))
           ? err.message
           : `assistant-error: ${err instanceof Error ? err.message : String(err)}`;
       this.logFailure?.({ callSid: this.identity.callSid, turn, reason: 'low-confidence', excerpt, detail });
@@ -302,6 +349,7 @@ export class LiveCallSession {
         // TTS itself failed; the log above is the handoff channel.
       }
       this.logTurn?.({ callSid: this.identity.callSid, turn, excerpt, reply: FAILURE_LINE, endCall: true, miss: false });
+      this.activeTurn = null;
       if (!this.closed) this.endpointer.resume();
       this.close('failure');
       return;
@@ -312,13 +360,17 @@ export class LiveCallSession {
       this.calls.pushHistory(this.identity.callSid, { role: 'receptionist', text: fullReply });
     }
     this.logTurn?.({ callSid: this.identity.callSid, turn, excerpt, reply: fullReply, endCall, miss: false });
+    this.activeTurn = null;
     if (endCall) this.close('goodbye');
   }
 
   private async miss(excerpt: string, turn: number, detail: string | undefined): Promise<void> {
     const state = this.calls.get(this.identity.callSid);
     state.misses += 1;
-    if (state.misses <= 1) {
+    if (this.activeTurn) this.activeTurn.excerpt = excerpt;
+    // Ticket 12: two reprompts, handoff on the third miss. Reprompts log a
+    // Turn only; the handoff logs a failure first, then a terminal Turn.
+    if (state.misses <= 2) {
       this.logTurn?.({
         callSid: this.identity.callSid,
         turn,
@@ -327,13 +379,25 @@ export class LiveCallSession {
         endCall: false,
         miss: true,
       });
-      await this.speak(REPROMPT_LINE);
+      this.activeTurn = null;
+      try {
+        await this.speak(REPROMPT_LINE);
+      } catch (err) {
+        const ttsCause = err instanceof Error ? `tts-error: ${err.message}` : `tts-error: ${String(err)}`;
+        this.logFailure?.({ callSid: this.identity.callSid, turn, reason: 'low-confidence', excerpt, detail: ttsCause });
+        this.close('failure');
+      }
       return;
     }
     this.logFailure?.({ callSid: this.identity.callSid, turn, reason: 'low-confidence', excerpt, detail });
     const goodbye = goodbyeFor(this.guide);
     this.logTurn?.({ callSid: this.identity.callSid, turn, excerpt, reply: goodbye, endCall: true, miss: true });
-    await this.speak(goodbye);
+    this.activeTurn = null;
+    try {
+      await this.speak(goodbye);
+    } catch {
+      // Goodbye TTS failed; the failure log above is the handoff channel.
+    }
     this.close('goodbye');
   }
 }
