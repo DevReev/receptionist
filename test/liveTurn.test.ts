@@ -7,7 +7,7 @@ import type { Assistant, AssistantContext, Transcriber } from '../src/app.ts';
 import type { Tts } from '../src/tts.ts';
 
 const FRAME_BYTES = 160;
-const POLICY = { silenceMs: 700, minSpeechMs: 300, maxUtteranceMs: 30000, threshold: 0.5 };
+const POLICY = { silenceMs: 700, minSpeechMs: 300, maxUtteranceMs: 30000, threshold: 0.5, latchDipMs: 200 };
 const GUIDE = { raw: '# Clinic Guide — Maple Clinic\n', name: 'Maple Clinic' };
 const AVAILABILITY = 'AVAILABILITY (fetched live — only these slots exist)\n- 2026-09-30 09:30 Appointment with Bob Gowda at Bobby Clinic';
 

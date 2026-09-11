@@ -17,6 +17,13 @@ export interface EndpointPolicy {
   minSpeechMs: number;
   maxUtteranceMs: number;
   threshold: number;
+  /**
+   * Pre-latch dip tolerance: brief sub-threshold flicker while gathering
+   * speech does not reset the latch; a longer dip does. Real VAD output
+   * flickers at speech boundaries — strict consecutiveness never latches
+   * on it (max observed run 160 ms against a 300 ms latch).
+   */
+  latchDipMs: number;
 }
 
 export interface Utterance {
@@ -40,6 +47,7 @@ export class Endpointer {
   private suspended = false;
   private speaking = false;
   private speechMs = 0;
+  private dipSamples = 0;
   private chunks: Int16Array[] = [];
   private bufferedSamples = 0;
   private trailingSilenceSamples = 0;
@@ -82,12 +90,19 @@ export class Endpointer {
     const ms = toMs(pcm.length);
     if (!this.speaking) {
       if (!isSpeech) {
-        this.chunks = [];
-        this.bufferedSamples = 0;
-        this.speechMs = 0;
+        this.dipSamples += pcm.length;
+        // A short dip is VAD flicker — keep gathering. A dip past the
+        // budget means the noise burst is over: drop it all.
+        if (toMs(this.dipSamples) >= this.policy.latchDipMs) {
+          this.chunks = [];
+          this.bufferedSamples = 0;
+          this.speechMs = 0;
+          this.dipSamples = 0;
+        }
         return;
       }
       this.speechMs += ms;
+      this.dipSamples = 0;
       this.chunks.push(pcm);
       this.bufferedSamples += pcm.length;
       if (this.speechMs >= this.policy.minSpeechMs) this.speaking = true;
@@ -126,6 +141,7 @@ export class Endpointer {
   private reset(): void {
     this.speaking = false;
     this.speechMs = 0;
+    this.dipSamples = 0;
     this.chunks = [];
     this.bufferedSamples = 0;
     this.trailingSilenceSamples = 0;

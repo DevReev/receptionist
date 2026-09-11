@@ -12,7 +12,7 @@ import {
 } from './fakeStream.ts';
 
 const FRAME_BYTES = 160; // 20 ms of 8 kHz mulaw, the Twilio media frame size.
-const POLICY = { silenceMs: 700, minSpeechMs: 300, maxUtteranceMs: 30000, threshold: 0.5 };
+const POLICY = { silenceMs: 700, minSpeechMs: 300, maxUtteranceMs: 30000, threshold: 0.5, latchDipMs: 200 };
 
 describe('mulaw decode', () => {
   it('decodes known vectors', () => {
@@ -97,6 +97,25 @@ describe('endpointer', () => {
   it('ignores sub-minimum noises', async () => {
     const h = harness(scriptVad([...speech(10), ...silence(100)]));
     await h.feed([...speech(10), ...silence(100)]);
+    assert.equal(h.utterances.length, 0);
+  });
+
+  it('latches through VAD flicker shorter than the dip budget', async () => {
+    // Real VAD output flickers at speech boundaries: single silence frames
+    // inside speech must not reset the latch (strict consecutiveness never
+    // latched on live audio — max observed run 160 ms vs 300 ms latch).
+    const flicker: ('speech' | 'silence')[] = [];
+    for (let i = 0; i < 10; i++) flicker.push(...speech(4), ...silence(1));
+    const pattern = [...flicker, ...silence(50)];
+    const h = harness(scriptVad(pattern));
+    await h.feed(pattern);
+    assert.equal(h.utterances.length, 1);
+  });
+
+  it('resets the latch when the dip exceeds the budget', async () => {
+    const pattern = [...speech(10), ...silence(15), ...speech(10), ...silence(50)];
+    const h = harness(scriptVad(pattern));
+    await h.feed(pattern);
     assert.equal(h.utterances.length, 0);
   });
 

@@ -22,6 +22,7 @@ function endpointPolicy(config: Config): EndpointPolicy {
     minSpeechMs: config.endpointMinSpeechMs,
     maxUtteranceMs: config.endpointMaxUtteranceMs,
     threshold: config.vadThreshold,
+    latchDipMs: config.endpointLatchDipMs,
   };
 }
 

@@ -9,7 +9,7 @@ import type { Tts } from '../src/tts.ts';
 import { FakeSocket, twilioMedia, twilioStart } from './fakeStream.ts';
 
 const FRAME_BYTES = 160;
-const POLICY = { silenceMs: 700, minSpeechMs: 300, maxUtteranceMs: 30000, threshold: 0.5 };
+const POLICY = { silenceMs: 700, minSpeechMs: 300, maxUtteranceMs: 30000, threshold: 0.5, latchDipMs: 200 };
 const GUIDE = { raw: '# Clinic Guide — Maple Clinic\n', name: 'Maple Clinic' };
 
 function scriptVad(pattern: ('speech' | 'silence')[]): Vad {

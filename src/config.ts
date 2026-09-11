@@ -31,7 +31,7 @@ export interface Config {
   endpointMinSpeechMs: number;
   endpointMaxUtteranceMs: number;
   vadThreshold: number;
-  vadModelPath: string;
+  endpointLatchDipMs: number;  vadModelPath: string;
   twilioAccountSid: string;
   twilioAuthToken: string;
   stt: SttConfig;
@@ -110,6 +110,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     endpointMinSpeechMs: int(env, 'ENDPOINT_MIN_SPEECH_MS', 300),
     endpointMaxUtteranceMs: int(env, 'ENDPOINT_MAX_UTTERANCE_MS', 30000),
     vadThreshold: float(env, 'VAD_SPEECH_THRESHOLD', 0.5),
+    endpointLatchDipMs: int(env, 'ENDPOINT_LATCH_DIP_MS', 200),
     vadModelPath: optional(env, 'VAD_MODEL_PATH', './models/silero_vad.onnx'),
     twilioAccountSid,
     twilioAuthToken,
