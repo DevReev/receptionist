@@ -4,6 +4,7 @@ import { CallStore } from '../src/calls.ts';
 import { LiveCallSession } from '../src/live.ts';
 import type { Vad } from '../src/endpoint.ts';
 import type { Assistant, AssistantContext, Transcriber } from '../src/app.ts';
+import { HOLD_ASSISTANT_LINE } from '../src/app.ts';
 import type { Tts } from '../src/tts.ts';
 
 const FRAME_BYTES = 160;
@@ -103,10 +104,10 @@ describe('live full Turn (ticket 11)', () => {
     assert.ok(texts.some((t) => t.includes('Monday to Friday')));
     assert.ok(texts.some((t) => t.includes('Wednesday')));
     assert.equal(completions.length, texts.length);
-    // Grounding: assistant saw the guide, live availability, and growing history.
+    // Grounding: assistant saw the guide, could read live availability, and saw growing history.
     assert.equal(seenCtx.length, 2);
     assert.equal(seenCtx[0]!.guide.name, 'Maple Clinic');
-    assert.equal(seenCtx[0]!.availability, AVAILABILITY);
+    assert.equal(await seenCtx[0]!.getAvailability(), AVAILABILITY);
     assert.equal(seenCtx[1]!.history.length, 3);
   });
 
@@ -151,6 +152,85 @@ describe('live full Turn (ticket 11)', () => {
     assert.equal(texts[1], 'Second sentence follows.');
   });
 
+  it('speaks a hold line and logs phases when the assistant is slow', async () => {
+    const calls = new CallStore();
+    const { tts, texts } = stubTts();
+    const phases: Record<string, unknown>[] = [];
+    const assistant: Assistant = {
+      reply: async () => ({ text: '', endCall: false }),
+      replyStream: async function* () {
+        await new Promise((r) => setTimeout(r, 60));
+        yield 'Wednesday at ten is free. ';
+      },
+    };
+    const live = new LiveCallSession({
+      identity: { callSid: 'CA11slow', streamSid: 'MZ11slow' },
+      sendAudio: () => {},
+      vad: scriptVad([...speech(50), ...silence(50)]),
+      policy: POLICY,
+      transcriber: queueTranscriber(['book Wednesday']),
+      tts,
+      guide: GUIDE,
+      availability: AVAILABILITY,
+      holdAfterMs: 20,
+      assistant,
+      calls,
+      logSession: (e) => phases.push(e),
+    });
+    await feed(live, 100);
+    assert.equal(texts[0], HOLD_ASSISTANT_LINE);
+    assert.ok(texts.some((t) => t.includes('Wednesday')));
+    const names = phases.map((p) => `${String(p.phase)}:${String(p.event)}`);
+    assert.ok(names.includes('transcribe:done'));
+    assert.ok(names.includes('assistant:hold'));
+    assert.ok(names.includes('assistant:first-token'));
+    assert.ok(names.includes('tts:done'));
+    assert.equal(phases.every((p) => p.kind === 'phase' && p.callSid === 'CA11slow'), true);
+  });
+
+  it('never reads the booking system for a greeting and reads it lazily when asked', async () => {
+    const calls = new CallStore();
+    const { tts } = stubTts();
+    const phases: Record<string, unknown>[] = [];
+    let reads = 0;
+    const replies = ['Hi! How can I help?', 'Wednesday at ten is free.'];
+    let replyIndex = 0;
+    const assistant: Assistant = {
+      reply: async () => ({ text: '', endCall: false }),
+      replyStream: async function* (ctx: AssistantContext) {
+        if (ctx.transcript.includes('book')) {
+          const block = await ctx.getAvailability();
+          assert.equal(block, AVAILABILITY);
+        }
+        yield `${replies[Math.min(replyIndex, replies.length - 1)]} `;
+        replyIndex += 1;
+      },
+    };
+    const live = new LiveCallSession({
+      identity: { callSid: 'CA11lazy', streamSid: 'MZ11lazy' },
+      sendAudio: () => {},
+      vad: scriptVad([...speech(50), ...silence(50), ...speech(50), ...silence(50)]),
+      policy: POLICY,
+      transcriber: queueTranscriber(['hello', 'book Wednesday morning']),
+      tts,
+      guide: GUIDE,
+      availability: async () => {
+        reads += 1;
+        return AVAILABILITY;
+      },
+      assistant,
+      calls,
+      logSession: (e) => phases.push(e),
+    });
+    await feed(live, 100);
+    assert.equal(reads, 0, 'a greeting must not touch the booking system');
+    await feed(live, 100);
+    assert.equal(reads, 1);
+    const names = phases.map((p) => `${String(p.phase)}:${String(p.event)}`);
+    assert.equal(names.includes('availability:start'), true);
+    assert.equal(names.includes('availability:done'), true);
+  });
+
   it('proposes a booking at most once with patient name and phone', async () => {
     const calls = new CallStore();
     const { tts, texts } = stubTts();
@@ -159,9 +239,10 @@ describe('live full Turn (ticket 11)', () => {
     const assistant: Assistant = {
       reply: async () => ({ text: '', endCall: false }),
       replyStream: async function* (ctx: AssistantContext) {
-        seenAvailability.push(ctx.availability);
+        seenAvailability.push(await ctx.getAvailability());
         const outcome = await ctx.proposeBooking({
           service: 'Appointment',
+          location: 'Bobby Clinic',
           date: '2026-09-30',
           time: '09:30',
           callerName: 'Asha',

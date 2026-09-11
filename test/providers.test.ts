@@ -19,7 +19,7 @@ function assistantCtx(overrides: Partial<AssistantContext> = {}): AssistantConte
     transcript: 'what are your hours',
     history: [],
     guide: GUIDE,
-    availability: 'AVAILABILITY: no slots known.',
+    getAvailability: async () => 'AVAILABILITY: no slots known.',
     proposeBooking: async () => ({ ok: false, reason: 'booking-not-wired' }),
     ...overrides,
   };
@@ -74,6 +74,7 @@ describe('OpenRouterAssistant', () => {
   it('runs a valid booking tool call through proposeBooking and speaks the outcome', async () => {
     const slot = {
       service: 'Sample Service',
+      location: 'Bobby Clinic',
       date: '2026-09-30',
       time: '09:30',
       callerName: 'Asha',
@@ -189,6 +190,100 @@ describe('OpenRouterAssistant', () => {
     });
     await assert.rejects(() => a.reply(assistantCtx()));
   });
+
+  it('never reads availability unless the model asks for it', async () => {
+    let reads = 0;
+    const a = new OpenRouterAssistant({
+      apiKey: 'k',
+      fetchFn: chatMessage({ role: 'assistant', content: 'Hi there! How can I help?' }),
+    });
+    const out = await a.reply(
+      assistantCtx({
+        transcript: 'hello',
+        getAvailability: async () => {
+          reads += 1;
+          return 'AVAILABILITY: secrets';
+        },
+      }),
+    );
+    assert.equal(out.text, 'Hi there! How can I help?');
+    assert.equal(reads, 0);
+  });
+
+  it('runs a get_availability tool call and answers with the live block', async () => {
+    const bodies: { messages: { role: string; content?: string | null }[] }[] = [];
+    let n = 0;
+    const fetchFn = (async (_url: string, init: { body: string }) => {
+      bodies.push(JSON.parse(String(init.body)) as { messages: { role: string; content?: string | null }[] });
+      n += 1;
+      if (n === 1) {
+        return jsonResponse({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'get_availability', arguments: '{}' } }],
+              },
+            },
+          ],
+        });
+      }
+      return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'Tuesday at nine is free.' } }] });
+    }) as unknown as typeof fetch;
+
+    let reads = 0;
+    const a = new OpenRouterAssistant({ apiKey: 'k', fetchFn });
+    const out = await a.reply(
+      assistantCtx({
+        transcript: 'any time on Tuesday?',
+        getAvailability: async () => {
+          reads += 1;
+          return 'AVAILABILITY: Tue 09:00';
+        },
+      }),
+    );
+    assert.equal(reads, 1);
+    assert.equal(out.text, 'Tuesday at nine is free.');
+    const toolMsg = bodies[1]!.messages.find((m) => m.role === 'tool');
+    assert.deepEqual(JSON.parse(toolMsg?.content ?? ''), { ok: true, availability: 'AVAILABILITY: Tue 09:00' });
+  });
+
+  it('turns a failed availability read into a speakable tool result', async () => {
+    let n = 0;
+    const bodies: { messages: { role: string; content?: string | null }[] }[] = [];
+    const fetchFn = (async (_url: string, init: { body: string }) => {
+      bodies.push(JSON.parse(String(init.body)) as { messages: { role: string; content?: string | null }[] });
+      n += 1;
+      if (n === 1) {
+        return jsonResponse({
+          choices: [
+            {
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'get_availability', arguments: '{}' } }],
+              },
+            },
+          ],
+        });
+      }
+      return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'Sorry, the clinic will confirm.' } }] });
+    }) as unknown as typeof fetch;
+    const a = new OpenRouterAssistant({ apiKey: 'k', fetchFn });
+    const out = await a.reply(
+      assistantCtx({
+        getAvailability: async () => {
+          throw new Error('availability-timeout after 10000ms');
+        },
+      }),
+    );
+    assert.equal(out.text, 'Sorry, the clinic will confirm.');
+    const toolMsg = bodies[1]!.messages.find((m) => m.role === 'tool');
+    const result = JSON.parse(toolMsg?.content ?? '') as { ok: boolean; say?: string };
+    assert.equal(result.ok, false);
+    assert.match(result.say ?? '', /booking system/);
+  });
 });
 
 function sseResponse(events: unknown[]): Response {
@@ -224,6 +319,7 @@ describe('OpenRouterAssistant streaming (ticket 11)', () => {
   it('proposes a booking once then streams the follow-up', async () => {
     const slot = {
       service: 'Sample Service',
+      location: 'Bobby Clinic',
       date: '2026-09-30',
       time: '09:30',
       callerName: 'Asha',
@@ -272,6 +368,48 @@ describe('OpenRouterAssistant streaming (ticket 11)', () => {
     assert.equal(text, 'Booked for Wednesday.');
     assert.equal(n, 2);
     assert.equal(proposed, 1);
+  });
+
+  it('streams a get_availability tool round before answering', async () => {
+    let n = 0;
+    let reads = 0;
+    const fetchFn = (async (_url: string, init: { body: string }) => {
+      n += 1;
+      if (n === 1) {
+        return sseResponse([
+          {
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    { index: 0, id: 'call_1', type: 'function', function: { name: 'get_availability', arguments: '{}' } },
+                  ],
+                },
+              },
+            ],
+          },
+        ]);
+      }
+      const body = JSON.parse(String(init.body)) as { messages: { role: string; content?: string | null }[] };
+      const toolMsg = body.messages.find((m) => m.role === 'tool');
+      assert.match(toolMsg?.content ?? '', /Tue 09:00/);
+      return sseResponse([{ choices: [{ delta: { content: 'Tuesday at nine is free.' } }] }]);
+    }) as unknown as typeof fetch;
+    const a = new OpenRouterAssistant({ apiKey: 'k', fetchFn });
+    const text = await collectTokens(
+      a.replyStream!(
+        assistantCtx({
+          transcript: 'any time Tuesday?',
+          getAvailability: async () => {
+            reads += 1;
+            return 'AVAILABILITY: Tue 09:00';
+          },
+        }),
+      ),
+    );
+    assert.equal(text, 'Tuesday at nine is free.');
+    assert.equal(n, 2);
+    assert.equal(reads, 1);
   });
 
   it('throws on streaming provider errors', async () => {
@@ -338,17 +476,24 @@ describe('WhisperTranscriber configuration', () => {
   it('posts to the configured endpoint with the configured model', async () => {
     let url = '';
     let model = '';
+    let prompt = '';
+    let filename = '';
     const fetchFn = (async (u: string, init: { body: FormData }) => {
       url = String(u);
       model = String(init.body.get('model'));
+      prompt = String(init.body.get('prompt'));
+      const file = init.body.get('file');
+      filename = file instanceof File ? file.name : '';
       return jsonResponse({ text: 'hi', segments: [] });
     }) as unknown as typeof fetch;
     const t = new WhisperTranscriber({
       stt: { apiKey: 'k', baseUrl: 'http://stub-whisper/v1', model: 'stub-model' },
       fetchFn,
     });
-    await t.transcribe(Buffer.from('audio'), 'audio/mpeg');
+    await t.transcribe(Buffer.from('audio'), 'audio/wav');
     assert.equal(url, 'http://stub-whisper/v1/audio/transcriptions');
     assert.equal(model, 'stub-model');
+    assert.match(prompt, /opening hours/);
+    assert.equal(filename, 'turn.wav');
   });
 });

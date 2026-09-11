@@ -19,6 +19,6 @@ services:
       - key: BROWSER_POOL_SIZE
         value: "4"
       - key: NAVIGATION_TIMEOUT_MS
-        value: "10000"
+        value: "20000"
       - key: ACTION_TIMEOUT_MS
-        value: "5000"
+        value: "15000"

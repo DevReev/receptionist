@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { CallStore } from '../src/calls.ts';
 import { LiveCallSession } from '../src/live.ts';
 import { attachStreamSocket } from '../src/stream.ts';
-import { FAILURE_LINE, type Assistant, type FailureEvent, type Transcriber, type TurnEvent } from '../src/app.ts';
+import { BOOKING_FAILURE_LINE, FAILURE_LINE, type Assistant, type FailureEvent, type Transcriber, type TurnEvent } from '../src/app.ts';
 import type { Vad } from '../src/endpoint.ts';
 import type { Tts } from '../src/tts.ts';
 import { FakeSocket, twilioMedia, twilioStart } from './fakeStream.ts';
@@ -181,47 +181,46 @@ describe('live error contract (ticket 12)', () => {
     assert.equal(live.isClosed, true);
   });
 
-  it('availability failure logs first, then speaks clinic-will-confirm and ends', async () => {
+  it('bounds a hanging availability read inside the getAvailability tool, keeping the call alive', async () => {
     const calls = new CallStore();
-    const order: string[] = [];
-    const { tts, texts } = stubTts(order);
-    const turns: TurnEvent[] = [];
+    const { tts, texts } = stubTts();
+    const phases: Record<string, unknown>[] = [];
     const failures: FailureEvent[] = [];
-    let assistantRan = false;
+    let toolError = '';
     const assistant: Assistant = {
       reply: async () => ({ text: '', endCall: false }),
-      replyStream: async function* () {
-        assistantRan = true;
-        yield 'should never speak. ';
+      replyStream: async function* (ctx) {
+        try {
+          await ctx.getAvailability();
+        } catch (err) {
+          toolError = err instanceof Error ? err.message : String(err);
+        }
+        yield 'Sorry, the clinic will confirm. ';
       },
     };
     const live = new LiveCallSession({
-      identity: { callSid: 'CA12avail', streamSid: 'MZ12avail' },
+      identity: { callSid: 'CA12hangavail', streamSid: 'MZ12hangavail' },
       sendAudio: () => {},
       vad: scriptVad([...speech(50), ...silence(50)]),
       policy: POLICY,
-      transcriber: { transcribe: async () => ({ text: 'any morning free', noSpeech: false }) },
+      transcriber: { transcribe: async () => ({ text: 'any slot?', noSpeech: false }) },
       tts,
       guide: GUIDE,
       assistant,
-      availability: () => {
-        throw new Error('picktime down');
-      },
+      availability: () => new Promise<string>(() => {}),
+      availabilityTimeoutMs: 30,
       calls,
-      logTurn: (e) => turns.push(e),
-      logFailure: (e) => {
-        failures.push(e);
-        order.push('failure-log');
-      },
+      logSession: (e) => phases.push(e),
+      logFailure: (e) => failures.push(e),
     });
     await feed(live, 100);
-    assert.equal(assistantRan, false);
-    assert.equal(failures.length, 1);
-    assert.match(failures[0]!.detail ?? '', /availability-error: picktime down/);
-    assert.ok(texts.includes(FAILURE_LINE));
-    assert.ok(order.indexOf('failure-log') < order.indexOf(`tts:${FAILURE_LINE}`));
-    assert.equal(turns[0]!.reply, FAILURE_LINE);
-    assert.equal(live.isClosed, true);
+    assert.match(toolError, /availability-timeout after 30ms/);
+    assert.ok(texts.some((t) => t.includes('clinic will confirm')));
+    assert.equal(failures.length, 0, 'availability failure must not end the call');
+    assert.equal(live.isClosed, false);
+    const names = phases.map((p) => `${String(p.phase)}:${String(p.event)}`);
+    assert.ok(names.includes('availability:start'));
+    assert.ok(names.includes('availability:error'));
   });
 
   it('caller hangup mid-turn logs the partial turn', async () => {
@@ -267,7 +266,7 @@ describe('live error contract (ticket 12)', () => {
     assert.equal(live.isClosed, true);
   });
 
-  it('booking write failures stay single-attempt: log first, speak clinic-will-confirm, end', async () => {
+  it('booking write failures stay single-attempt: log first, speak the booking-system line, end', async () => {
     const calls = new CallStore();
     const order: string[] = [];
     const { tts, texts } = stubTts(order);
@@ -280,6 +279,7 @@ describe('live error contract (ticket 12)', () => {
         yield 'One moment. ';
         await ctx.proposeBooking({
           service: 'Appointment',
+          location: 'Bobby Clinic',
           date: '2026-09-30',
           time: '09:30',
           callerName: 'Asha',
@@ -310,9 +310,10 @@ describe('live error contract (ticket 12)', () => {
     await feed(live, 100);
     assert.equal(attempts, 1);
     assert.equal(failures.length, 1);
-    assert.ok(texts.includes(FAILURE_LINE));
-    assert.ok(order.indexOf('failure-log') < order.indexOf(`tts:${FAILURE_LINE}`));
-    assert.equal(turns[0]!.reply, FAILURE_LINE);
+    assert.match(failures[0]!.detail ?? '', /booking-error: picktime save blew up/);
+    assert.ok(texts.includes(BOOKING_FAILURE_LINE));
+    assert.ok(order.indexOf('failure-log') < order.indexOf(`tts:${BOOKING_FAILURE_LINE}`));
+    assert.equal(turns[0]!.reply, BOOKING_FAILURE_LINE);
     assert.equal(live.isClosed, true);
   });
 
@@ -325,6 +326,7 @@ describe('live error contract (ticket 12)', () => {
       replyStream: async function* (ctx) {
         const first = await ctx.proposeBooking({
           service: 'Appointment',
+          location: 'Bobby Clinic',
           date: '2026-09-30',
           time: '09:30',
           callerName: 'Asha',
@@ -333,6 +335,7 @@ describe('live error contract (ticket 12)', () => {
         assert.equal(first.ok, true);
         const second = await ctx.proposeBooking({
           service: 'Appointment',
+          location: 'Bobby Clinic',
           date: '2026-09-30',
           time: '09:30',
           callerName: 'Asha',

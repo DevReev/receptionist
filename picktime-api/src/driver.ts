@@ -72,8 +72,8 @@ export interface ConfirmHeldInput {
   extraContact?: Record<string, string>;
 }
 
-export interface PicktimeDriver {
-  checkHealth(): Promise<void>;
+/** One page session's worth of operations; all reuse one navigation, bootstrap, and directory load. */
+export interface DriverSession {
   getDirectory(): Promise<Directory>;
   listSlots(args: {
     serviceId: string;
@@ -86,5 +86,16 @@ export interface PicktimeDriver {
   heartbeat(holdId: string): Promise<void>;
   releaseHold(holdId: string): Promise<void>;
   confirmBooking(args: ConfirmHeldInput | ({ holdId?: never } & ConfirmInput)): Promise<BookingRecord>;
+}
+
+export interface PicktimeDriver {
+  checkHealth(): Promise<void>;
+  /**
+   * One isolated page session per public API request: a single navigation and
+   * a single directory load shared by every operation the request performs.
+   * Retried once on transient (timeout/5xx) failures, but never once a write
+   * has started, so a retry can never double-hold or double-save.
+   */
+  withSession<T>(fn: (session: DriverSession) => Promise<T>): Promise<T>;
   close?(): Promise<void>;
 }

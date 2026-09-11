@@ -37,8 +37,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     pageId,
     timeZone: optional(env, 'TZ', 'Asia/Kolkata'),
     poolSize: int(env, 'BROWSER_POOL_SIZE', 4),
-    navigationTimeoutMs: int(env, 'NAVIGATION_TIMEOUT_MS', 10_000),
-    actionTimeoutMs: int(env, 'ACTION_TIMEOUT_MS', 5_000),
+    navigationTimeoutMs: int(env, 'NAVIGATION_TIMEOUT_MS', 20_000),
+    actionTimeoutMs: int(env, 'ACTION_TIMEOUT_MS', 15_000),
     rateLimitPerMinute: int(env, 'RATE_LIMIT_PER_MINUTE', 60),
   };
 }

@@ -1,8 +1,15 @@
 import { resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createApp, availabilityPlaceholder, type FailureEvent, type TurnEvent } from './app.ts';
-import { createInterimGuardrail } from './booking.ts';
+import {
+  createApp,
+  type BookingOutcome,
+  type FailureEvent,
+  type ProposedSlot,
+  type Transcriber,
+  type TurnEvent,
+} from './app.ts';
+import { AppointmentsClient } from './appointments.ts';
 import { CallStore } from './calls.ts';
 import { loadClinicGuide } from './clinic.ts';
 import { loadConfig, type Config } from './config.ts';
@@ -12,9 +19,37 @@ import { formatFailureLine } from './log.ts';
 import { OpenRouterAssistant } from './openrouter.ts';
 import { TwilioRecordingFetcher } from './recordings.ts';
 import { SileroVad } from './sileroVad.ts';
+import { SarvamTranscriber, SarvamTts } from './sarvam.ts';
 import { attachStreamEndpoint } from './stream.ts';
-import { OpenAiTts } from './tts.ts';
+import { OpenAiTts, type Tts } from './tts.ts';
 import { WhisperTranscriber } from './whisper.ts';
+
+function createTranscriber(config: Config): Transcriber {
+  if (config.sttProvider === 'sarvam') {
+    const { apiKey, baseUrl, sttModel, sttLanguageCode, sttMode } = config.sarvam;
+    return new SarvamTranscriber({
+      stt: { apiKey, baseUrl, model: sttModel, languageCode: sttLanguageCode, mode: sttMode },
+    });
+  }
+  return new WhisperTranscriber({ stt: config.stt });
+}
+
+function createTts(config: Config): Tts {
+  if (config.ttsProvider === 'sarvam') {
+    const { apiKey, baseUrl, ttsModel, ttsSpeaker, ttsLanguageCode, ttsSampleRate } = config.sarvam;
+    return new SarvamTts({
+      tts: { apiKey, baseUrl, model: ttsModel, speaker: ttsSpeaker, languageCode: ttsLanguageCode, sampleRate: ttsSampleRate },
+    });
+  }
+  return new OpenAiTts({
+    apiKey: config.tts.apiKey,
+    baseUrl: config.tts.baseUrl,
+    model: config.tts.model,
+    voice: config.tts.voice,
+    responseFormat: config.tts.responseFormat,
+    pcmSampleRate: config.tts.pcmSampleRate,
+  });
+}
 
 function endpointPolicy(config: Config): EndpointPolicy {
   return {
@@ -34,6 +69,52 @@ export async function main(): Promise<void> {
   const logTurn = (event: TurnEvent): void => {
     console.log(JSON.stringify({ ts: new Date().toISOString(), kind: 'turn', ...event }));
   };
+  // One attempt per Turn, keyed by call+slot so a retried confirm replays the
+  // same Booking instead of saving a second one.
+  const appointments = new AppointmentsClient({
+    appointments: config.appointments,
+    onEvent: (event) => {
+      console.log(JSON.stringify({ ts: new Date().toISOString(), ...event }));
+    },
+  });
+  const proposeBooking = async (args: {
+    callSid: string;
+    turn: number;
+    excerpt: string;
+    slot: ProposedSlot;
+  }): Promise<BookingOutcome> => {
+    // No patient name/phone in logs: identity stays in the Turn excerpt.
+    const { service, location, date, time } = args.slot;
+    const started = Date.now();
+    console.log(
+      JSON.stringify({ ts: new Date().toISOString(), kind: 'booking', event: 'start', callSid: args.callSid, turn: args.turn, service, location, date, time }),
+    );
+    const outcome = await appointments.book(args.slot, {
+      idempotencyKey: `${args.callSid}:${args.slot.location}:${args.slot.date}T${args.slot.time}`,
+    });
+    console.log(
+      JSON.stringify({
+        ts: new Date().toISOString(),
+        kind: 'booking',
+        event: 'outcome',
+        callSid: args.callSid,
+        turn: args.turn,
+        ok: outcome.ok,
+        reason: outcome.ok ? undefined : outcome.reason,
+        ms: Date.now() - started,
+      }),
+    );
+    if (!outcome.ok) {
+      logFailure({
+        callSid: args.callSid,
+        turn: args.turn,
+        reason: 'save-failed',
+        excerpt: args.excerpt,
+        detail: `booking-failed: ${outcome.reason}`,
+      });
+    }
+    return outcome;
+  };
   const app = createApp({
     guidePath: config.guidePath,
     sayVoice: config.sayVoice,
@@ -42,15 +123,20 @@ export async function main(): Promise<void> {
     recordMaxLength: config.recordMaxLength,
     voiceLoop: config.voiceLoop,
     streamWsUrl: config.streamWsUrl,
-    transcriber: new WhisperTranscriber({ stt: config.stt }),
-    assistant: new OpenRouterAssistant({ apiKey: config.llmApiKey, model: config.openrouterModel }),
+    transcriber: createTranscriber(config),
+    assistant: new OpenRouterAssistant({
+      apiKey: config.llmApiKey,
+      model: config.openrouterModel,
+      temperature: config.openrouterTemperature,
+    }),
     recordingFetcher: new TwilioRecordingFetcher({
       accountSid: config.twilioAccountSid,
       authToken: config.twilioAuthToken,
     }),
+    availability: () => appointments.availabilityBlock(),
     logFailure,
     logTurn,
-    onProposeBooking: createInterimGuardrail(logFailure),
+    onProposeBooking: proposeBooking,
   });
   const server = app.listen(config.port, () => {
     console.log(`receptionist listening on :${config.port}`);
@@ -62,17 +148,13 @@ export async function main(): Promise<void> {
     const vadModel = await SileroVad.load(config.vadModelPath);
     const policy = endpointPolicy(config);
     const calls = new CallStore();
-    const transcriber = new WhisperTranscriber({ stt: config.stt });
-    const tts = new OpenAiTts({
-      apiKey: config.tts.apiKey,
-      baseUrl: config.tts.baseUrl,
-      model: config.tts.model,
-      voice: config.tts.voice,
-      responseFormat: config.tts.responseFormat,
-      pcmSampleRate: config.tts.pcmSampleRate,
+    const transcriber = createTranscriber(config);
+    const tts = createTts(config);
+    const liveAssistant = new OpenRouterAssistant({
+      apiKey: config.llmApiKey,
+      model: config.openrouterModel,
+      temperature: config.openrouterTemperature,
     });
-    const liveAssistant = new OpenRouterAssistant({ apiKey: config.llmApiKey, model: config.openrouterModel });
-    const liveProposeBooking = createInterimGuardrail(logFailure);
     const lives = new Map<string, LiveCallSession>();
     attachStreamEndpoint(server, {
       onOpen: (identity, session) => {
@@ -93,13 +175,18 @@ export async function main(): Promise<void> {
           guide: { raw: '', name: 'the clinic' },
           loadGuide: () => loadClinicGuide(config.guidePath),
           assistant: liveAssistant,
-          availability: () => availabilityPlaceholder(),
-          onProposeBooking: (args) => liveProposeBooking(args),
+          availability: () => appointments.availabilityBlock(),
+          holdAfterMs: config.speakHoldMs,
+          availabilityTimeoutMs: config.appointmentsWaitMs,
+          onProposeBooking: proposeBooking,
           calls,
           logTurn,
           logFailure,
           onUtteranceLog: (entry) => {
             console.log(JSON.stringify({ ts: new Date().toISOString(), kind: 'utterance', ...entry }));
+          },
+          logSession: (event) => {
+            console.log(JSON.stringify({ ts: new Date().toISOString(), ...event }));
           },
           onPlaybackComplete: () => {},
         });

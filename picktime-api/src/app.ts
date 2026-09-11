@@ -1,7 +1,7 @@
 import express, { type Express, type NextFunction, type Request, type Response } from 'express';
 import { createHash } from 'node:crypto';
-import { ApiError, pickADoctor } from './errors.ts';
-import type { ConfirmInput, HoldRecord, PicktimeDriver, SlotEntry } from './driver.ts';
+import { ApiError, conflict, pickADoctor } from './errors.ts';
+import type { ConfirmInput, DriverSession, HoldRecord, PicktimeDriver, SlotEntry } from './driver.ts';
 import { MemoryDriver } from './memoryDriver.ts';
 import { Pool } from './pool.ts';
 import { openapiDocument } from './openapi.ts';
@@ -89,7 +89,7 @@ export function createApp(deps: AppDeps): Express {
 
   app.get('/v1/meta', async (_req: Request, res: Response) => {
     try {
-      const directory = await pool.run(() => driver.getDirectory());
+      const directory = await pool.run(() => driver.withSession((session) => session.getDirectory()));
       res.json({
         timeZone,
         fetchedAt: directory.fetchedAt,
@@ -120,22 +120,26 @@ export function createApp(deps: AppDeps): Express {
       return validation(res, deps.logEvent, pageId, 'slots', 'window capped at 31 days');
     }
     try {
-      const doctorIds = await resolveDoctorIds(driver, pool, doctorParam);
-      const locationIds = await resolveLocationIds(driver, pool, locationParam);
-      const fetched = await pool.run(async () => {
-        const perDoctor = await Promise.all(
-          doctorIds.flatMap((doctorId) =>
-            locationIds.map((locationId) => driver.listSlots({ serviceId, doctorId, locationId, from, to })),
-          ),
-        );
-        const merged: SlotEntry[] = [];
-        let fetchedAt = '';
-        for (const part of perDoctor) {
-          merged.push(...part.slots);
-          if (part.fetchedAt > fetchedAt) fetchedAt = part.fetchedAt;
-        }
-        return { slots: merged, fetchedAt };
-      });
+      // One session for the whole read: one navigation, one directory load,
+      // parallel per-day slot fetches shared by every doctor/location pair.
+      const fetched = await pool.run(() =>
+        driver.withSession(async (session) => {
+          const doctorIds = await resolveDoctorIds(session, doctorParam);
+          const locationIds = await resolveLocationIds(session, locationParam);
+          const perDoctor = await Promise.all(
+            doctorIds.flatMap((doctorId) =>
+              locationIds.map((locationId) => session.listSlots({ serviceId, doctorId, locationId, from, to })),
+            ),
+          );
+          const merged: SlotEntry[] = [];
+          let fetchedAt = '';
+          for (const part of perDoctor) {
+            merged.push(...part.slots);
+            if (part.fetchedAt > fetchedAt) fetchedAt = part.fetchedAt;
+          }
+          return { slots: merged, fetchedAt };
+        }),
+      );
       const cutoff = nowLocalISO(timeZone);
       const upcoming = fetched.slots
         .filter((s) => s.start.slice(0, 10) >= from && s.start.slice(0, 10) <= to && s.start >= cutoff)
@@ -164,8 +168,13 @@ export function createApp(deps: AppDeps): Express {
     }
     const slotStart = normalizeSlotStart(slotRaw);
     try {
-      const doctorId = await resolveSingleDoctor(driver, pool, doctorParam);
-      const hold = await pool.run(() => driver.holdSlot({ serviceId, doctorId, locationId, slotStart }));
+      const { hold, doctorId } = await pool.run(() =>
+        driver.withSession(async (session) => {
+          const resolved = await resolveSingleDoctor(session, doctorParam);
+          const created = await session.holdSlot({ serviceId, doctorId: resolved, locationId, slotStart });
+          return { hold: created, doctorId: resolved };
+        }),
+      );
       trackHold(hold);
       deps.logEvent({ kind: 'hold', pageId, holdId: hold.holdId, slotStart, doctorId });
       res.status(201).json({ ...hold, timeZone });
@@ -185,7 +194,7 @@ export function createApp(deps: AppDeps): Express {
     }
     untrackHold(holdParamId);
     try {
-      await pool.run(() => driver.releaseHold(holdParamId));
+      await pool.run(() => driver.withSession((session) => session.releaseHold(holdParamId)));
     } catch (err) {
       sendDriverError(res, deps.logEvent, pageId, 'release', err);
       return;
@@ -230,15 +239,17 @@ export function createApp(deps: AppDeps): Express {
     }
     const slotStart = normalizeSlotStart(slotRaw);
     try {
-      const doctorId = await resolveSingleDoctor(driver, pool, doctorParam);
-      await pool.run(async () => {
-        const hold = await driver.holdSlot({ serviceId, doctorId, locationId, slotStart });
-        try {
-          return hold;
-        } finally {
-          await driver.releaseHold(hold.holdId);
-        }
-      });
+      const doctorId = await pool.run(() =>
+        driver.withSession(async (session) => {
+          const resolved = await resolveSingleDoctor(session, doctorParam);
+          const hold = await session.holdSlot({ serviceId, doctorId: resolved, locationId, slotStart });
+          try {
+            return resolved;
+          } finally {
+            await session.releaseHold(hold.holdId);
+          }
+        }),
+      );
       deps.logEvent({ kind: 'booking', pageId, dryRun: true, slotStart, doctorId, held: true });
       res.json({ dryRun: true, held: true, saved: false, serviceId, doctorId, locationId, slotStart, timeZone });
     } catch (err) {
@@ -303,7 +314,6 @@ export function createApp(deps: AppDeps): Express {
         return;
       }
       const storedHold = holdId ? held.get(holdId)?.hold : undefined;
-      const doctorId = storedHold?.doctorId ?? (await resolveSingleDoctor(driver, pool, doctorParam));
       const locationId = storedHold?.locationId ?? locationParam;
       const slotStart = storedHold?.slotStart ?? normalizeSlotStart(slotRaw as string);
       const effectiveService = storedHold?.serviceId ?? serviceId;
@@ -315,25 +325,23 @@ export function createApp(deps: AppDeps): Express {
         validation(res, deps.logEvent, pageId, 'booking', 'locationId is required');
         return;
       }
-      await enforceContactPrefs(body);
-      const payloadHash = createHash('sha256')
-        .update(JSON.stringify({ serviceId: effectiveService, doctorId, locationId, slotStart, patientName, patientPhone, holdId: holdId ?? null }))
-        .digest('hex');
-      const seen = byKey.get(explicitKey);
-      if (seen) {
-        if (seen.hash !== payloadHash) {
-          deps.logEvent({ kind: 'booking', pageId, reason: 'conflict', message: 'idempotency key re-used with different payload' });
-          res.status(409).json({ error: 'conflict', message: 'idempotency key re-used with different payload' });
-          return;
-        }
-        res.status(seen.response.status).json(seen.response.body);
-        return;
-      }
-      const booking = await pool.run(() => {
-        if (holdId) {
-          untrackHold(holdId);
-          return driver.confirmBooking({
-            holdId,
+      // One session: resolve the doctor, re-read live contact prefs, then confirm.
+      const outcome = await pool.run(() =>
+        driver.withSession(async (session) => {
+          const doctorId = storedHold?.doctorId ?? (await resolveSingleDoctor(session, doctorParam));
+          await enforceContactPrefs(session, body);
+          const payloadHash = createHash('sha256')
+            .update(JSON.stringify({ serviceId: effectiveService, doctorId, locationId, slotStart, patientName, patientPhone, holdId: holdId ?? null }))
+            .digest('hex');
+          const seen = byKey.get(explicitKey);
+          if (seen) {
+            if (seen.hash !== payloadHash) {
+              throw conflict('idempotency key re-used with different payload');
+            }
+            return { status: seen.response.status, body: seen.response.body };
+          }
+          if (holdId) untrackHold(holdId);
+          const input: ConfirmInput = {
             serviceId: effectiveService,
             doctorId,
             locationId,
@@ -341,31 +349,25 @@ export function createApp(deps: AppDeps): Express {
             patientName: patientName as string,
             patientPhone: patientPhone as string,
             extraContact: extraContactFrom(body),
-          });
-        }
-        const input: ConfirmInput = {
-          serviceId: effectiveService,
-          doctorId,
-          locationId,
-          slotStart,
-          patientName: patientName as string,
-          patientPhone: patientPhone as string,
-          extraContact: extraContactFrom(body),
-        };
-        return driver.confirmBooking(input);
-      });
-      const responseBody: Record<string, unknown> = {
-        bookingId: booking.bookingId,
-        serviceId: booking.serviceId,
-        doctorId: booking.doctorId,
-        locationId: booking.locationId,
-        slotStart: booking.slotStart,
-        timeZone,
-      };
-      const stored: StoredResponse = { status: 201, body: responseBody };
-      byKey.set(explicitKey, { hash: payloadHash, response: stored });
-      deps.logEvent({ kind: 'booking', pageId, bookingId: booking.bookingId, slotStart: booking.slotStart, doctorId });
-      res.status(201).json(responseBody);
+          };
+          const booking = holdId
+            ? await session.confirmBooking({ ...input, holdId })
+            : await session.confirmBooking(input);
+          const responseBody: Record<string, unknown> = {
+            bookingId: booking.bookingId,
+            serviceId: booking.serviceId,
+            doctorId: booking.doctorId,
+            locationId: booking.locationId,
+            slotStart: booking.slotStart,
+            timeZone,
+          };
+          const stored: StoredResponse = { status: 201, body: responseBody };
+          byKey.set(explicitKey, { hash: payloadHash, response: stored });
+          deps.logEvent({ kind: 'booking', pageId, bookingId: booking.bookingId, slotStart: booking.slotStart, doctorId });
+          return stored;
+        }),
+      );
+      res.status(outcome.status).json(outcome.body);
     } catch (err) {
       if (err instanceof ApiError && err.code === 'pick-a-doctor') {
         deps.logEvent({ kind: 'booking', pageId, reason: err.code, candidates: err.details?.candidates });
@@ -379,8 +381,8 @@ export function createApp(deps: AppDeps): Express {
     }
   }
 
-  async function enforceContactPrefs(body: Record<string, unknown>): Promise<void> {
-    const directory = await pool.run(() => driver.getDirectory());
+  async function enforceContactPrefs(session: DriverSession, body: Record<string, unknown>): Promise<void> {
+    const directory = await session.getDirectory();
     const missing: string[] = [];
     for (const field of directory.requiredContactFields) {
       if (field === 'firstName') continue;
@@ -401,7 +403,7 @@ export function createApp(deps: AppDeps): Express {
       held.delete(hold.holdId);
       clearInterval(entry.heartbeatTimer);
       pool
-        .run(() => driver.releaseHold(hold.holdId))
+        .run(() => driver.withSession((session) => session.releaseHold(hold.holdId)))
         .catch((err: unknown) => {
           deps.logEvent({ kind: 'hold', pageId, reason: 'release-failed', holdId: hold.holdId });
           void err;
@@ -409,7 +411,7 @@ export function createApp(deps: AppDeps): Express {
       deps.logEvent({ kind: 'hold', pageId, reason: 'expired', holdId: hold.holdId, slotStart: hold.slotStart });
     }, holdTtlMs);
     const heartbeatTimer = setInterval(() => {
-      pool.run(() => driver.heartbeat(hold.holdId)).catch(() => {});
+      pool.run(() => driver.withSession((session) => session.heartbeat(hold.holdId))).catch(() => {});
     }, heartbeatMs);
     if (typeof expiresTimer.unref === 'function') expiresTimer.unref();
     if (typeof heartbeatTimer.unref === 'function') heartbeatTimer.unref();
@@ -440,33 +442,21 @@ export function createApp(deps: AppDeps): Express {
   return app;
 }
 
-async function resolveLocationIds(
-  driver: PicktimeDriver,
-  pool: Pool,
-  param: string | undefined,
-): Promise<string[]> {
+async function resolveLocationIds(session: DriverSession, param: string | undefined): Promise<string[]> {
   if (param) return [param];
-  const directory = await pool.run(() => driver.getDirectory());
+  const directory = await session.getDirectory();
   return directory.locations.map((l) => l.id);
 }
 
-async function resolveDoctorIds(
-  driver: PicktimeDriver,
-  pool: Pool,
-  param: string | undefined,
-): Promise<string[]> {
+async function resolveDoctorIds(session: DriverSession, param: string | undefined): Promise<string[]> {
   if (param) return [param];
-  const directory = await pool.run(() => driver.getDirectory());
+  const directory = await session.getDirectory();
   return directory.doctors.map((d) => d.id);
 }
 
-async function resolveSingleDoctor(
-  driver: PicktimeDriver,
-  pool: Pool,
-  param: string | undefined,
-): Promise<string> {
+async function resolveSingleDoctor(session: DriverSession, param: string | undefined): Promise<string> {
   if (param) return param;
-  const directory = await pool.run(() => driver.getDirectory());
+  const directory = await session.getDirectory();
   if (directory.doctors.length === 1) return directory.doctors[0].id;
   throw pickADoctor(directory.doctors);
 }

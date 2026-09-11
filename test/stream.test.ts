@@ -37,6 +37,8 @@ describe('voice loop config', () => {
   it('defaults to the streaming loop (ticket 13)', () => {
     const cfg = loadConfig({ ...BASE_ENV, STREAM_WS_URL: 'wss://example.com/stream' });
     assert.equal(cfg.voiceLoop, 'stream');
+    assert.equal(cfg.vadThreshold, 0.1);
+    assert.equal(cfg.stt.model, 'whisper-large-v3');
   });
 
   it('requires the public stream url by default', () => {

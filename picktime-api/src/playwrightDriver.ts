@@ -1,21 +1,27 @@
 import { chromium } from 'playwright';
-import type { APIRequestContext, Browser, BrowserContext, Page } from 'playwright';
+import type { APIRequestContext, APIResponse, Browser, BrowserContext, Page } from 'playwright';
 import type {
   BookingRecord,
   ConfirmHeldInput,
   ConfirmInput,
   Directory,
+  DriverSession,
   HoldRecord,
   PicktimeDriver,
   SlotEntry,
 } from './driver.ts';
-import { inventedSlot, pageDown, saveFailed, slotTaken, unknownDoctor, unknownLocation, unknownService, validation } from './errors.ts';
+import { mapLimit } from './concurrency.ts';
+import { ApiError, inventedSlot, pageDown, saveFailed, slotTaken, unknownDoctor, unknownLocation, unknownService, validation } from './errors.ts';
 import { eachDateOnly, isoToSlotInt, normalizeSlotStart, slotIntToISO } from './time.ts';
 
 export interface PlaywrightDriverOptions {
   pageId: string;
+  /** Page origin override, e.g. a local fake page in tests. Defaults to the live Picktime site. */
+  baseUrl?: string;
   navigationTimeoutMs?: number;
   actionTimeoutMs?: number;
+  /** Parallel per-day slot reads inside one session. */
+  dayConcurrency?: number;
   /** Headed Chromium for watched runs. Booking is XHR, not clicks: the window shows page loads, not the save itself. */
   headed?: boolean;
 }
@@ -35,21 +41,25 @@ interface ParsedDirectory {
   timeZone: string;
 }
 
-const BASE = 'https://www.picktime.com';
-const AUTH_ERROR = 'Auth token validation error';
+const DEFAULT_BASE = 'https://www.picktime.com';
+const DEFAULT_DAY_CONCURRENCY = 4;
 
 /** Playwright-driven Chromium fronting the Tool API (ADR-0001). XHR surface per research. */
 export class PlaywrightDriver implements PicktimeDriver {
   #browser: Browser | null = null;
   #pageId: string;
+  #baseUrl: string;
   #navigationTimeoutMs: number;
   #actionTimeoutMs: number;
+  #dayConcurrency: number;
   #headed: boolean;
 
   constructor(options: PlaywrightDriverOptions) {
     this.#pageId = options.pageId;
-    this.#navigationTimeoutMs = options.navigationTimeoutMs ?? 10_000;
-    this.#actionTimeoutMs = options.actionTimeoutMs ?? 5_000;
+    this.#baseUrl = (options.baseUrl ?? DEFAULT_BASE).replace(/\/+$/, '');
+    this.#navigationTimeoutMs = options.navigationTimeoutMs ?? 20_000;
+    this.#actionTimeoutMs = options.actionTimeoutMs ?? 15_000;
+    this.#dayConcurrency = Math.max(1, options.dayConcurrency ?? DEFAULT_DAY_CONCURRENCY);
     this.#headed = options.headed ?? false;
   }
 
@@ -59,7 +69,7 @@ export class PlaywrightDriver implements PicktimeDriver {
     try {
       const page = await context.newPage();
       try {
-        const response = await page.goto(`${BASE}/${this.#pageId}`, {
+        const response = await page.goto(`${this.#baseUrl}/${this.#pageId}`, {
           waitUntil: 'domcontentloaded',
           timeout: this.#navigationTimeoutMs,
         });
@@ -75,54 +85,100 @@ export class PlaywrightDriver implements PicktimeDriver {
     }
   }
 
-  async getDirectory(): Promise<Directory> {
-    return this.withAuthed(async (request, bootstrap) => {
-      const parsed = await this.loadParsedDirectory(request, bootstrap);
-      return {
-        services: parsed.services.map((s) => ({ id: s.id, name: s.name, durationMin: s.durationMin, cost: s.cost })),
-        doctors: parsed.doctors.map((d) => ({ id: d.id, name: d.name })),
-        locations: parsed.locations.map((l) => ({ id: l.id, name: l.name })),
-        requiredContactFields: [...parsed.requiredContactFields],
-        fetchedAt: new Date().toISOString(),
-      };
-    });
-  }
-
-  async listSlots(args: {
-    serviceId: string;
-    doctorId: string;
-    locationId: string;
-    from: string;
-    to: string;
-  }): Promise<{ slots: SlotEntry[]; fetchedAt: string }> {
-    return this.withAuthed(async (request, bootstrap) => {
-      const parsed = await this.loadParsedDirectory(request, bootstrap);
-      const service = parsed.services.find((s) => s.id === args.serviceId);
-      if (!service) throw unknownService(args.serviceId);
-      const doctor = parsed.doctors.find((d) => d.id === args.doctorId);
-      if (!doctor) throw unknownDoctor(args.doctorId);
-      if (!parsed.locations.some((l) => l.id === args.locationId)) throw unknownLocation(args.locationId);
-      // The page answers one day per query (weekend starts fall back to earliest),
-      // so fan out per day and keep only slots inside the requested window.
-      const slots: SlotEntry[] = [];
-      for (const day of eachDateOnly(args.from, args.to)) {
-        slots.push(...(await this.fetchDay(request, bootstrap, parsed, args.serviceId, args.doctorId, args.locationId, day)));
+  async withSession<T>(fn: (session: DriverSession) => Promise<T>): Promise<T> {
+    const browser = await this.ensureBrowser();
+    let wrote = false;
+    const attempt = async (): Promise<T> => {
+      wrote = false;
+      const context = await browser.newContext();
+      try {
+        const page = await context.newPage();
+        await page.goto(`${this.#baseUrl}/${this.#pageId}`, {
+          waitUntil: 'domcontentloaded',
+          timeout: this.#navigationTimeoutMs,
+        });
+        const bootstrap = await extractBootstrap(page, context);
+        const request = context.request;
+        // One directory read per session, shared by ID resolution and slot scans.
+        let parsedDirectory: Promise<ParsedDirectory> | null = null;
+        const parsed = (): Promise<ParsedDirectory> => (parsedDirectory ??= this.loadParsedDirectory(request, bootstrap));
+        const session: DriverSession = {
+          getDirectory: async () => toDirectory(await parsed()),
+          listSlots: async (args) => {
+            const directory = await parsed();
+            return this.listSlotsVia(request, bootstrap, directory, args.serviceId, args.doctorId, args.locationId, args.from, args.to);
+          },
+          holdSlot: async (args) => {
+            const directory = await parsed();
+            wrote = true;
+            return this.holdVia(request, bootstrap, directory, {
+              serviceId: args.serviceId,
+              doctorId: args.doctorId,
+              locationId: args.locationId,
+              slotStart: normalizeSlotStart(args.slotStart),
+            });
+          },
+          heartbeat: async (holdId) => {
+            wrote = true;
+            await this.apiPost(request, bootstrap, '/endpoint/1.0.0/ia/heartbeatSlot', { blockerKeys: [holdId] });
+          },
+          releaseHold: async (holdId) => {
+            wrote = true;
+            await this.releaseVia(request, bootstrap, holdId);
+          },
+          confirmBooking: async (args) => {
+            wrote = true;
+            const directory = await parsed();
+            if ('holdId' in args && args.holdId !== undefined) {
+              return this.saveVia(request, bootstrap, directory, {
+                blockerKey: args.holdId,
+                serviceId: args.serviceId,
+                doctorId: args.doctorId,
+                locationId: args.locationId,
+                slotStart: normalizeSlotStart(args.slotStart),
+                patientName: args.patientName,
+                patientPhone: args.patientPhone,
+                extraContact: args.extraContact,
+              });
+            }
+            const direct = args as ConfirmInput;
+            const slotStart = normalizeSlotStart(direct.slotStart);
+            const hold = await this.holdVia(request, bootstrap, directory, {
+              serviceId: direct.serviceId,
+              doctorId: direct.doctorId,
+              locationId: direct.locationId,
+              slotStart,
+            });
+            try {
+              return await this.saveVia(request, bootstrap, directory, {
+                blockerKey: hold.holdId,
+                serviceId: direct.serviceId,
+                doctorId: direct.doctorId,
+                locationId: direct.locationId,
+                slotStart,
+                patientName: direct.patientName,
+                patientPhone: direct.patientPhone,
+                extraContact: direct.extraContact,
+              });
+            } catch (err) {
+              await this.releaseVia(request, bootstrap, hold.holdId).catch(() => {});
+              throw err;
+            }
+          },
+        };
+        return await fn(session);
+      } finally {
+        await context.close();
       }
-      return { slots, fetchedAt: new Date().toISOString() };
-    });
-  }
-
-  async holdSlot(args: { serviceId: string; doctorId: string; locationId: string; slotStart: string }): Promise<HoldRecord> {
-    const start = normalizeSlotStart(args.slotStart);
-    return this.withAuthed(async (request, bootstrap) => {
-      const parsed = await this.loadParsedDirectory(request, bootstrap);
-      return this.holdVia(request, bootstrap, parsed, {
-        serviceId: args.serviceId,
-        doctorId: args.doctorId,
-        locationId: args.locationId,
-        slotStart: start,
-      });
-    });
+    };
+    try {
+      return await attempt();
+    } catch (err) {
+      // A write may have partially landed; never replay it. Reads and pre-write
+      // failures get exactly one more shot at a fresh page session.
+      if (wrote || !isRetryable(err)) throw err;
+      return attempt();
+    }
   }
 
   /** Hold and its follow-ups must share one session: the page ties blockers to the bootstrap. */
@@ -137,7 +193,7 @@ export class PlaywrightDriver implements PicktimeDriver {
     if (!parsed.doctors.some((d) => d.id === args.doctorId)) throw unknownDoctor(args.doctorId);
     if (!parsed.locations.some((l) => l.id === args.locationId)) throw unknownLocation(args.locationId);
     const day = args.slotStart.slice(0, 10);
-    const availability = await this.listSlotsVia(request, bootstrap, parsed, args.serviceId, args.doctorId, args.locationId, day, day);
+    const availability = (await this.listSlotsVia(request, bootstrap, parsed, args.serviceId, args.doctorId, args.locationId, day, day)).slots;
     if (!availability.some((s) => s.start === args.slotStart)) throw inventedSlot(args.slotStart);
     const slotInt = isoToSlotInt(args.slotStart);
     const endInt = addMinutesToSlotInt(slotInt, service.durationMin);
@@ -170,65 +226,8 @@ export class PlaywrightDriver implements PicktimeDriver {
     };
   }
 
-  async heartbeat(holdId: string): Promise<void> {
-    await this.withAuthed(async (request, bootstrap) => {
-      await this.apiPost(request, bootstrap, '/endpoint/1.0.0/ia/heartbeatSlot', { blockerKeys: [holdId] });
-    });
-  }
-
-  async releaseHold(holdId: string): Promise<void> {
-    await this.withAuthed(async (request, bootstrap) => {
-      await this.releaseVia(request, bootstrap, holdId);
-    });
-  }
-
   private async releaseVia(request: APIRequestContext, bootstrap: Bootstrap, holdId: string): Promise<void> {
     await this.apiPost(request, bootstrap, '/endpoint/1.0.0/ia/releaseSlot', { blockerKey: holdId });
-  }
-
-  async confirmBooking(args: ConfirmHeldInput | ({ holdId?: never } & ConfirmInput)): Promise<BookingRecord> {
-    if ('holdId' in args && args.holdId !== undefined) {
-      const held = args as ConfirmHeldInput;
-      return this.withAuthed(async (request, bootstrap) => {
-        const parsed = await this.loadParsedDirectory(request, bootstrap);
-        return this.saveVia(request, bootstrap, parsed, {
-          blockerKey: held.holdId,
-          serviceId: held.serviceId,
-          doctorId: held.doctorId,
-          locationId: held.locationId,
-          slotStart: normalizeSlotStart(held.slotStart),
-          patientName: held.patientName,
-          patientPhone: held.patientPhone,
-          extraContact: held.extraContact,
-        });
-      });
-    }
-    const direct = args as ConfirmInput;
-    const slotStart = normalizeSlotStart(direct.slotStart);
-    return this.withAuthed(async (request, bootstrap) => {
-      const parsed = await this.loadParsedDirectory(request, bootstrap);
-      const hold = await this.holdVia(request, bootstrap, parsed, {
-        serviceId: direct.serviceId,
-        doctorId: direct.doctorId,
-        locationId: direct.locationId,
-        slotStart,
-      });
-      try {
-        return await this.saveVia(request, bootstrap, parsed, {
-          blockerKey: hold.holdId,
-          serviceId: direct.serviceId,
-          doctorId: direct.doctorId,
-          locationId: direct.locationId,
-          slotStart,
-          patientName: direct.patientName,
-          patientPhone: direct.patientPhone,
-          extraContact: direct.extraContact,
-        });
-      } catch (err) {
-        await this.releaseVia(request, bootstrap, hold.holdId).catch(() => {});
-        throw err;
-      }
-    });
   }
 
   private async saveVia(
@@ -295,14 +294,16 @@ export class PlaywrightDriver implements PicktimeDriver {
     locationId: string,
     from: string,
     to: string,
-  ): Promise<SlotEntry[]> {
+  ): Promise<{ slots: SlotEntry[]; fetchedAt: string }> {
     const service = parsed.services.find((s) => s.id === serviceId);
     if (!service) throw unknownService(serviceId);
-    const slots: SlotEntry[] = [];
-    for (const day of eachDateOnly(from, to)) {
-      slots.push(...(await this.fetchDay(request, bootstrap, parsed, serviceId, doctorId, locationId, day)));
-    }
-    return slots;
+    if (!parsed.doctors.some((d) => d.id === doctorId)) throw unknownDoctor(doctorId);
+    if (!parsed.locations.some((l) => l.id === locationId)) throw unknownLocation(locationId);
+    // The page answers one day per query, so fan out per day, bounded and parallel.
+    const perDay = await mapLimit(eachDateOnly(from, to), this.#dayConcurrency, (day) =>
+      this.fetchDay(request, bootstrap, parsed, serviceId, doctorId, locationId, day),
+    );
+    return { slots: perDay.flat(), fetchedAt: new Date().toISOString() };
   }
 
   private async fetchDay(
@@ -351,30 +352,6 @@ export class PlaywrightDriver implements PicktimeDriver {
     return parseDirectory(load, flow);
   }
 
-  private async withAuthed<T>(fn: (request: APIRequestContext, bootstrap: Bootstrap) => Promise<T>): Promise<T> {
-    const browser = await this.ensureBrowser();
-    const runOnce = async (): Promise<T> => {
-      const context = await browser.newContext();
-      try {
-        const page = await context.newPage();
-        await page.goto(`${BASE}/${this.#pageId}`, {
-          waitUntil: 'domcontentloaded',
-          timeout: this.#navigationTimeoutMs,
-        });
-        const bootstrap = await extractBootstrap(page, context);
-        return await fn(context.request, bootstrap);
-      } finally {
-        await context.close();
-      }
-    };
-    try {
-      return await runOnce();
-    } catch (err) {
-      if (isAuthError(err)) return runOnce();
-      throw err;
-    }
-  }
-
   async close(): Promise<void> {
     await this.#browser?.close().catch(() => {});
     this.#browser = null;
@@ -390,14 +367,24 @@ export class PlaywrightDriver implements PicktimeDriver {
     return this.#browser;
   }
 
+  /** GET with one retry: page reads are idempotent and timeouts are the top failure mode. */
+  private async requestGet(request: APIRequestContext, url: string, headers: Record<string, string>): Promise<APIResponse> {
+    const call = (): Promise<APIResponse> => request.get(url, { headers, timeout: this.#actionTimeoutMs });
+    try {
+      return await call();
+    } catch {
+      return call();
+    }
+  }
+
   private async apiGet(
     request: APIRequestContext,
     bootstrap: Bootstrap,
     path: string,
   ): Promise<{ data?: unknown; [key: string]: unknown }> {
-    const res = await request.get(`${BASE}${path}`, {
-      headers: { scanToken: bootstrap.scanToken, browserId: bootstrap.browserId },
-      timeout: this.#actionTimeoutMs,
+    const res = await this.requestGet(request, `${this.#baseUrl}${path}`, {
+      scanToken: bootstrap.scanToken,
+      browserId: bootstrap.browserId,
     });
     if (!res.ok()) throw pageDown(`page responded ${res.status()}`);
     const payload = (await res.json()) as { status?: boolean; message?: string; data?: unknown };
@@ -411,9 +398,9 @@ export class PlaywrightDriver implements PicktimeDriver {
     bootstrap: Bootstrap,
     path: string,
   ): Promise<{ data?: unknown; [key: string]: unknown }> {
-    const res = await request.get(`${BASE}${path}`, {
-      headers: { scanToken: bootstrap.scanToken, browserId: bootstrap.browserId },
-      timeout: this.#actionTimeoutMs,
+    const res = await this.requestGet(request, `${this.#baseUrl}${path}`, {
+      scanToken: bootstrap.scanToken,
+      browserId: bootstrap.browserId,
     });
     if (!res.ok()) throw pageDown(`page responded ${res.status()}`);
     const payload = (await res.json()) as { status?: boolean; message?: string; data?: unknown };
@@ -430,7 +417,7 @@ export class PlaywrightDriver implements PicktimeDriver {
     path: string,
     body: Record<string, unknown>,
   ): Promise<{ data?: unknown; [key: string]: unknown }> {
-    const res = await request.post(`${BASE}${path}`, {
+    const res = await request.post(`${this.#baseUrl}${path}`, {
       headers: {
         scanToken: bootstrap.scanToken,
         browserId: bootstrap.browserId,
@@ -458,6 +445,16 @@ async function extractBootstrap(page: Page, context: BrowserContext): Promise<Bo
   const cookies = await context.cookies();
   const csrf = cookies.find((c) => c.name === 'pt_csrf')?.value ?? '';
   return { scanToken: scan, browserId: bid, csrf };
+}
+
+function toDirectory(parsed: ParsedDirectory): Directory {
+  return {
+    services: parsed.services.map((s) => ({ id: s.id, name: s.name, durationMin: s.durationMin, cost: s.cost })),
+    doctors: parsed.doctors.map((d) => ({ id: d.id, name: d.name })),
+    locations: parsed.locations.map((l) => ({ id: l.id, name: l.name })),
+    requiredContactFields: [...parsed.requiredContactFields],
+    fetchedAt: new Date().toISOString(),
+  };
 }
 
 function parseDirectory(load: Record<string, unknown>, flow: Record<string, unknown>): ParsedDirectory {
@@ -526,10 +523,10 @@ function mapSaveError(err: unknown, slotStart: string): Error {
   return saveFailed(slotStart, message);
 }
 
-
-function isAuthError(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err);
-  return message.includes(AUTH_ERROR);
+/** 4xx is a decision (unknown ID, taken slot); raw page/network errors and 5xx are transient. */
+function isRetryable(err: unknown): boolean {
+  if (err instanceof ApiError) return err.status >= 500;
+  return true;
 }
 
 function addMinutesToSlotInt(slotInt: string, minutes: number): string {

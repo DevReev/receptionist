@@ -36,7 +36,11 @@ export interface AssistantContext {
   transcript: string;
   history: ChatTurn[];
   guide: ClinicGuide;
-  availability: string;
+  /**
+   * Live Availability block. Fetched only when the assistant decides it
+   * needs it (booking intent), never on every Turn.
+   */
+  getAvailability: () => Promise<string>;
   proposeBooking: (slot: ProposedSlot) => Promise<BookingOutcome>;
 }
 
@@ -69,6 +73,7 @@ export interface TurnEvent extends CallIdentity {
 }
 export interface ProposedSlot {
   service: string;
+  location: string;
   date: string;
   time: string;
   callerName: string;
@@ -91,6 +96,8 @@ export interface AppDeps {
   twilioAuthToken?: string;
   transcriber: Transcriber;
   assistant: Assistant;
+  /** Live Availability block for the assistant; defaults to the no-slots placeholder. */
+  availability?: () => Promise<string>;
   recordingFetcher: RecordingFetcher;
   logFailure: (event: FailureEvent) => void;
   onProposeBooking: (args: {
@@ -112,6 +119,11 @@ export function greetingFor(guide: ClinicGuide): string {
 
 export const REPROMPT_LINE = "Sorry, I didn't catch that. Could you say that again?";
 export const FAILURE_LINE = "Sorry, I'm having trouble with that. The clinic will confirm shortly.";
+/** Spoken while the assistant is slow to answer, so the Caller does not hear dead air. */
+export const HOLD_ASSISTANT_LINE = 'Let me check that for you.';
+/** Distinct failure when the booking write fails, so the Caller knows which side failed. */
+export const BOOKING_FAILURE_LINE =
+  "Sorry, I'm having trouble reaching the booking system. The clinic will confirm shortly.";
 
 export function goodbyeFor(guide: ClinicGuide): string {
   return `Thanks for calling ${guide.name}. Goodbye.`;
@@ -243,7 +255,8 @@ export function createApp(deps: AppDeps): Express {
         transcript: tx.text,
         history: [...state.history],
         guide,
-        availability: availabilityPlaceholder(),
+        getAvailability: () =>
+          deps.availability ? deps.availability() : Promise.resolve(availabilityPlaceholder()),
         proposeBooking: (slot) =>
           deps.onProposeBooking({ callSid, turn: state.turn, excerpt: tx.text, slot }),
       });

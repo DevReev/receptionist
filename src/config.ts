@@ -1,11 +1,15 @@
+import type { AppointmentsEnv } from './appointments.ts';
 import type { SttConfig } from './whisper.ts';
 
 const STT_PROVIDER_DEFAULTS = {
   openai: { baseUrl: 'https://api.openai.com/v1', model: 'whisper-1' },
-  groq: { baseUrl: 'https://api.groq.com/openai/v1', model: 'whisper-large-v3-turbo' },
+  groq: { baseUrl: 'https://api.groq.com/openai/v1', model: 'whisper-large-v3' },
 } as const;
 
-type SttProvider = keyof typeof STT_PROVIDER_DEFAULTS;
+type WhisperProvider = keyof typeof STT_PROVIDER_DEFAULTS;
+
+export type SttProvider = WhisperProvider | 'sarvam';
+export type TtsProvider = 'openai' | 'sarvam';
 
 export type VoiceLoop = 'legacy' | 'stream';
 
@@ -16,6 +20,18 @@ export interface TtsEnv {
   voice: string;
   responseFormat: 'wav' | 'pcm';
   pcmSampleRate: number;
+}
+
+export interface SarvamEnv {
+  apiKey: string;
+  baseUrl: string;
+  sttModel: string;
+  sttLanguageCode: string;
+  sttMode: string;
+  ttsModel: string;
+  ttsSpeaker: string;
+  ttsLanguageCode: string;
+  ttsSampleRate: number;
 }
 
 export interface Config {
@@ -32,12 +48,25 @@ export interface Config {
   endpointMaxUtteranceMs: number;
   vadThreshold: number;
   endpointLatchDipMs: number;  vadModelPath: string;
+  /** Speak a holding line when a Turn phase runs long; <=0 disables holds. */
+  speakHoldMs: number;
+  /** Overall deadline for one Availability read; <=0 waits forever. */
+  appointmentsWaitMs: number;
   twilioAccountSid: string;
   twilioAuthToken: string;
+  /** Which transcription provider the server constructs. */
+  sttProvider: SttProvider;
+  /** Which speech provider the server constructs. */
+  ttsProvider: TtsProvider;
   stt: SttConfig;
   tts: TtsEnv;
+  sarvam: SarvamEnv;
+  /** Picktime Tool API the assistant reads Availability from and books through. */
+  appointments: AppointmentsEnv;
   llmApiKey: string;
   openrouterModel: string;
+  /** Sampling temperature for the assistant; a little warmer = more conversational. */
+  openrouterTemperature: number;
 }
 
 function required(env: NodeJS.ProcessEnv, name: string, missing: string[]): string {
@@ -72,10 +101,26 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const missing: string[] = [];
   const twilioAccountSid = required(env, 'TWILIO_ACCOUNT_SID', missing);
   const twilioAuthToken = required(env, 'TWILIO_AUTH_TOKEN', missing);
-  // Either STT key works: OpenAI is the researched default, Groq serves the
-  // same OpenAI-compatible transcription shape for whisper-large models.
+  const sttProviderRaw = env.STT_PROVIDER;
+  if (sttProviderRaw !== undefined && sttProviderRaw !== 'openai' && sttProviderRaw !== 'groq' && sttProviderRaw !== 'sarvam') {
+    throw new Error(`invalid STT_PROVIDER: ${sttProviderRaw} (expected openai|groq|sarvam)`);
+  }
+  // Either Whisper-compatible key works: OpenAI is the researched default,
+  // Groq serves the same shape for whisper-large models. An explicit
+  // STT_PROVIDER always wins; Sarvam has its own key.
+  const sttProvider: SttProvider =
+    sttProviderRaw ?? (env.OPENAI_API_KEY === undefined && env.GROQ_API_KEY !== undefined ? 'groq' : 'openai');
   const sttApiKey = env.OPENAI_API_KEY ?? env.GROQ_API_KEY ?? '';
-  if (!sttApiKey) missing.push('OPENAI_API_KEY or GROQ_API_KEY');
+  if (sttProvider !== 'sarvam' && !sttApiKey) missing.push('OPENAI_API_KEY or GROQ_API_KEY');
+  const ttsProviderRaw = optional(env, 'TTS_PROVIDER', 'openai');
+  if (ttsProviderRaw !== 'openai' && ttsProviderRaw !== 'sarvam') {
+    throw new Error(`invalid TTS_PROVIDER: ${ttsProviderRaw} (expected openai|sarvam)`);
+  }
+  const ttsProvider: TtsProvider = ttsProviderRaw;
+  const sarvamApiKey = env.SARVAM_API_KEY ?? '';
+  if ((sttProvider === 'sarvam' || ttsProvider === 'sarvam') && !sarvamApiKey) {
+    missing.push('SARVAM_API_KEY');
+  }
   const llmApiKey = required(env, 'OPENROUTER_API_KEY', missing);
   const voiceLoopRaw = optional(env, 'VOICE_LOOP', 'stream');
   if (voiceLoopRaw !== 'legacy' && voiceLoopRaw !== 'stream') {
@@ -90,12 +135,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   // Groq defaults apply only when the Groq key is the sole STT key; an
   // explicit OPENAI_API_KEY (or WHISPER_* overrides below) always wins.
-  const useGroqDefaults: boolean = env.OPENAI_API_KEY === undefined && env.GROQ_API_KEY !== undefined;
-  const provider: SttProvider = useGroqDefaults ? 'groq' : 'openai';
-  const defaults = STT_PROVIDER_DEFAULTS[provider];
+  const whisperProvider: WhisperProvider = sttProvider === 'groq' ? 'groq' : 'openai';
+  const defaults = STT_PROVIDER_DEFAULTS[whisperProvider];
   const ttsResponseFormatRaw = optional(env, 'TTS_RESPONSE_FORMAT', 'pcm');
   if (ttsResponseFormatRaw !== 'wav' && ttsResponseFormatRaw !== 'pcm') {
     throw new Error(`invalid TTS_RESPONSE_FORMAT: ${ttsResponseFormatRaw} (expected wav|pcm)`);
+  }
+  const appointmentsWindowDays = int(env, 'APPOINTMENTS_WINDOW_DAYS', 14);
+  if (appointmentsWindowDays < 1 || appointmentsWindowDays > 31) {
+    throw new Error(`invalid APPOINTMENTS_WINDOW_DAYS: ${appointmentsWindowDays} (expected 1-31)`);
   }
   return {
     port: int(env, 'PORT', 3000),
@@ -109,15 +157,34 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     endpointSilenceMs: int(env, 'ENDPOINT_SILENCE_MS', 700),
     endpointMinSpeechMs: int(env, 'ENDPOINT_MIN_SPEECH_MS', 300),
     endpointMaxUtteranceMs: int(env, 'ENDPOINT_MAX_UTTERANCE_MS', 30000),
-    vadThreshold: float(env, 'VAD_SPEECH_THRESHOLD', 0.5),
+    vadThreshold: float(env, 'VAD_SPEECH_THRESHOLD', 0.1),
     endpointLatchDipMs: int(env, 'ENDPOINT_LATCH_DIP_MS', 200),
     vadModelPath: optional(env, 'VAD_MODEL_PATH', './models/silero_vad.onnx'),
+    speakHoldMs: int(env, 'SPEAK_HOLD_MS', 3000),
+    appointmentsWaitMs: int(env, 'APPOINTMENTS_WAIT_MS', 10000),
     twilioAccountSid,
     twilioAuthToken,
+    sttProvider,
+    ttsProvider,
     stt: {
       apiKey: sttApiKey,
       baseUrl: optional(env, 'WHISPER_BASE_URL', defaults.baseUrl),
       model: optional(env, 'WHISPER_MODEL', defaults.model),
+    },
+    appointments: {
+      baseUrl: optional(env, 'APPOINTMENTS_API_URL', 'https://receptionist-3r3d.onrender.com'),
+      windowDays: appointmentsWindowDays,
+    },
+    sarvam: {
+      apiKey: sarvamApiKey,
+      baseUrl: optional(env, 'SARVAM_BASE_URL', 'https://api.sarvam.ai'),
+      sttModel: optional(env, 'SARVAM_STT_MODEL', 'saaras:v3'),
+      sttLanguageCode: optional(env, 'SARVAM_STT_LANGUAGE', 'en-IN'),
+      sttMode: optional(env, 'SARVAM_STT_MODE', 'transcribe'),
+      ttsModel: optional(env, 'SARVAM_TTS_MODEL', 'bulbul:v3'),
+      ttsSpeaker: optional(env, 'SARVAM_TTS_SPEAKER', 'shubh'),
+      ttsLanguageCode: optional(env, 'SARVAM_TTS_LANGUAGE', 'en-IN'),
+      ttsSampleRate: int(env, 'SARVAM_TTS_SAMPLE_RATE', 8000),
     },
     tts: {
       // TTS rides on OpenRouter itself: dedicated key wins, else the required
@@ -131,5 +198,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     },
     llmApiKey,
     openrouterModel: optional(env, 'OPENROUTER_MODEL', 'deepseek/deepseek-v4-flash-0731'),
+    openrouterTemperature: float(env, 'OPENROUTER_TEMPERATURE', 0.4),
   };
 }

@@ -12,7 +12,7 @@ import {
 } from './fakeStream.ts';
 
 const FRAME_BYTES = 160; // 20 ms of 8 kHz mulaw, the Twilio media frame size.
-const POLICY = { silenceMs: 700, minSpeechMs: 300, maxUtteranceMs: 30000, threshold: 0.5, latchDipMs: 200 };
+const POLICY = { silenceMs: 700, minSpeechMs: 300, maxUtteranceMs: 30000, threshold: 0.1, latchDipMs: 200 };
 
 describe('mulaw decode', () => {
   it('decodes known vectors', () => {
@@ -37,6 +37,14 @@ function scriptVad(pattern: ('speech' | 'silence')[]): Vad & { calls: number } {
       calls += 1;
       return pattern[Math.min(calls - 1, pattern.length - 1)] === 'speech' ? 0.9 : 0.05;
     },
+    reset: () => {},
+  };
+}
+
+function scoredVad(scores: number[]): Vad {
+  let calls = 0;
+  return {
+    score: async () => scores[Math.min(calls++, scores.length - 1)]!,
     reset: () => {},
   };
 }
@@ -110,6 +118,37 @@ describe('endpointer', () => {
     const h = harness(scriptVad(pattern));
     await h.feed(pattern);
     assert.equal(h.utterances.length, 1);
+  });
+
+  it('latches low-confidence phone speech with an isolated high score', async () => {
+    // Live Twilio audio crossed the threshold but never latched, so the
+    // Receptionist heard continuous media without producing an utterance.
+    // Sub-threshold frames inside the phrase still belong in its candidate
+    // duration and audio; only a dip exceeding the tolerance should reset it.
+    const phoneSpeech = Array.from({ length: 20 }, (_, i) => [0.35, 0.18, 0.12, 0.769][i % 4]!);
+    const scores = [...phoneSpeech, ...Array<number>(50).fill(0.05)];
+    const pattern = [...speech(phoneSpeech.length), ...silence(50)];
+    const h = harness(scoredVad(scores));
+    await h.feed(pattern);
+    assert.equal(h.utterances.length, 1);
+    assert.equal(h.utterances[0]!.durationMs, 400);
+  });
+
+  it('latches sustained phone speech that scores just above background', async () => {
+    const phoneSpeech = [0.409, ...Array<number>(12).fill(0.12), 0.379, ...Array<number>(12).fill(0.11), 0.574];
+    const scores = [...phoneSpeech, ...Array<number>(50).fill(0.05)];
+    const pattern = [...speech(phoneSpeech.length), ...silence(50)];
+    const h = harness(scoredVad(scores));
+    await h.feed(pattern);
+    assert.equal(h.utterances.length, 1);
+  });
+
+  it('includes pre-speech audio so the first word is not clipped', async () => {
+    const pattern = [...silence(20), ...speech(20), ...silence(50)];
+    const h = harness(scriptVad(pattern));
+    await h.feed(pattern);
+    assert.equal(h.utterances.length, 1);
+    assert.equal(h.utterances[0]!.durationMs, 700);
   });
 
   it('resets the latch when the dip exceeds the budget', async () => {

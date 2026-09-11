@@ -33,6 +33,8 @@ export interface Utterance {
 
 export interface EndpointObserver {
   onUtterance(utterance: Utterance): void;
+  /** Per-frame raw VAD score + latch state, for operator diagnostics. */
+  onScore?(score: number, latched: boolean): void;
 }
 
 /**
@@ -46,8 +48,10 @@ export class Endpointer {
   private readonly observer: EndpointObserver;
   private suspended = false;
   private speaking = false;
-  private speechMs = 0;
+  private candidateSamples = 0;
   private dipSamples = 0;
+  private preRollChunks: Int16Array[] = [];
+  private preRollSamples = 0;
   private chunks: Int16Array[] = [];
   private bufferedSamples = 0;
   private trailingSilenceSamples = 0;
@@ -86,26 +90,40 @@ export class Endpointer {
   private async process(mulaw: Buffer): Promise<void> {
     if (this.suspended || mulaw.length === 0) return;
     const pcm = decodeMulaw(mulaw);
-    const isSpeech = (await this.vad.score(pcm)) >= this.policy.threshold;
-    const ms = toMs(pcm.length);
+    const score = await this.vad.score(pcm);
+    this.observer.onScore?.(score, this.speaking);
+    const isSpeech = score >= this.policy.threshold;
     if (!this.speaking) {
       if (!isSpeech) {
+        if (this.candidateSamples === 0) {
+          this.pushPreRoll(pcm);
+          return;
+        }
+        this.candidateSamples += pcm.length;
         this.dipSamples += pcm.length;
-        // A short dip is VAD flicker — keep gathering. A dip past the
-        // budget means the noise burst is over: drop it all.
+        this.chunks.push(pcm);
+        this.bufferedSamples += pcm.length;
+        // Short VAD dips remain part of the candidate phrase. A dip past
+        // the budget means the noise burst is over: drop it all.
         if (toMs(this.dipSamples) >= this.policy.latchDipMs) {
+          this.candidateSamples = 0;
           this.chunks = [];
           this.bufferedSamples = 0;
-          this.speechMs = 0;
           this.dipSamples = 0;
         }
         return;
       }
-      this.speechMs += ms;
+      if (this.candidateSamples === 0) {
+        this.chunks = this.preRollChunks;
+        this.bufferedSamples = this.preRollSamples;
+        this.preRollChunks = [];
+        this.preRollSamples = 0;
+      }
+      this.candidateSamples += pcm.length;
       this.dipSamples = 0;
       this.chunks.push(pcm);
       this.bufferedSamples += pcm.length;
-      if (this.speechMs >= this.policy.minSpeechMs) this.speaking = true;
+      if (toMs(this.candidateSamples) >= this.policy.minSpeechMs) this.speaking = true;
       return;
     }
     this.chunks.push(pcm);
@@ -119,6 +137,23 @@ export class Endpointer {
 
   private bufferedMs(): number {
     return toMs(this.bufferedSamples);
+  }
+
+  private pushPreRoll(pcm: Int16Array): void {
+    this.preRollChunks.push(pcm);
+    this.preRollSamples += pcm.length;
+    const maxSamples = Math.round((this.policy.minSpeechMs / 1000) * ENDPOINT_SAMPLE_RATE);
+    while (this.preRollSamples > maxSamples) {
+      const first = this.preRollChunks[0]!;
+      const excess = this.preRollSamples - maxSamples;
+      if (first.length <= excess) {
+        this.preRollChunks.shift();
+        this.preRollSamples -= first.length;
+      } else {
+        this.preRollChunks[0] = first.subarray(excess);
+        this.preRollSamples -= excess;
+      }
+    }
   }
 
   private emit(): void {
@@ -140,8 +175,10 @@ export class Endpointer {
 
   private reset(): void {
     this.speaking = false;
-    this.speechMs = 0;
+    this.candidateSamples = 0;
     this.dipSamples = 0;
+    this.preRollChunks = [];
+    this.preRollSamples = 0;
     this.chunks = [];
     this.bufferedSamples = 0;
     this.trailingSilenceSamples = 0;

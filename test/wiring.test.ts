@@ -57,6 +57,115 @@ describe('config', () => {
     assert.equal(custom.tts.voice, 'some-voice');
   });
 
+  it('selects Sarvam for STT and TTS without requiring a Whisper key', () => {
+    const cfg = loadConfig({
+      OPENROUTER_API_KEY: 'o',
+      TWILIO_ACCOUNT_SID: 'ACx',
+      TWILIO_AUTH_TOKEN: 't',
+      STREAM_WS_URL: 'wss://example.com/stream',
+      SARVAM_API_KEY: 'sk-sarvam',
+      STT_PROVIDER: 'sarvam',
+      TTS_PROVIDER: 'sarvam',
+    });
+    assert.equal(cfg.sttProvider, 'sarvam');
+    assert.equal(cfg.ttsProvider, 'sarvam');
+    assert.equal(cfg.sarvam.apiKey, 'sk-sarvam');
+    assert.equal(cfg.sarvam.baseUrl, 'https://api.sarvam.ai');
+    assert.equal(cfg.sarvam.sttModel, 'saaras:v3');
+    assert.equal(cfg.sarvam.ttsModel, 'bulbul:v3');
+    assert.equal(cfg.sarvam.ttsSpeaker, 'shubh');
+    assert.equal(cfg.sarvam.ttsSampleRate, 8000);
+  });
+
+  it('keeps the Whisper/OpenAI providers selectable', () => {
+    const cfg = loadConfig({
+      OPENAI_API_KEY: 'sk-stt',
+      OPENROUTER_API_KEY: 'o',
+      TWILIO_ACCOUNT_SID: 'ACx',
+      TWILIO_AUTH_TOKEN: 't',
+      STREAM_WS_URL: 'wss://example.com/stream',
+      STT_PROVIDER: 'openai',
+      TTS_PROVIDER: 'openai',
+    });
+    assert.equal(cfg.sttProvider, 'openai');
+    assert.equal(cfg.ttsProvider, 'openai');
+    assert.equal(cfg.stt.apiKey, 'sk-stt');
+    assert.equal(cfg.stt.baseUrl, 'https://api.openai.com/v1');
+  });
+
+  it('defaults the appointments API to the Render deploy with a 14-day window', () => {
+    const cfg = loadConfig({
+      GROQ_API_KEY: 'g',
+      OPENROUTER_API_KEY: 'o',
+      TWILIO_ACCOUNT_SID: 'ACx',
+      TWILIO_AUTH_TOKEN: 't',
+      STREAM_WS_URL: 'wss://example.com/stream',
+    });
+    assert.equal(cfg.appointments.baseUrl, 'https://receptionist-3r3d.onrender.com');
+    assert.equal(cfg.appointments.windowDays, 14);
+  });
+
+  it('defaults the spoken hold and availability deadline, both tunable', () => {
+    const base = {
+      GROQ_API_KEY: 'g',
+      OPENROUTER_API_KEY: 'o',
+      TWILIO_ACCOUNT_SID: 'ACx',
+      TWILIO_AUTH_TOKEN: 't',
+      STREAM_WS_URL: 'wss://example.com/stream',
+    };
+    const cfg = loadConfig(base);
+    assert.equal(cfg.speakHoldMs, 3000);
+    assert.equal(cfg.appointmentsWaitMs, 10000);
+    const tuned = loadConfig({ ...base, SPEAK_HOLD_MS: '1500', APPOINTMENTS_WAIT_MS: '0' });
+    assert.equal(tuned.speakHoldMs, 1500);
+    assert.equal(tuned.appointmentsWaitMs, 0);
+  });
+
+  it('overrides the appointments URL and validates the window', () => {
+    const base = {
+      GROQ_API_KEY: 'g',
+      OPENROUTER_API_KEY: 'o',
+      TWILIO_ACCOUNT_SID: 'ACx',
+      TWILIO_AUTH_TOKEN: 't',
+      STREAM_WS_URL: 'wss://example.com/stream',
+    };
+    const cfg = loadConfig({
+      ...base,
+      APPOINTMENTS_API_URL: 'https://stub-api',
+      APPOINTMENTS_WINDOW_DAYS: '7',
+    });
+    assert.equal(cfg.appointments.baseUrl, 'https://stub-api');
+    assert.equal(cfg.appointments.windowDays, 7);
+    assert.throws(() => loadConfig({ ...base, APPOINTMENTS_WINDOW_DAYS: '0' }), /APPOINTMENTS_WINDOW_DAYS/);
+    assert.throws(() => loadConfig({ ...base, APPOINTMENTS_WINDOW_DAYS: '32' }), /APPOINTMENTS_WINDOW_DAYS/);
+  });
+
+  it('requires SARVAM_API_KEY when a Sarvam provider is selected', () => {
+    assert.throws(
+      () =>
+        loadConfig({
+          OPENROUTER_API_KEY: 'o',
+          TWILIO_ACCOUNT_SID: 'ACx',
+          TWILIO_AUTH_TOKEN: 't',
+          STREAM_WS_URL: 'wss://example.com/stream',
+          STT_PROVIDER: 'sarvam',
+        }),
+      /SARVAM_API_KEY/,
+    );
+  });
+
+  it('rejects unknown providers', () => {
+    const base = {
+      OPENROUTER_API_KEY: 'o',
+      TWILIO_ACCOUNT_SID: 'ACx',
+      TWILIO_AUTH_TOKEN: 't',
+      GROQ_API_KEY: 'g',
+      STREAM_WS_URL: 'wss://example.com/stream',
+    };
+    assert.throws(() => loadConfig({ ...base, STT_PROVIDER: 'deepgram' }), /STT_PROVIDER/);
+    assert.throws(() => loadConfig({ ...base, TTS_PROVIDER: 'elevenlabs' }), /TTS_PROVIDER/);
+  });
+
   it('rejects unknown TTS response formats', () => {
     assert.throws(
       () =>
@@ -95,6 +204,7 @@ describe('interim booking guardrail', () => {
       excerpt: 'yes book Wednesday',
       slot: {
         service: 'Sample Service',
+        location: 'Bobby Clinic',
         date: '2026-09-30',
         time: '09:30',
         callerName: 'Asha',

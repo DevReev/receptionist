@@ -4,6 +4,7 @@ import type {
   ConfirmHeldInput,
   ConfirmInput,
   Directory,
+  DriverSession,
   HoldRecord,
   PicktimeDriver,
   SlotEntry,
@@ -73,6 +74,10 @@ export class MemoryDriver implements PicktimeDriver {
 
   async checkHealth(): Promise<void> {
     if (this.down) throw pageDown('synthetic outage (memory driver)');
+  }
+
+  async withSession<T>(fn: (session: DriverSession) => Promise<T>): Promise<T> {
+    return fn(this);
   }
 
   async getDirectory(): Promise<Directory> {

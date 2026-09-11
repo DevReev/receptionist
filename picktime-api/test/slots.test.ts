@@ -98,8 +98,10 @@ describe('directory and slot listing', () => {
 
   it('tolerates tool platforms wrapping long query values with newlines', async () => {
     const api = await start();
+    const { from, to } = futureWindow();
+    const wrapped = `${from.slice(0, 7)}%0A-${from.slice(8)}`;
     const { status, body } = await api.fetch(
-      '/v1/get_available_slots?serviceId=svc-sample&locationId=loc-bobby-home&startDate=2026-09%0A-07&endDate=2026-09-07',
+      `/v1/get_available_slots?serviceId=svc-sample&locationId=loc-bobby-home&startDate=${wrapped}&endDate=${to}`,
     );
     assert.equal(status, 200);
     assert.ok((body.slots as unknown[]).length > 0);
