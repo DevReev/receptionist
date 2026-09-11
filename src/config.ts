@@ -18,6 +18,11 @@ export interface Config {
   recordMaxLength: number;
   voiceLoop: VoiceLoop;
   streamWsUrl: string;
+  endpointSilenceMs: number;
+  endpointMinSpeechMs: number;
+  endpointMaxUtteranceMs: number;
+  vadThreshold: number;
+  vadModelPath: string;
   twilioAccountSid: string;
   twilioAuthToken: string;
   stt: SttConfig;
@@ -38,11 +43,19 @@ function optional(env: NodeJS.ProcessEnv, name: string, fallback: string): strin
   return env[name] ?? fallback;
 }
 
-function int(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+function num(env: NodeJS.ProcessEnv, name: string, fallback: number, parse: (raw: string) => number): number {
   const raw = env[name];
   if (raw === undefined) return fallback;
-  const parsed = Number.parseInt(raw, 10);
+  const parsed = parse(raw);
   return Number.isNaN(parsed) ? fallback : parsed;
+}
+
+function int(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  return num(env, name, fallback, (raw) => Number.parseInt(raw, 10));
+}
+
+function float(env: NodeJS.ProcessEnv, name: string, fallback: number): number {
+  return num(env, name, fallback, (raw) => Number.parseFloat(raw));
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -76,6 +89,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     recordMaxLength: int(env, 'RECORD_MAX_LENGTH', 30),
     voiceLoop,
     streamWsUrl,
+    endpointSilenceMs: int(env, 'ENDPOINT_SILENCE_MS', 700),
+    endpointMinSpeechMs: int(env, 'ENDPOINT_MIN_SPEECH_MS', 300),
+    endpointMaxUtteranceMs: int(env, 'ENDPOINT_MAX_UTTERANCE_MS', 30000),
+    vadThreshold: float(env, 'VAD_SPEECH_THRESHOLD', 0.5),
+    vadModelPath: optional(env, 'VAD_MODEL_PATH', './models/silero_vad.onnx'),
     twilioAccountSid,
     twilioAuthToken,
     stt: {
