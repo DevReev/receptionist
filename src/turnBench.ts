@@ -5,7 +5,7 @@ import { decodeMulaw } from './mulaw.ts';
 import { percentile } from './benchmark.ts';
 import { CallStore } from './calls.ts';
 import { HYBRID_DEFAULTS } from './hybridDetector.ts';
-import type { Assistant, Transcriber } from './app.ts';
+import type { Assistant, Transcriber, Transcription } from './app.ts';
 import type { EndpointPolicy, Vad } from './endpoint.ts';
 import { LiveCallSession } from './live.ts';
 import type { PartialTranscript, RealtimeStt } from './sarvamRealtime.ts';
@@ -350,6 +350,12 @@ export interface TurnBenchScenario {
   callerAudio?: Buffer;
   /** Run while the greeting is still playing, to script a greeting Barge-in. */
   duringGreeting?: boolean;
+  /**
+   * Frames between the Turn boundary and the provider's final. 0 (the
+   * default) rejects `finalize` at once so the REST path answers immediately;
+   * a positive value scripts provider-final latency the speculation can hide.
+   */
+  finalDelayFrames?: number;
   run(ctx: TurnBenchContext): Promise<void>;
 }
 
@@ -361,6 +367,8 @@ export interface TurnBenchOptions {
   bargeInDipToleranceMs?: number;
   /** Wait past the pre-trigger for a partial to classify a Backchannel. */
   bargeInConfirmMs?: number;
+  /** Start clearly non-booking replies from partials; false runs the control. */
+  speculation?: boolean;
   /** Print session phase/trace lines while a scenario runs. */
   debug?: boolean;
 }
@@ -493,6 +501,7 @@ class ScenarioRunner implements TurnBenchContext {
   private readonly gate = new PlaybackGate();
   private readonly session: LiveCallSession;
   private readonly policy: EndpointPolicy;
+  private readonly finalDelayFrames: number;
   private readonly callerBank: Buffer;
   private partialHandler: ((partial: PartialTranscript) => void) | null = null;
   private speechOffset = 0;
@@ -503,10 +512,13 @@ class ScenarioRunner implements TurnBenchContext {
   private nextReferenceFrame = 0;
   private readonly declarations: { startFrame: number; text: string }[] = [];
   private readonly echoDefaults: EchoFeedOptions;
+  /** Scripted provider finals awaiting their frame, for `finalDelayFrames`. */
+  private finalWaiters: { dueFrame: number; resolve: (tx: Transcription) => void }[] = [];
 
   constructor(scenario: TurnBenchScenario, options: TurnBenchOptions, echoDefaults: EchoFeedOptions) {
     this.policy = options.policy;
     this.echoDefaults = echoDefaults;
+    this.finalDelayFrames = scenario.finalDelayFrames ?? 0;
     this.callerBank = scenario.callerAudio ?? syntheticVoice(8000 * 5, 3);
     const vad: Vad = {
       score: async () => {
@@ -541,7 +553,12 @@ class ScenarioRunner implements TurnBenchContext {
       endpointing: 'manual',
       pushAudio: () => {},
       speechStart: () => {},
-      finalize: () => Promise.reject(new Error('bench-realtime-not-streaming')),
+      finalize: () =>
+        this.finalDelayFrames > 0
+          ? new Promise<Transcription>((resolve) =>
+              this.finalWaiters.push({ dueFrame: this.frame + this.finalDelayFrames, resolve }),
+            )
+          : Promise.reject(new Error('bench-realtime-not-streaming')),
       onPartial: (handler) => {
         this.partialHandler = handler;
       },
@@ -562,6 +579,7 @@ class ScenarioRunner implements TurnBenchContext {
       bargeInMinSpeechMs: options.bargeInMinSpeechMs,
       bargeInDipToleranceMs: options.bargeInDipToleranceMs,
       bargeInConfirmMs: options.bargeInConfirmMs,
+      speculation: options.speculation,
       noResponseMs: 0,
       holdAfterMs: 0,
       turnDeadlineMs: 0,
@@ -741,6 +759,18 @@ class ScenarioRunner implements TurnBenchContext {
     this.frameCallerActive = false;
     this.frameEchoMixed = false;
     this.frame += 1;
+    this.releaseDueFinals();
+  }
+
+  /** Resolve scripted provider finals whose delay has elapsed. */
+  private releaseDueFinals(): void {
+    if (this.finalWaiters.length === 0) return;
+    const due = this.finalWaiters.filter((waiter) => waiter.dueFrame <= this.frame);
+    if (due.length === 0) return;
+    this.finalWaiters = this.finalWaiters.filter((waiter) => waiter.dueFrame > this.frame);
+    for (const waiter of due) {
+      waiter.resolve({ text: this.latestDeclarationText(this.frame), noSpeech: false });
+    }
   }
 
   private retainPlayedReference(): void {
@@ -787,6 +817,8 @@ export interface TurnBenchReportMeta {
   bargeInDipToleranceMs: number;
   /** How long the candidate waited for partial semantics in this run. */
   bargeInConfirmMs: number;
+  /** Whether clearly non-booking partials started replies in this run. */
+  speculation: boolean;
 }
 
 /**
@@ -856,6 +888,7 @@ export function formatTurnBenchReport(
     `policy: silence ${meta.policy.silenceMs}ms (Barge-in candidate reset)  min-speech ${meta.policy.minSpeechMs}ms  max-utterance ${meta.policy.maxUtteranceMs}ms  threshold ${meta.policy.threshold}  dip ${meta.policy.latchDipMs}ms`,
     `detector: hybrid local  adaptive pause ${HYBRID_DEFAULTS.minPauseMs}-${HYBRID_DEFAULTS.maxPauseMs}ms (default ${HYBRID_DEFAULTS.defaultPauseMs}ms, emergency ${HYBRID_DEFAULTS.emergencyMs}ms)  field floor ${HYBRID_DEFAULTS.dialogueFloorMs}ms`,
     `barge-in: min-speech ${meta.bargeInMinSpeechMs}ms  dip-tolerance ${meta.bargeInDipToleranceMs}ms  confirm ${meta.bargeInConfirmMs}ms`,
+    `speculation: ${meta.speculation ? 'on (clearly non-booking partials answer early)' : 'off (every reply waits for its final)'}`,
   ];
   const gatePass =
     aggregate.gate.falsePassRate <= ECHO_GATE_BARS.falsePassRate &&
@@ -905,6 +938,16 @@ export function defaultTurnBenchScenarios(echoVariants: EchoVariant[] = DEFAULT_
   return [
     {
       name: 'steady-turn',
+      run: async (ctx) => {
+        await callerTurn(ctx);
+        await ctx.silence(120);
+      },
+    },
+    {
+      // The provider holds its final for 600 ms after the boundary: the
+      // speculation path answers from the partial, the control waits it out.
+      name: 'speculative-faq',
+      finalDelayFrames: 30,
       run: async (ctx) => {
         await callerTurn(ctx);
         await ctx.silence(120);

@@ -8,6 +8,7 @@ import {
   NO_RESPONSE_LINE,
   REPROMPT_LINE,
   type Assistant,
+  type AssistantContext,
   type AssistantEvent,
   type BookingOutcome,
   type ProposedSlot,
@@ -33,6 +34,12 @@ import type { EchoGateOptions } from './echoGate.ts';
 import type { FixedAudioCache } from './fixedAudio.ts';
 import { STALL_DEFAULTS } from './hybridDetector.ts';
 import type { RealtimeStt } from './sarvamRealtime.ts';
+import {
+  classifySpeculation,
+  guideBookingNames,
+  partialAgrees,
+  type SpeculationDecision,
+} from './speculation.ts';
 import type { PlaybackResult } from './transport.ts';
 import type { StreamIdentity } from './stream.ts';
 import type { TraceFn } from './trace.ts';
@@ -112,6 +119,12 @@ export interface LiveCallOptions {
   stallGraceMs?: number;
   /** Echo-gate tuning; defaults ship the bench-tuned values. */
   echoGate?: EchoGateOptions;
+  /**
+   * Partial-transcript speculation: a clearly non-booking partial starts reply
+   * generation early, kept when the final agrees and regenerated otherwise.
+   * Defaults on; `false` runs every Turn from the final.
+   */
+  speculation?: boolean;
   /** Whole-Turn deadline for the LLM response. <=0 disables. */
   turnDeadlineMs?: number;
   /** Shared fixed-phrase audio cache; hits skip the provider. */
@@ -264,6 +277,37 @@ interface ActiveSpeech {
   abort: AbortController;
   response: SpeechResponse;
   cancelled: boolean;
+  /** Started from a partial, before its Turn's final transcription landed. */
+  speculative: boolean;
+}
+
+/**
+ * Why a speculation was discarded. Every abort is traced with one of these.
+ */
+type SpeculationAbort =
+  | 'booking-cue'
+  | 'booking-final'
+  | 'rewritten'
+  | 'stalled-turn'
+  | 'final-mismatch'
+  | 'deterministic-turn'
+  | 'empty-final'
+  | 'transcribe-error'
+  | 'generation-error'
+  | 'call-closed';
+
+/**
+ * A reply generation started from a partial, before the Turn's final. The
+ * first token pull runs immediately so the model works while the Caller is
+ * still speaking; the session either keeps this stream for the Turn or aborts
+ * it when the final disagrees.
+ */
+interface PendingSpeculation {
+  partial: string;
+  startedAt: number;
+  controller: AbortController;
+  iterator: AsyncIterator<string>;
+  first: Promise<IteratorResult<string>>;
 }
 
 /**
@@ -293,6 +337,11 @@ export class LiveCallSession {
   private consecutiveStalls = 0;
   private readonly turnDeadlineMs: number;
   private readonly fixedCache: FixedAudioCache | undefined;
+  private readonly speculationEnabled: boolean;
+  /** A partial-started generation awaiting its Turn's final. */
+  private speculation: PendingSpeculation | null = null;
+  /** Service, doctor, and Location names from the guide, for the cue classifier. */
+  private cueNames: readonly string[];
   private readonly reducer: DialogueReducer;
   private readonly onProposeBooking:
     | ((args: LiveProposeBookingArgs) => Promise<BookingOutcome>)
@@ -369,6 +418,8 @@ export class LiveCallSession {
     this.providerBoundaries = turnDetection === 'sarvam' && opts.realtime?.endpointing === 'vad';
     this.turnDeadlineMs = opts.turnDeadlineMs ?? DEFAULT_TURN_DEADLINE_MS;
     this.fixedCache = opts.fixedCache;
+    this.speculationEnabled = opts.speculation ?? true;
+    this.cueNames = guideBookingNames(this.guide.raw);
     this.reducer = opts.dialogue ?? new DialogueReducer();
     this.onProposeBooking = opts.onProposeBooking;
     this.calls = opts.calls;
@@ -504,12 +555,18 @@ export class LiveCallSession {
     this.prefetchAvailability();
     if (this.loadGuide) {
       try {
-        this.guide = await this.loadGuide();
+        this.adoptGuide(await this.loadGuide());
       } catch {
         // Greet with the injected guide rather than leaving the Caller on silence.
       }
     }
     await this.speakFixed(greetingFor(this.guide));
+  }
+
+  /** One write path for the guide, keeping the Booking-cue names in step. */
+  private adoptGuide(guide: ClinicGuide): void {
+    this.guide = guide;
+    this.cueNames = guideBookingNames(guide.raw);
   }
 
   receiveAudio(mulaw: Buffer): Promise<void> {
@@ -690,6 +747,7 @@ export class LiveCallSession {
       abort: new AbortController(),
       response: silentResponse(generation),
       cancelled: false,
+      speculative: false,
     };
     this.setPhase('SPEAKING');
     this.prepareSpeaking(opts.kind);
@@ -793,6 +851,14 @@ export class LiveCallSession {
       speech.abort.abort('caller-barge-in');
       speech.response.cancel('caller-barge-in');
       this.cancelledThrough = speech.generation;
+      if (speech.speculative) {
+        this.trace?.({
+          component: 'call',
+          event: 'speculation-aborted',
+          reason: 'caller-barge-in',
+          generation: speech.generation,
+        });
+      }
       if (speech.kind === 'readback') this.setDialogue(this.reducer.clearReadback(this.dialogue));
     }
     // A reply still waiting on its first token (e.g. behind a hold line) is
@@ -807,9 +873,170 @@ export class LiveCallSession {
     this.scheduleNoResponse();
   }
 
-  /** Read-only speculation from a stable partial; writes stay forbidden. */
+  /**
+   * One partial from the live channel. A clearly non-booking partial starts a
+   * speculative generation; a later partial that turns booking-sensitive or
+   * rewrites the utterance aborts it. Availability prefetch stays reactive and
+   * read-only.
+   */
   private handlePartial(text: string): void {
-    if (this.closed || this.partialWarmStarted || this.availabilityForTurn) return;
+    if (this.closed) return;
+    const decision = classifySpeculation(text, { names: this.cueNames });
+    if (this.speculation) {
+      if (!decision.speculative) {
+        this.abortSpeculation(this.speculation, 'booking-cue', text, decision.cue);
+      } else if (!partialAgrees(this.speculation.partial, text)) {
+        this.abortSpeculation(this.speculation, 'rewritten', text);
+        if (this.canSpeculate()) this.startSpeculation(text, decision);
+      }
+    } else if (decision.speculative && this.canSpeculate()) {
+      this.startSpeculation(text, decision);
+    }
+    this.warmAvailabilityForPartial(text);
+  }
+
+  /** Speculation needs an LLM stream and an open listening floor. */
+  private canSpeculate(): boolean {
+    return (
+      this.speculationEnabled &&
+      this.assistant?.replyStream !== undefined &&
+      this.turnTaking.isListening &&
+      this.activeTurn === null
+    );
+  }
+
+  /**
+   * Start the Turn before its final: the model streams text-only (Booking
+   * tools suppressed) from the partial, and the first token pull runs now so
+   * generation is already in flight when the Caller stops.
+   */
+  private startSpeculation(partial: string, decision: SpeculationDecision): void {
+    const assistant = this.assistant;
+    if (!assistant?.replyStream) return;
+    const controller = new AbortController();
+    const iterator = assistant.replyStream(this.speculativeContext(partial), controller.signal)[Symbol.asyncIterator]();
+    const spec: PendingSpeculation = {
+      partial,
+      startedAt: Date.now(),
+      controller,
+      iterator,
+      first: iterator.next(),
+    };
+    // A failure before the boundary must not surface as an unhandled rejection;
+    // the Turn's handler awaits the same promise and falls back normally.
+    spec.first.catch(() => {});
+    this.speculation = spec;
+    this.turnAbort = controller;
+    this.trace?.({
+      component: 'call',
+      event: 'speculation-start',
+      partial,
+      reason: decision.reason,
+      chars: partial.length,
+    });
+    this.logPhase('speculation', 'start', { chars: partial.length, reason: decision.reason });
+  }
+
+  /** Assistant context for speculation: no tools, no writes, no history. */
+  private speculativeContext(transcript: string): AssistantContext {
+    const availabilityBlock = this.warmAvailabilityBlock();
+    return {
+      transcript,
+      history: [...this.calls.get(this.identity.callSid).history],
+      guide: this.guide,
+      callerPhone: this.identity.callerPhone,
+      availability: availabilityBlock,
+      sessionId: this.identity.callSid,
+      dialogueAct: this.dialogueAct(this.dialogue),
+      speculative: true,
+      onAssistantEvent: (event: AssistantEvent): void => {
+        const { round, event: name, name: tool, ...fields } = event;
+        this.logPhase('llm', name, { round, tool, speculative: true, ...fields });
+      },
+      getAvailability: () => Promise.resolve(availabilityBlock ?? availabilityPlaceholder()),
+      proposeBooking: (): Promise<BookingOutcome> =>
+        Promise.resolve({ ok: false, reason: 'a speculative reply may not book' }),
+    };
+  }
+
+  /**
+   * Discard a speculation: abort its model stream, clear any audio it already
+   * played, and make sure its text can never reach history. `finalText` is the
+   * final that defeated it, when there was one.
+   */
+  private abortSpeculation(
+    spec: PendingSpeculation,
+    reason: SpeculationAbort,
+    finalText?: string,
+    cue?: string,
+  ): void {
+    if (this.speculation === spec) this.speculation = null;
+    spec.controller.abort(reason);
+    if (this.turnAbort === spec.controller) this.turnAbort = null;
+    const speech = this.activeSpeech;
+    if (speech?.speculative) {
+      speech.cancelled = true;
+      speech.response.cancel(reason);
+      this.cancelledThrough = Math.max(this.cancelledThrough, speech.generation);
+      this.clearPlaybackFn?.(reason);
+      this.activeSpeech = null;
+    }
+    this.trace?.({
+      component: 'call',
+      event: 'speculation-aborted',
+      reason,
+      cue,
+      partial: spec.partial,
+      final: finalText,
+      ms: Date.now() - spec.startedAt,
+    });
+    this.logPhase('speculation', 'aborted', { reason, chars: spec.partial.length });
+  }
+
+  /** Await a kept speculation to its playback end and log the Turn. */
+  private async settleSpeculation(
+    run: Promise<{ text: string; generation: number }>,
+    spec: PendingSpeculation,
+    turn: number,
+    excerpt: string,
+  ): Promise<'spoke' | 'interrupted' | 'fallback'> {
+    let result: { text: string; generation: number };
+    try {
+      result = await run;
+    } catch (err) {
+      if (this.closed || this.interruptedTurn === turn) return 'interrupted';
+      this.trace?.({
+        component: 'call',
+        event: 'speculation-aborted',
+        reason: 'generation-error',
+        partial: spec.partial,
+        detail: err instanceof Error ? err.message : String(err),
+        ms: Date.now() - spec.startedAt,
+      });
+      return 'fallback';
+    }
+    if (this.closed) return 'interrupted';
+    if (this.interruptedTurn === turn) return 'interrupted';
+    if (result.generation === 0) return 'fallback';
+    if (result.generation <= this.cancelledThrough) return 'interrupted';
+    const reply = result.text.trim();
+    if (reply === '') return 'fallback';
+    this.calls.pushHistory(this.identity.callSid, { role: 'receptionist', text: reply });
+    this.logTurn?.({
+      callSid: this.identity.callSid,
+      turn,
+      excerpt,
+      reply,
+      endCall: false,
+      miss: false,
+    });
+    this.activeTurn = null;
+    return 'spoke';
+  }
+
+  /** Read-only Availability prefetch from an availability-intent partial. */
+  private warmAvailabilityForPartial(text: string): void {
+    if (this.partialWarmStarted || this.availabilityForTurn) return;
     if (!isAvailabilityIntent(text)) return;
     this.partialWarmStarted = true;
     this.logPhase('availability', 'speculative-start', { chars: text.length });
@@ -880,6 +1107,16 @@ export class LiveCallSession {
   }
 
   /**
+   * The open-of-call Availability block while it is still fresh enough to
+   * serve later Turns without a Picktime read.
+   */
+  private warmAvailabilityBlock(): string | undefined {
+    const warm = this.warmAvailability;
+    if (warm === null || warm.block === null) return undefined;
+    return Date.now() - warm.startedAt < WARM_AVAILABILITY_MS ? warm.block : undefined;
+  }
+
+  /**
    * Controller-owned Availability read: reuses the open-of-call prefetch
    * while it is fresh, otherwise reads live. One read per Turn.
    */
@@ -922,6 +1159,7 @@ export class LiveCallSession {
     this.setPhase('CLOSED');
     this.cancelNoResponse();
     clearInterval(this.scoreTimer);
+    if (this.speculation) this.abortSpeculation(this.speculation, 'call-closed');
     this.logSession?.({ callSid: this.identity.callSid, kind: 'session', event: 'close', reason });
     this.activeSpeech?.abort.abort();
     this.activeSpeech?.response.cancel('call-closed');
@@ -979,6 +1217,21 @@ export class LiveCallSession {
       meanScore: stats.meanScore,
     });
     this.activeTurn = { turn, excerpt: '', replySoFar: '' };
+    // The partial-started generation becomes this Turn's, or is dropped when
+    // the boundary was stalled (the provider never declared the utterance
+    // complete, so there is nothing trustworthy to answer yet).
+    const speculation = this.speculation;
+    this.speculation = null;
+    let speculativeRun: Promise<{ text: string; generation: number }> | null = null;
+    let historyPushed = false;
+    if (speculation) {
+      if (stalled) {
+        this.abortSpeculation(speculation, 'stalled-turn');
+      } else {
+        speculativeRun = this.speakSpeculation(turn, speculation);
+        speculativeRun.catch(() => {});
+      }
+    }
     let text = '';
     const transcribeStarted = Date.now();
     this.logPhase('transcribe', 'start', { turn });
@@ -1029,6 +1282,7 @@ export class LiveCallSession {
         source,
       });
       if (!tx.text.trim() || tx.noSpeech) {
+        if (speculation) this.abortSpeculation(speculation, 'empty-final');
         await this.miss(tx.text, turn, undefined);
         return;
       }
@@ -1036,6 +1290,7 @@ export class LiveCallSession {
       if (wav) this.onUtteranceTranscribed?.({ callSid: this.identity.callSid, turn, text: tx.text, wav });
     } catch (err) {
       if (this.closed) return;
+      if (speculation) this.abortSpeculation(speculation, 'transcribe-error');
       const detail = err instanceof Error ? `transcribe-error: ${err.message}` : `transcribe-error: ${String(err)}`;
       this.logPhase('transcribe', 'error', { turn, ms: Date.now() - transcribeStarted, detail });
       await this.miss(text, turn, detail);
@@ -1043,8 +1298,64 @@ export class LiveCallSession {
     }
     state.misses = 0;
     this.activeTurn.excerpt = text;
-    this.calls.pushHistory(this.identity.callSid, { role: 'caller', text });
+    // The final landed: keep the speculative reply only when it agrees with
+    // the final AND the final's own dialogue decision is the model path. Any
+    // deterministic decision aborts the speculation and regenerates.
+    if (speculation && speculativeRun) {
+      const before = this.dialogue;
+      const probe = this.reducer.reduce({
+        transcript: text,
+        state: before,
+        callerPhone: this.identity.callerPhone,
+      });
+      const patientChanged =
+        probe.state.patient.name !== before.patient.name || probe.state.patient.phone !== before.patient.phone;
+      const agrees = partialAgrees(speculation.partial, text);
+      // A final that itself turned booking-sensitive always waits out the
+      // speculation: partials can lag, so the last word is not the last word.
+      const finalDecision = classifySpeculation(text, { names: this.cueNames });
+      if (agrees && finalDecision.speculative && probe.decision.kind === 'continue' && !patientChanged) {
+        this.setDialogue(probe.state);
+        this.calls.pushHistory(this.identity.callSid, { role: 'caller', text });
+        historyPushed = true;
+        this.trace?.({
+          component: 'call',
+          event: 'speculation-kept',
+          turn,
+          partial: speculation.partial,
+          chars: text.length,
+          ms: Date.now() - speculation.startedAt,
+        });
+        this.logPhase('speculation', 'kept', { turn, ms: Date.now() - speculation.startedAt });
+        if ((await this.settleSpeculation(speculativeRun, speculation, turn, text)) !== 'fallback') return;
+      } else {
+        this.abortSpeculation(
+          speculation,
+          !agrees ? 'final-mismatch' : finalDecision.speculative ? 'deterministic-turn' : 'booking-final',
+          text,
+          finalDecision.speculative ? undefined : finalDecision.cue,
+        );
+      }
+    }
+    if (!historyPushed) this.calls.pushHistory(this.identity.callSid, { role: 'caller', text });
     await this.reduceAndAnswer(text, turn, wav);
+  }
+
+  /**
+   * Feed the speculative stream through the normal speech pipeline. The first
+   * token was already pulled when the speculation started, so playback can
+   * begin as soon as the Turn boundary arrives.
+   */
+  private speakSpeculation(
+    turn: number,
+    spec: PendingSpeculation,
+  ): Promise<{ text: string; generation: number }> {
+    return this.firstTokenOrHold(spec.iterator, spec.first).then((first) =>
+      this.enqueueModelResponse(spec.iterator, first, spec.controller, turn, {
+        speculative: true,
+        commitHistory: false,
+      }),
+    );
   }
 
   /**
@@ -1307,18 +1618,14 @@ export class LiveCallSession {
     }
     if (this.loadGuide) {
       try {
-        this.guide = await this.loadGuide();
+        this.adoptGuide(await this.loadGuide());
       } catch {
         // Answer with the last good guide rather than failing the Turn.
       }
     }
     const assistant = this.assistant;
     if (this.activeTurn) this.activeTurn.excerpt = excerpt;
-    const availabilityBlock =
-      extra.availability ??
-      (this.warmAvailability && this.warmAvailability.block !== null && Date.now() - this.warmAvailability.startedAt < WARM_AVAILABILITY_MS
-        ? this.warmAvailability.block
-        : undefined);
+    const availabilityBlock = extra.availability ?? this.warmAvailabilityBlock();
     if (availabilityBlock) {
       this.logPhase('availability', 'injected', { turn, chars: availabilityBlock.length });
     }
@@ -1364,11 +1671,13 @@ export class LiveCallSession {
     let generationCompleted = false;
     try {
       const first = await this.firstTokenOrHold(iterator);
-      const result = await this.enqueueModelResponse(iterator, first, controller, turn, () => {
-        // The deadline governs generation, not the time a finished reply takes
-        // to play out; aborting during playback would reprompt after success.
-        generationCompleted = true;
-        if (deadline) clearTimeout(deadline);
+      const result = await this.enqueueModelResponse(iterator, first, controller, turn, {
+        onGenerationDone: () => {
+          // The deadline governs generation, not the time a finished reply takes
+          // to play out; aborting during playback would reprompt after success.
+          generationCompleted = true;
+          if (deadline) clearTimeout(deadline);
+        },
       });
       fullReply = result.text;
       replyGeneration = result.generation;
@@ -1428,8 +1737,10 @@ export class LiveCallSession {
    * budget, speak the holding line first. The iterator keeps its in-flight
    * `next()` so no token is lost.
    */
-  private async firstTokenOrHold(iterator: AsyncIterator<string>): Promise<IteratorResult<string>> {
-    const pending = iterator.next();
+  private async firstTokenOrHold(
+    iterator: AsyncIterator<string>,
+    pending: Promise<IteratorResult<string>> = iterator.next(),
+  ): Promise<IteratorResult<string>> {
     if (this.holdAfterMs <= 0) return pending;
     let timer: NodeJS.Timeout | null = null;
     const hold = new Promise<'hold'>((resolve) => {
@@ -1455,15 +1766,19 @@ export class LiveCallSession {
     first: IteratorResult<string>,
     controller: AbortController,
     turn: number,
-    onGenerationDone?: () => void,
+    opts: { speculative?: boolean; commitHistory?: boolean; onGenerationDone?: () => void } = {},
   ): Promise<{ text: string; generation: number }> {
+    const speculative = opts.speculative === true;
     const startedAt = Date.now();
     let firstToken = false;
     const run = this.speechTail.then(async () => {
       // Barge-in during the hold line marks the Turn interrupted before this
       // run starts; the interrupted Turn must not speak once the Caller has
-      // taken the floor.
-      if (this.closed || this.interruptedTurn === turn) return { text: '', generation: 0 };
+      // taken the floor. An aborted speculation must not speak either.
+      if (this.closed || this.interruptedTurn === turn || (speculative && controller.signal.aborted)) {
+        if (this.turnAbort === controller) this.turnAbort = null;
+        return { text: '', generation: 0 };
+      }
       const generation = this.nextGeneration();
       const response = this.createSpeechResponse(generation);
       const speech: ActiveSpeech = {
@@ -1473,6 +1788,7 @@ export class LiveCallSession {
         abort: controller,
         response,
         cancelled: false,
+        speculative,
       };
       this.setPhase('SPEAKING');
       this.prepareSpeaking();
@@ -1504,7 +1820,7 @@ export class LiveCallSession {
           }
           // Only a stream that ran to its own end clears the deadline: an
           // aborted stream falls through to the reprompt path below.
-          onGenerationDone?.();
+          opts.onGenerationDone?.();
         } catch (err) {
           if (!isAbortError(err, controller.signal) && !speech.cancelled) {
             streamError = err instanceof Error ? err : new Error(String(err));
@@ -1534,7 +1850,11 @@ export class LiveCallSession {
         this.onPlaybackComplete?.(speech.text);
         this.logPhase('assistant', 'done', { turn, ms: Date.now() - startedAt, chars: fullReply.length });
         this.logPhase('tts', 'done', { generation, chars: speech.text.length });
-        if (speech.text) this.calls.pushHistory(this.identity.callSid, { role: 'receptionist', text: speech.text });
+        // A speculative reply's text commits in the keep path, in history
+        // order behind the final Caller utterance.
+        if (opts.commitHistory !== false && speech.text) {
+          this.calls.pushHistory(this.identity.callSid, { role: 'receptionist', text: speech.text });
+        }
         if (this.activeTurn) this.activeTurn.replySoFar = fullReply;
         return { text: fullReply, generation };
       } finally {

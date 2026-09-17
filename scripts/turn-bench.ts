@@ -25,6 +25,12 @@ function floatEnv(name: string, fallback: number): number {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
+function boolEnv(name: string, fallback: boolean): boolean {
+  const raw = process.env[name];
+  if (raw === undefined) return fallback;
+  return raw === 'true' || raw === '1';
+}
+
 function buildId(): string {
   let head: string;
   try {
@@ -86,6 +92,7 @@ export async function main(): Promise<void> {
     bargeInMinSpeechMs: intEnv('BARGE_IN_MIN_SPEECH_MS', BARGE_IN_DEFAULTS.minSpeechMs),
     bargeInDipToleranceMs: intEnv('BARGE_IN_DIP_TOLERANCE_MS', BARGE_IN_DEFAULTS.dipToleranceMs),
     bargeInConfirmMs: intEnv('BARGE_IN_CONFIRM_MS', BARGE_IN_DEFAULTS.confirmMs),
+    speculation: boolEnv('TURN_BENCH_SPECULATION', true),
     ...(process.env.TURN_BENCH_DEBUG === 'true' ? { debug: true } : {}),
   };
   const runs = [];
@@ -101,6 +108,7 @@ export async function main(): Promise<void> {
     bargeInMinSpeechMs: options.bargeInMinSpeechMs!,
     bargeInDipToleranceMs: options.bargeInDipToleranceMs!,
     bargeInConfirmMs: options.bargeInConfirmMs!,
+    speculation: options.speculation === true,
   };
   console.log(formatTurnBenchReport(meta, metrics, aggregate));
   const jsonPath = process.env.TURN_BENCH_JSON;

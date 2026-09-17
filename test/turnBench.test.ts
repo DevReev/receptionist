@@ -9,6 +9,7 @@ import {
   scenarioMetrics,
   type GateDecisionObservation,
   type ScenarioObservations,
+  type TurnBenchContext,
 } from '../src/turnBench.ts';
 
 function observations(partial: Partial<ScenarioObservations> = {}): ScenarioObservations {
@@ -272,6 +273,33 @@ describe('turn bench scenario runner', () => {
 });
 
 describe('turn bench behavior scenarios', () => {
+  it('answers a non-booking Turn while a delayed provider final is still in flight', async () => {
+    const scenario = {
+      name: 'delayed-final',
+      finalDelayFrames: 30,
+      run: async (ctx: TurnBenchContext) => {
+        await ctx.call('what are your hours', 60);
+        await ctx.awaitReply();
+      },
+    };
+    const speculative = await runScenario(scenario, { policy: POLICY, speculation: true });
+    const control = await runScenario(scenario, { policy: POLICY, speculation: false });
+    assert.equal(speculative.metrics.replyLatencyMs.samples, 1);
+    assert.equal(control.metrics.replyLatencyMs.samples, 1);
+    const speculativeMs = speculative.metrics.replyLatenciesMs[0]!;
+    const controlMs = control.metrics.replyLatenciesMs[0]!;
+    assert.ok(speculativeMs < controlMs, `speculative ${speculativeMs}ms < control ${controlMs}ms`);
+    assert.ok(
+      controlMs - speculativeMs >= 500,
+      `the 600 ms provider final is hidden (speculative ${speculativeMs}ms, control ${controlMs}ms)`,
+    );
+    assert.equal(
+      speculative.observations.replyStarts[0]! < control.observations.replyStarts[0]!,
+      true,
+      'the speculative reply audio frame comes first',
+    );
+  });
+
   it('holds a mid-thought pause open and emits at the emergency cap, not a false cut', async () => {
     const run = await runScenario(
       {
@@ -465,6 +493,7 @@ describe('turn bench report', () => {
         bargeInMinSpeechMs: 200,
         bargeInDipToleranceMs: 200,
         bargeInConfirmMs: 300,
+        speculation: true,
       },
       [scenario],
       aggregateMetrics([scenario]),

@@ -295,6 +295,9 @@ export class OpenRouterAssistant implements Assistant {
    * read-only lookup. Legacy mode preserves the tool-driven loop.
    */
   private toolsFor(ctx: AssistantContext): readonly unknown[] {
+    // A speculative reply runs before the final transcription is known: no
+    // tool may read or write, so the model is offered nothing at all.
+    if (ctx.speculative) return [];
     if (this.toolsMode === 'legacy') {
       return ctx.availability ? [PROPOSE_BOOKING_TOOL] : TOOLS;
     }
@@ -309,6 +312,15 @@ export class OpenRouterAssistant implements Assistant {
   ): Promise<ChatMessage> {    const id = toolCall.id;
     const name = toolCall.function?.name;
     const argsText = toolCall.function?.arguments ?? '{}';
+    // Defense in depth: even if a model emits a tool call the request never
+    // offered, a speculative reply may not run it.
+    if (ctx.speculative) {
+      return {
+        role: 'tool',
+        tool_call_id: id,
+        content: JSON.stringify({ ok: false, reason: 'speculative reply: tools are unavailable before the final transcript' }),
+      };
+    }
     try {
       if (name === 'get_availability') {
         const availability = await ctx.getAvailability();

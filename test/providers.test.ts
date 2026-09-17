@@ -795,6 +795,68 @@ describe('OpenRouterAssistant streaming (ticket 11)', () => {
     assert.deepEqual(retry.usage, { prompt: 4000, completion: 1000, total: undefined });
   });
 
+  it('exposes no tools and refuses stray tool calls on a speculative reply', async () => {
+    const bodies: { messages: { role: string; content?: string | null }[]; tools?: unknown[] }[] = [];
+    let proposed = 0;
+    let reads = 0;
+    let n = 0;
+    const fetchFn = (async (_url: string, init: { body: string }) => {
+      bodies.push(JSON.parse(String(init.body)) as (typeof bodies)[number]);
+      n += 1;
+      if (n === 1) {
+        return sseResponse([
+          {
+            choices: [
+              {
+                delta: {
+                  tool_calls: [
+                    {
+                      index: 0,
+                      id: 'call_1',
+                      type: 'function',
+                      function: {
+                        name: 'propose_booking',
+                        arguments: JSON.stringify({
+                          date: '2026-09-30',
+                          time: '09:30',
+                          callerName: 'Asha',
+                          callerPhone: '+911234567890',
+                        }),
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        ]);
+      }
+      return sseResponse([{ choices: [{ delta: { content: 'We are open Monday to Friday.' } }] }]);
+    }) as unknown as typeof fetch;
+    const a = new OpenRouterAssistant({ apiKey: 'k', fetchFn });
+    const text = await collectTokens(
+      a.replyStream!(
+        assistantCtx({
+          speculative: true,
+          getAvailability: async () => {
+            reads += 1;
+            return 'AVAILABILITY: Wed 09:00';
+          },
+          proposeBooking: async () => {
+            proposed += 1;
+            return { ok: true };
+          },
+        }),
+      ),
+    );
+    assert.equal(text, 'We are open Monday to Friday.');
+    assert.deepEqual(bodies[0]!.tools, [], 'a speculative round carries no tools');
+    const toolMessage = bodies[1]!.messages.find((m) => m.role === 'tool');
+    assert.match(String(toolMessage?.content ?? ''), /speculative/i);
+    assert.equal(proposed, 0, 'a stray proposal never reaches the booking write');
+    assert.equal(reads, 0, 'a stray read never touches availability');
+  });
+
   it('throws on streaming provider errors', async () => {
     const a = new OpenRouterAssistant({
       apiKey: 'k',

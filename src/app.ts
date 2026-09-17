@@ -101,6 +101,11 @@ export interface AssistantContext {
    * Turns may re-enable the read-only availability lookup explicitly.
    */
   allowAvailabilityTool?: boolean;
+  /**
+   * Speculation: generation started from a partial transcription, before the
+   * Turn's final landed. Booking tools are withheld and nothing may be written.
+   */
+  speculative?: boolean;
   /** Per-round timing for the live loop's console trace. */
   onAssistantEvent?: (event: AssistantEvent) => void;
   /**
