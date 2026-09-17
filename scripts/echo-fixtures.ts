@@ -1,7 +1,10 @@
 import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { wavToMulaw } from '../src/audio.ts';
+import { LIVE_SAMPLE_RATE, wavToMulaw } from '../src/audio.ts';
 import { mixEcho } from '../src/echoMix.ts';
+import { FRAME_MS } from '../src/turnBench.ts';
+
+const FRAME_BYTES = LIVE_SAMPLE_RATE * (FRAME_MS / 1000);
 
 async function loadReference(path: string): Promise<Buffer> {
   const raw = await readFile(path);
@@ -49,9 +52,9 @@ export async function main(): Promise<void> {
               attenuationDb,
               sampleRate: 8000,
               encoding: 'mulaw',
-              callerFrames: Math.ceil(caller.length / 160),
-              echoStartFrame: Math.round(delayMs / 20),
-              echoFrames: Math.ceil(reference.length / 160),
+              callerFrames: Math.ceil(caller.length / FRAME_BYTES),
+              echoStartFrame: Math.round(delayMs / FRAME_MS),
+              echoFrames: Math.ceil(reference.length / FRAME_BYTES),
             },
             null,
             2,

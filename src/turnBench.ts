@@ -3,7 +3,6 @@ import { attenuationGain, mixMulaw } from './echoMix.ts';
 import { percentile } from './benchmark.ts';
 import { CallStore } from './calls.ts';
 import type { Assistant, Transcriber } from './app.ts';
-import type { ClinicGuide } from './clinic.ts';
 import type { EndpointPolicy, Vad } from './endpoint.ts';
 import { LiveCallSession } from './live.ts';
 import type { PlaybackResult } from './transport.ts';
@@ -18,11 +17,6 @@ export interface TurnBenchSpan {
   endFrame: number;
 }
 
-export interface DeclaredUtterance {
-  span: TurnBenchSpan;
-  text: string;
-}
-
 export interface DeclaredSpan {
   span: TurnBenchSpan;
   text: string;
@@ -34,7 +28,7 @@ export interface DeclaredEcho {
 
 /** What one scenario run declared and what the live session did in response. */
 export interface ScenarioObservations {
-  utterances: DeclaredUtterance[];
+  utterances: DeclaredSpan[];
   interruptions: DeclaredSpan[];
   backchannels: DeclaredSpan[];
   echos: DeclaredEcho[];
@@ -132,8 +126,8 @@ export function scenarioMetrics(name: string, obs: ScenarioObservations): TurnBe
 
   const stopLatenciesMs: number[] = [];
   const stoppedInterruptions = new Set<DeclaredSpan>();
-  let backchannelFalseStops = 0;
-  let echoFalseStops = 0;
+  const stoppedBackchannels = new Set<DeclaredSpan>();
+  const stoppedEchos = new Set<DeclaredEcho>();
   for (const clear of obs.clears) {
     const interruption = obs.interruptions.find(
       (entry) => inSpan(clear.frame, entry.span) && !stoppedInterruptions.has(entry),
@@ -143,13 +137,13 @@ export function scenarioMetrics(name: string, obs: ScenarioObservations): TurnBe
       stopLatenciesMs.push(toMs(clear.frame - interruption.span.startFrame));
       continue;
     }
-    if (obs.backchannels.some((entry) => inSpan(clear.frame, entry.span))) {
-      backchannelFalseStops += 1;
+    const backchannel = obs.backchannels.find((entry) => inSpan(clear.frame, entry.span));
+    if (backchannel) {
+      stoppedBackchannels.add(backchannel);
       continue;
     }
-    if (obs.echos.some((entry) => inSpan(clear.frame, entry.span))) {
-      echoFalseStops += 1;
-    }
+    const echo = obs.echos.find((entry) => inSpan(clear.frame, entry.span));
+    if (echo) stoppedEchos.add(echo);
   }
 
   return {
@@ -162,11 +156,11 @@ export function scenarioMetrics(name: string, obs: ScenarioObservations): TurnBe
     stopLatenciesMs,
     stopLatencyMs: { ...summary(stopLatenciesMs), missed: obs.interruptions.length - stoppedInterruptions.size },
     backchannels: obs.backchannels.length,
-    backchannelFalseStops,
-    backchannelFalseStopRate: rate(backchannelFalseStops, obs.backchannels.length),
+    backchannelFalseStops: stoppedBackchannels.size,
+    backchannelFalseStopRate: rate(stoppedBackchannels.size, obs.backchannels.length),
     echoSpans: obs.echos.length,
-    echoFalseStops,
-    echoFalseStopRate: rate(echoFalseStops, obs.echos.length),
+    echoFalseStops: stoppedEchos.size,
+    echoFalseStopRate: rate(stoppedEchos.size, obs.echos.length),
     selfEchoTurns: obs.selfEchoTurns,
   };
 }
@@ -200,7 +194,7 @@ export function aggregateMetrics(runs: TurnBenchMetrics[]): AggregateMetrics {
 }
 
 /** Frame role the scripted VAD and the Echo generator both read. */
-export type TurnBenchTag = 'speech' | 'silence' | 'backchannel' | 'echo';
+type TurnBenchTag = 'speech' | 'silence' | 'backchannel' | 'echo';
 
 export interface CallerPause {
   /** Milliseconds of caller speech before the pause. */
@@ -241,8 +235,6 @@ export interface TurnBenchContext {
   echo(frames: number, opts?: EchoFeedOptions): Promise<void>;
   /** Caller silence, advancing the virtual clock. */
   silence(frames: number): Promise<void>;
-  /** Feed `tag` until `predicate` holds; false when `maxFrames` run out. */
-  feedUntil(tag: TurnBenchTag, predicate: () => boolean, maxFrames: number): Promise<boolean>;
   /** Feed silence until a reply's first audio lands. */
   awaitReply(maxFrames?: number): Promise<boolean>;
 }
@@ -261,7 +253,6 @@ export interface TurnBenchOptions {
   /** Shipped configuration until Barge-in becomes always-on (ticket 05). */
   bargeIn?: boolean;
   interruptionMs?: number;
-  guide?: ClinicGuide;
   /** Print session phase/trace lines while a scenario runs. */
   debug?: boolean;
 }
@@ -407,7 +398,7 @@ class ScenarioRunner implements TurnBenchContext {
     const transcriber: Transcriber = {
       transcribe: async () => {
         if (this.lastScoredSpeechTag === 'echo') this.observations.selfEchoTurns += 1;
-        return { text: this.textForFrame(this.frame), noSpeech: false };
+        return { text: this.latestDeclarationText(this.frame), noSpeech: false };
       },
     };
     const tts: Tts = {
@@ -429,7 +420,7 @@ class ScenarioRunner implements TurnBenchContext {
       policy: options.policy,
       transcriber,
       tts,
-      guide: options.guide ?? { raw: '# Clinic Guide — Bench Clinic\n', name: 'Bench Clinic' },
+      guide: { raw: '# Clinic Guide — Bench Clinic\n', name: 'Bench Clinic' },
       assistant,
       calls: new CallStore(),
       bargeIn: options.bargeIn ?? false,
@@ -459,12 +450,7 @@ class ScenarioRunner implements TurnBenchContext {
   async start(duringGreeting: boolean): Promise<void> {
     void this.session.open().catch(() => {});
     await settle();
-    if (duringGreeting) return;
-    let fed = 0;
-    while ((this.gate.outstanding > 0 || this.playing) && fed < MAX_SETTLE_FRAMES) {
-      await this.feed('silence', 1);
-      fed += 1;
-    }
+    if (!duringGreeting) await this.drainPlayback();
   }
 
   async call(text: string, frames: number, opts: CallerTurnOptions = {}): Promise<void> {
@@ -517,7 +503,7 @@ class ScenarioRunner implements TurnBenchContext {
     await this.feed('silence', frames);
   }
 
-  async feedUntil(tag: TurnBenchTag, predicate: () => boolean, maxFrames: number): Promise<boolean> {
+  private async feedUntil(tag: TurnBenchTag, predicate: () => boolean, maxFrames: number): Promise<boolean> {
     for (let i = 0; i < maxFrames; i++) {
       await this.feed(tag, 1);
       if (predicate()) return true;
@@ -531,16 +517,21 @@ class ScenarioRunner implements TurnBenchContext {
   }
 
   async finish(): Promise<void> {
+    await this.drainPlayback();
+    this.session.close('bench-complete');
+    await settle();
+  }
+
+  /** Feed silence until every scheduled playback has ended or been cleared. */
+  private async drainPlayback(): Promise<void> {
     let fed = 0;
     while ((this.gate.outstanding > 0 || this.playing) && fed < MAX_SETTLE_FRAMES) {
       await this.feed('silence', 1);
       fed += 1;
     }
-    this.session.close('bench-complete');
-    await settle();
   }
 
-  private textForFrame(frame: number): string {
+  private latestDeclarationText(frame: number): string {
     let text = '';
     for (const declaration of this.declarations) {
       if (declaration.startFrame <= frame) text = declaration.text;
@@ -594,6 +585,8 @@ export interface TurnBenchReportMeta {
   build: string;
   policy: EndpointPolicy;
   fixtures: number;
+  /** False on the pre-change build: stops and false-stop rates are degenerate. */
+  bargeIn: boolean;
 }
 
 function percent(value: number): string {
@@ -644,23 +637,46 @@ export function formatTurnBenchReport(
   const lines = [
     `turn-taking bench  build ${meta.build}  fixtures ${meta.fixtures}`,
     `policy: silence ${meta.policy.silenceMs}ms  min-speech ${meta.policy.minSpeechMs}ms  max-utterance ${meta.policy.maxUtteranceMs}ms  threshold ${meta.policy.threshold}  dip ${meta.policy.latchDipMs}ms`,
-    '',
-    metricLine({ ...aggregate, name: 'TOTAL' }),
-    ...runs.map(metricLine),
   ];
+  if (!meta.bargeIn) {
+    lines.push('note: Barge-in is off — stop latency and false-stop rates are degenerate (the baseline record).');
+  }
+  lines.push('', metricLine({ ...aggregate, name: 'TOTAL' }), ...runs.map(metricLine));
   return lines.join('\n');
 }
 
 /**
  * The scripted corpus the bench gates run. Each scenario declares what the
- * Caller did; the live session runs for real underneath. The baseline build
- * has Barge-in off, so its stop/Backchannel/Echo numbers are degenerate.
+ * Caller did; the live session runs for real underneath. Echo return is
+ * synthesized from the session's own outbound reference at varied delay and
+ * attenuation. The baseline build has Barge-in off, so its stop, Backchannel,
+ * and Echo numbers are degenerate.
  */
-export function defaultTurnBenchScenarios(): TurnBenchScenario[] {
+export interface EchoVariant {
+  delayMs: number;
+  attenuationDb: number;
+}
+
+export const DEFAULT_ECHO_VARIANTS: EchoVariant[] = [
+  { delayMs: 60, attenuationDb: -12 },
+  { delayMs: 120, attenuationDb: -18 },
+  { delayMs: 240, attenuationDb: -24 },
+];
+
+export function defaultTurnBenchScenarios(echoVariants: EchoVariant[] = DEFAULT_ECHO_VARIANTS): TurnBenchScenario[] {
   const callerTurn = async (ctx: TurnBenchContext): Promise<void> => {
     await ctx.call('what are your hours', 60);
     await ctx.awaitReply();
   };
+  const echoReturn = echoVariants.map((variant) => ({
+    name: `echo-return-d${variant.delayMs}-a${variant.attenuationDb}`,
+    run: async (ctx: TurnBenchContext) => {
+      await callerTurn(ctx);
+      await ctx.echo(40, variant);
+      await ctx.silence(140);
+    },
+  }));
+  const doubleTalkVariant = echoVariants[Math.floor(echoVariants.length / 2)] ?? { delayMs: 120, attenuationDb: -18 };
   return [
     {
       name: 'steady-turn',
@@ -708,19 +724,12 @@ export function defaultTurnBenchScenarios(): TurnBenchScenario[] {
         await ctx.silence(140);
       },
     },
+    ...echoReturn,
     {
-      name: 'echo-return',
+      name: `double-talk-d${doubleTalkVariant.delayMs}-a${doubleTalkVariant.attenuationDb}`,
       run: async (ctx) => {
         await callerTurn(ctx);
-        await ctx.echo(40, { delayMs: 120, attenuationDb: -18 });
-        await ctx.silence(140);
-      },
-    },
-    {
-      name: 'double-talk',
-      run: async (ctx) => {
-        await callerTurn(ctx);
-        await ctx.interrupt('no wait', 40, { echo: { delayMs: 120, attenuationDb: -18 } });
+        await ctx.interrupt('no wait', 40, { echo: doubleTalkVariant });
         await ctx.silence(160);
       },
     },

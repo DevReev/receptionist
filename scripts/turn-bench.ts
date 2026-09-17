@@ -6,6 +6,7 @@ import {
   defaultTurnBenchScenarios,
   formatTurnBenchReport,
   runScenario,
+  type EchoVariant,
   type TurnBenchOptions,
 } from '../src/turnBench.ts';
 
@@ -30,11 +31,32 @@ function boolEnv(name: string, fallback: boolean): boolean {
 }
 
 function buildId(): string {
+  let head: string;
   try {
-    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
+    head = execFileSync('git', ['rev-parse', '--short', 'HEAD'], { encoding: 'utf8' }).trim();
   } catch {
     return 'unknown';
   }
+  try {
+    execFileSync('git', ['diff-index', '--quiet', 'HEAD', '--'], { stdio: 'ignore' });
+    return head;
+  } catch {
+    return `${head}-dirty`;
+  }
+}
+
+function echoVariants(): EchoVariant[] {
+  const raw = process.env.TURN_BENCH_ECHOES ?? '60:-12,120:-18,240:-24';
+  const variants = raw
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => {
+      const [delay, attenuation] = entry.split(':');
+      return { delayMs: Number.parseInt(delay ?? '', 10), attenuationDb: Number.parseFloat(attenuation ?? '') };
+    })
+    .filter((variant) => Number.isFinite(variant.delayMs) && Number.isFinite(variant.attenuationDb));
+  return variants.length > 0 ? variants : [{ delayMs: 120, attenuationDb: -18 }];
 }
 
 /**
@@ -51,12 +73,13 @@ function buildId(): string {
 export async function main(): Promise<void> {
   const fixtureDir = process.env.BENCH_FIXTURES ?? './bench-fixtures';
   const fixtures = await loadFixtures(fixtureDir).catch(() => []);
-  const scenarios = defaultTurnBenchScenarios().map((scenario, index) => ({
+  const scenarios = defaultTurnBenchScenarios(echoVariants()).map((scenario, index) => ({
     ...scenario,
     ...(fixtures.length > 0 && scenario.callerAudio === undefined
       ? { callerAudio: fixtures[index % fixtures.length]!.audio }
       : {}),
   }));
+  const bargeIn = boolEnv('BARGE_IN', false);
   const options: TurnBenchOptions = {
     policy: {
       silenceMs: intEnv('ENDPOINT_SILENCE_MS', 1000),
@@ -65,7 +88,7 @@ export async function main(): Promise<void> {
       threshold: floatEnv('VAD_SPEECH_THRESHOLD', 0.1),
       latchDipMs: intEnv('ENDPOINT_LATCH_DIP_MS', 200),
     },
-    bargeIn: boolEnv('BARGE_IN', false),
+    bargeIn,
     interruptionMs: intEnv('BARGE_IN_SPEECH_MS', 200),
     ...(process.env.TURN_BENCH_DEBUG === 'true' ? { debug: true } : {}),
   };
@@ -75,7 +98,7 @@ export async function main(): Promise<void> {
   }
   const metrics = runs.map((run) => run.metrics);
   const aggregate = aggregateMetrics(metrics);
-  const meta = { build: buildId(), policy: options.policy, fixtures: fixtures.length };
+  const meta = { build: buildId(), policy: options.policy, fixtures: fixtures.length, bargeIn };
   console.log(formatTurnBenchReport(meta, metrics, aggregate));
   const jsonPath = process.env.TURN_BENCH_JSON;
   if (jsonPath) {

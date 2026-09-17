@@ -25,7 +25,7 @@ describe('echo mix', () => {
     assert.equal(attenuationGain(-Infinity), 0);
   });
 
-  it('sums caller and reference sample-wise', () => {
+  it('sums Caller and reference sample-wise', () => {
     const caller = encodeMulaw(Int16Array.from([1000, -1000, 500, 0]));
     const reference = encodeMulaw(Int16Array.from([2000, 2000, -500, 0]));
     const mixed = pcm(mixMulaw(caller, reference, 1));
@@ -43,7 +43,7 @@ describe('echo mix', () => {
     assert.equal(mixMulaw(reference, caller, 1).length, 4);
   });
 
-  it('delays and attenuates the reference into the caller audio', () => {
+  it('delays and attenuates the reference into the Caller audio', () => {
     const delayMs = 40; // 320 samples at 8 kHz
     const caller = Buffer.alloc(800, SILENCE);
     const reference = ramp(160);
@@ -64,7 +64,7 @@ describe('echo mix', () => {
     assert.equal(mixed.length, 480 + 200);
   });
 
-  it('mixes double-talk: caller speech over its own returning echo', () => {
+  it('mixes double-talk: Caller speech over its own returning echo', () => {
     const caller = encodeMulaw(Int16Array.from(Array.from({ length: 160 }, () => 3000)));
     const reference = encodeMulaw(Int16Array.from(Array.from({ length: 160 }, () => -3000)));
     const mixed = pcm(mixEcho(caller, reference, { delayMs: 0, attenuationDb: 0 }));

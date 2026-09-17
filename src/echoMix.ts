@@ -1,4 +1,4 @@
-import { encodeMulaw } from './audio.ts';
+import { encodeMulaw, LIVE_SAMPLE_RATE } from './audio.ts';
 import { decodeMulaw } from './mulaw.ts';
 
 /** Delay of the returning Echo and how loud it is relative to the reference. */
@@ -7,11 +7,7 @@ export interface EchoMixOptions {
   delayMs: number;
   /** Return loss in decibels (negative); -20 dB keeps ~10% of the reference amplitude. */
   attenuationDb: number;
-  /** Samples per second of the mulaw bytes; telephony is 8000. */
-  sampleRate?: number;
 }
-
-const DEFAULT_SAMPLE_RATE = 8000;
 
 /** Linear amplitude gain for an attenuation in decibels. */
 export function attenuationGain(attenuationDb: number): number {
@@ -41,8 +37,7 @@ export function mixMulaw(caller: Buffer, reference: Buffer, gain: number): Buffe
  * The output keeps the delayed reference whole, so it may outlast the Caller.
  */
 export function mixEcho(caller: Buffer, reference: Buffer, opts: EchoMixOptions): Buffer {
-  const sampleRate = opts.sampleRate ?? DEFAULT_SAMPLE_RATE;
-  const delaySamples = Math.max(0, Math.round((opts.delayMs / 1000) * sampleRate));
+  const delaySamples = Math.max(0, Math.round((opts.delayMs / 1000) * LIVE_SAMPLE_RATE));
   const delayed = Buffer.alloc(delaySamples + reference.length, 0xff);
   reference.copy(delayed, delaySamples);
   return mixMulaw(caller, delayed, attenuationGain(opts.attenuationDb));

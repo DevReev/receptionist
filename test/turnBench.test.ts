@@ -96,6 +96,26 @@ describe('turn bench metrics', () => {
     assert.equal(metrics.backchannelFalseStopRate, 0.5);
   });
 
+  it('counts repeated clears inside one span once, so rates stay at most 100%', () => {
+    const metrics = scenarioMetrics(
+      'repeated-clears',
+      observations({
+        backchannels: [{ span: { startFrame: 200, endFrame: 210 }, text: 'mm-hmm' }],
+        echos: [{ span: { startFrame: 300, endFrame: 400 } }],
+        clears: [
+          { frame: 202, reason: 'caller-barge-in' },
+          { frame: 208, reason: 'caller-barge-in' },
+          { frame: 320, reason: 'caller-barge-in' },
+          { frame: 380, reason: 'caller-barge-in' },
+        ],
+      }),
+    );
+    assert.equal(metrics.backchannelFalseStops, 1);
+    assert.equal(metrics.backchannelFalseStopRate, 1);
+    assert.equal(metrics.echoFalseStops, 1);
+    assert.equal(metrics.echoFalseStopRate, 1);
+  });
+
   it('counts a clear inside an Echo span as an Echo false-stop', () => {
     const metrics = scenarioMetrics(
       'echo',
@@ -189,7 +209,7 @@ describe('turn bench scenario runner', () => {
 });
 
 describe('turn bench behavior scenarios', () => {
-  it('flags a mid-thought pause longer than the fixed silence window as a false cut', async () => {
+  it('flags a mid-thought pause longer than the fixed Endpointing window as a false cut', async () => {
     const run = await runScenario(
       {
         name: 'long-pause',
@@ -339,12 +359,13 @@ describe('turn bench report', () => {
       }),
     );
     const report = formatTurnBenchReport(
-      { build: 'abc1234', policy: POLICY, fixtures: 3 },
+      { build: 'abc1234', policy: POLICY, fixtures: 3, bargeIn: false },
       [scenario],
       aggregateMetrics([scenario]),
     );
     assert.match(report, /build abc1234/);
     assert.match(report, /silence 1000ms/);
+    assert.match(report, /note: Barge-in is off/);
     assert.match(report, /steady-turn/);
     assert.match(report, /false-cut 0\.0% \(0\/1\)/);
     assert.match(report, /reply p50 1000ms p95 1000ms \(n=1\)/);
