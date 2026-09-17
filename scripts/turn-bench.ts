@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import { loadFixtures } from '../src/benchmark.ts';
+import { LOCAL_ENDPOINT_FALLBACKS } from '../src/endpoint.ts';
 import {
   aggregateMetrics,
   defaultTurnBenchScenarios,
@@ -67,8 +68,9 @@ function echoVariants(): EchoVariant[] {
  *   npm run turn-bench
  *   TURN_BENCH_JSON=bench-scripts/turn-bench.json npm run turn-bench
  *
- * Policy knobs mirror the shipped configuration (`ENDPOINT_SILENCE_MS` etc.)
- * so the reported baseline is the build under real defaults.
+ * The local detector's fixed silence and max-utterance knobs left the
+ * production env surface with the provider VAD change; the bench runs the
+ * shipped local policy with `TURN_BENCH_*` overrides for sweeps.
  */
 export async function main(): Promise<void> {
   const fixtureDir = process.env.BENCH_FIXTURES ?? './bench-fixtures';
@@ -82,9 +84,9 @@ export async function main(): Promise<void> {
   const bargeIn = boolEnv('BARGE_IN', false);
   const options: TurnBenchOptions = {
     policy: {
-      silenceMs: intEnv('ENDPOINT_SILENCE_MS', 1000),
+      silenceMs: intEnv('TURN_BENCH_SILENCE_MS', LOCAL_ENDPOINT_FALLBACKS.silenceMs),
+      maxUtteranceMs: intEnv('TURN_BENCH_MAX_UTTERANCE_MS', LOCAL_ENDPOINT_FALLBACKS.maxUtteranceMs),
       minSpeechMs: intEnv('ENDPOINT_MIN_SPEECH_MS', 300),
-      maxUtteranceMs: intEnv('ENDPOINT_MAX_UTTERANCE_MS', 30000),
       threshold: floatEnv('VAD_SPEECH_THRESHOLD', 0.1),
       latchDipMs: intEnv('ENDPOINT_LATCH_DIP_MS', 200),
     },

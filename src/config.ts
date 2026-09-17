@@ -1,4 +1,5 @@
 import type { AppointmentsEnv } from './appointments.ts';
+import type { TurnDetection } from './turnTaking.ts';
 import type { SttConfig } from './whisper.ts';
 
 const STT_PROVIDER_DEFAULTS = {
@@ -36,6 +37,12 @@ export interface SarvamEnv {
   sttPrompt?: string;
   /** How long a Turn waits for `transcript.final` before falling back to REST. */
   sttFinalTimeoutMs: number;
+  /** Provider VAD sensitivity (0.0-1.0); provider default 0.3. */
+  sttVadThreshold: number;
+  /** Provider VAD silence in ms marking end-of-turn; provider default 500. */
+  sttVadSilenceMs: number;
+  /** Provider VAD minimum speech in ms to count as an utterance; provider default 250. */
+  sttVadMinSpeechMs: number;
   ttsModel: string;
   ttsSpeaker: string;
   ttsLanguageCode: string;
@@ -59,9 +66,9 @@ export interface Config {
   recordMaxLength: number;
   voiceLoop: VoiceLoop;
   streamWsUrl: string;
-  endpointSilenceMs: number;
+  /** Boundary authority: `sarvam` (provider VAD, default) or `hybrid` (local detector). */
+  turnDetection: TurnDetection;
   endpointMinSpeechMs: number;
-  endpointMaxUtteranceMs: number;
   vadThreshold: number;
   endpointLatchDipMs: number;
   vadModelPath: string;
@@ -168,6 +175,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`invalid VOICE_LOOP: ${voiceLoopRaw} (expected legacy|stream)`);
   }
   const voiceLoop: VoiceLoop = voiceLoopRaw;
+  const turnDetectionRaw = optional(env, 'TURN_DETECTION', 'sarvam');
+  if (turnDetectionRaw !== 'sarvam' && turnDetectionRaw !== 'hybrid') {
+    throw new Error(`invalid TURN_DETECTION: ${turnDetectionRaw} (expected sarvam|hybrid)`);
+  }
+  const turnDetection: TurnDetection = turnDetectionRaw;
   const streamWsUrl =
     voiceLoop === 'stream' ? required(env, 'STREAM_WS_URL', missing) : optional(env, 'STREAM_WS_URL', '');
   if (missing.length > 0) throw new Error(`missing required env: ${missing.join(', ')}`);
@@ -199,9 +211,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     recordMaxLength: int(env, 'RECORD_MAX_LENGTH', 30),
     voiceLoop,
     streamWsUrl,
-    endpointSilenceMs: int(env, 'ENDPOINT_SILENCE_MS', 700),
+    turnDetection,
     endpointMinSpeechMs: int(env, 'ENDPOINT_MIN_SPEECH_MS', 300),
-    endpointMaxUtteranceMs: int(env, 'ENDPOINT_MAX_UTTERANCE_MS', 30000),
     vadThreshold: float(env, 'VAD_SPEECH_THRESHOLD', 0.1),
     endpointLatchDipMs: int(env, 'ENDPOINT_LATCH_DIP_MS', 200),
     vadModelPath: optional(env, 'VAD_MODEL_PATH', './models/silero_vad.onnx'),
@@ -239,6 +250,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       sttStreamType,
       sttPrompt: env.SARVAM_STT_PROMPT,
       sttFinalTimeoutMs: int(env, 'SARVAM_STT_FINAL_TIMEOUT_MS', 2000),
+      // Provider defaults: the provider owns the residual fixed silence wait.
+      sttVadThreshold: float(env, 'SARVAM_VAD_THRESHOLD', 0.3),
+      sttVadSilenceMs: int(env, 'SARVAM_VAD_SILENCE_MS', 500),
+      sttVadMinSpeechMs: int(env, 'SARVAM_VAD_MIN_SPEECH_MS', 250),
       ttsModel: optional(env, 'SARVAM_TTS_MODEL', 'bulbul:v3'),
       ttsSpeaker: optional(env, 'SARVAM_TTS_SPEAKER', 'shubh'),
       ttsLanguageCode: optional(env, 'SARVAM_TTS_LANGUAGE', 'en-IN'),

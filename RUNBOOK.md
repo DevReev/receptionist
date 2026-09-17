@@ -23,6 +23,10 @@ The live streaming loop is the default (`VOICE_LOOP=stream`), and transcription 
 | `SARVAM_API_KEY` | STT by default; TTS when `TTS_PROVIDER=sarvam` |
 | `SARVAM_STT_REALTIME` | Optional, default `true`: stream caller audio to Sarvam's realtime WebSocket (`saaras:v3-realtime`, `mulaw` @ 8 kHz) so each Turn does not wait on a REST transcription. A failed socket falls back to REST per Turn; set `false` to force REST |
 | `SARVAM_STT_STREAM_TYPE` | Optional, default `fast` (`fast` \| `balanced` \| `simulated`): realtime partial-latency vs accuracy tradeoff |
+| `TURN_DETECTION` | Optional, default `sarvam` (`sarvam` \| `hybrid`): who ends a Turn. `sarvam` = the provider's VAD (`vad.speech_start`/`vad.speech_end`, no local fixed wait); `hybrid` = the local detector with the socket in manual mode |
+| `SARVAM_VAD_THRESHOLD` | Optional, default `0.3`: provider VAD sensitivity (0.0–1.0), `TURN_DETECTION=sarvam` only |
+| `SARVAM_VAD_SILENCE_MS` | Optional, default `500`: provider-side silence that ends a Turn, `TURN_DETECTION=sarvam` only |
+| `SARVAM_VAD_MIN_SPEECH_MS` | Optional, default `250`: minimum provider-heard speech to count as an utterance, `TURN_DETECTION=sarvam` only |
 | `SARVAM_TTS_STREAM` | Optional, default `true`: stream replies over Sarvam's text-to-speech WebSocket (`bulbul:v3`, `mulaw` @ 8 kHz) so audio reaches the Caller while it is still being generated. A failed or stalled utterance falls back to the REST TTS call; set `false` to force REST |
 | `SARVAM_TTS_STREAM_IDLE_TIMEOUT_MS` | Optional, default `5000`: silence on the TTS socket before the sentence falls back to REST |
 | `GROQ_API_KEY` or `OPENAI_API_KEY` | Whisper STT only when `STT_PROVIDER=openai` or `groq` |
@@ -128,13 +132,16 @@ Component traces (`kind:"trace"`):
   `resultChars`.
 - `component:"stt"` — socket `open`/`close`/`error`, `speech-start`
   (`bufferedBytes`), `final` (`ms`, `chars`, `partials`, `noSpeech`),
-  `final-timeout`, `stale-final`, and REST `rest-start/rest-done/rest-error`.
+  `final-timeout`, `stale-final`, `vad-speech-start`/`vad-speech-end`,
+  `endpointing-update`, and REST `rest-start/rest-done/rest-error`.
 - `component:"tts"` — socket `stream-open`/`stream-close`/`stream-error`,
   `utterance-start`, `first-audio` (latency), `utterance-done` (`chunks`,
   `bytes`), `provider-error`, `idle-timeout`, `closed`, and REST
   `rest-start/rest-done/rest-error`.
-- `component:"vad"` — `endpoint` per utterance: `speechMs`, frames, `maxScore`,
-  `meanScore`.
+- `component:"vad"` — `endpoint` per utterance: `source` (`provider` when the
+  provider VAD owned the boundary, `local` in hybrid mode), `speechMs`, and the
+  local-detector `frames`, `maxScore`, `meanScore` (all zero when the provider
+  owned the boundary).
 - `component:"stream"` — `open` and `close` with `framesIn`/`bytesIn`/
   `framesOut`/`bytesOut`/`durationMs` for the Twilio media socket.
 

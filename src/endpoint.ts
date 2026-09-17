@@ -4,6 +4,13 @@ export interface Vad {
   reset(): void;
 }
 
+/**
+ * Local (hybrid) detector fallbacks for the two knobs that left the env
+ * surface when the provider took over primary boundaries. Silence keeps the
+ * last shipped value (`.env`, 1000 ms) until the adaptive pause lands.
+ */
+export const LOCAL_ENDPOINT_FALLBACKS = { silenceMs: 1000, maxUtteranceMs: 30_000 } as const;
+
 export interface EndpointPolicy {
   silenceMs: number;
   minSpeechMs: number;

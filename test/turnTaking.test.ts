@@ -49,6 +49,7 @@ function harness(vad: Vad): Harness {
   const turnTaking = new TurnTaking({
     vad,
     policy: POLICY,
+    detection: 'hybrid',
     observer: {
       onUtterance: (utterance, utteranceStats) => {
         utterances.push(utterance);
@@ -206,6 +207,7 @@ describe('turn taking', () => {
     const turnTaking = new TurnTaking({
       vad: scriptVad(speech(10)),
       policy: POLICY,
+      detection: 'hybrid',
       observer: {
         onUtterance: () => {},
         onUpstreamFrame: (frame) => upstream.push(frame),

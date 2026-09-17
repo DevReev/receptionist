@@ -32,12 +32,22 @@ export interface TurnTakingObserver {
   onScore?(score: number, latched: boolean): void;
 }
 
+/**
+ * Who owns utterance boundaries. `sarvam` delegates them to the speech
+ * provider: the local VAD no longer ends Turns and the module only captures
+ * the utterance audio between provider boundaries for fallback and fixtures.
+ * `hybrid` runs the local detector.
+ */
+export type TurnDetection = 'sarvam' | 'hybrid';
+
 export interface TurnTakingOptions {
   vad: Vad;
   policy: EndpointPolicy;
   observer: TurnTakingObserver;
   /** Sustained speech before a Barge-in candidate fires while the Receptionist speaks. */
   bargeInMs?: number;
+  /** Boundary authority for this call. */
+  detection: TurnDetection;
 }
 
 type Floor = 'listening' | 'muted' | 'watching-barge-in';
@@ -55,9 +65,12 @@ export class TurnTaking {
   private readonly policy: EndpointPolicy;
   private readonly observer: TurnTakingObserver;
   private readonly bargeInMs: number;
+  private readonly detection: TurnDetection;
   private mode: Floor = 'listening';
   private bargeInPending = false;
   private speaking = false;
+  /** Provider speech_open state; the utterance under capture in sarvam mode. */
+  private providerOpen = false;
   private speechAnnounced = false;
   private candidateSamples = 0;
   private dipSamples = 0;
@@ -74,6 +87,7 @@ export class TurnTaking {
     this.policy = opts.policy;
     this.observer = opts.observer;
     this.bargeInMs = opts.bargeInMs ?? 200;
+    this.detection = opts.detection;
   }
 
   /** True while a Caller utterance can end a Turn here. */
@@ -106,7 +120,13 @@ export class TurnTaking {
   acceptBargeIn(event: BargeInEvent): void {
     this.mode = 'listening';
     this.reset();
-    this.speaking = true;
+    if (this.detection === 'sarvam') {
+      // The provider heard the candidate while the floor was watched, so its
+      // boundary closes the utterance; the candidate is its captured start.
+      this.providerOpen = true;
+    } else {
+      this.speaking = true;
+    }
     this.chunks = [event.audio];
     this.bufferedSamples = event.audio.length;
   }
@@ -117,11 +137,35 @@ export class TurnTaking {
     this.vad.reset();
   }
 
+  /**
+   * The provider opened an utterance (`vad.speech_start`). Audio since the
+   * pre-roll is the utterance's first word, so it is captured, not clipped.
+   */
+  providerSpeechStart(): void {
+    if (this.detection !== 'sarvam' || this.mode !== 'listening' || this.providerOpen) return;
+    this.providerOpen = true;
+    this.adoptPreRoll();
+    this.announceSpeechStart();
+  }
+
+  /** The provider closed the utterance (`vad.speech_end`): emit it for a Turn. */
+  providerSpeechEnd(): void {
+    if (this.detection !== 'sarvam' || this.mode !== 'listening' || !this.providerOpen) return;
+    this.providerOpen = false;
+    this.emit();
+  }
+
   private async process(mulaw: Buffer): Promise<void> {
     if (this.mode === 'muted') return;
     this.observer.onUpstreamFrame?.(mulaw);
     if (this.bargeInPending || mulaw.length === 0) return;
     const pcm = decodeMulaw(mulaw);
+    // The provider owns boundaries in this mode: keep the fallback capture
+    // and leave the local VAD to Barge-in watching only.
+    if (this.detection === 'sarvam' && this.mode === 'listening') {
+      this.captureProviderFrame(pcm);
+      return;
+    }
     const score = await this.vad.score(pcm);
     this.observer.onScore?.(score, this.speaking);
     const isSpeech = score >= this.policy.threshold;
@@ -153,12 +197,7 @@ export class TurnTaking {
         }
         return;
       }
-      if (this.candidateSamples === 0) {
-        this.chunks = this.preRollChunks;
-        this.bufferedSamples = this.preRollSamples;
-        this.preRollChunks = [];
-        this.preRollSamples = 0;
-      }
+      if (this.candidateSamples === 0) this.adoptPreRoll();
       this.candidateSamples += pcm.length;
       this.dipSamples = 0;
       this.chunks.push(pcm);
@@ -208,6 +247,24 @@ export class TurnTaking {
       maxScore: round3(max),
       meanScore: frames > 0 ? round3(sum / frames) : 0,
     };
+  }
+
+  /** Buffer provider-boundary audio for the REST fallback and fixture capture. */
+  private captureProviderFrame(pcm: Int16Array): void {
+    if (!this.providerOpen) {
+      this.pushPreRoll(pcm);
+      return;
+    }
+    this.chunks.push(pcm);
+    this.bufferedSamples += pcm.length;
+  }
+
+  /** Seed the utterance buffer with the recent pre-roll so its first word survives. */
+  private adoptPreRoll(): void {
+    this.chunks = this.preRollChunks;
+    this.bufferedSamples = this.preRollSamples;
+    this.preRollChunks = [];
+    this.preRollSamples = 0;
   }
 
   private pushPreRoll(pcm: Int16Array): void {
@@ -260,6 +317,7 @@ export class TurnTaking {
   private reset(): void {
     this.bargeInPending = false;
     this.speaking = false;
+    this.providerOpen = false;
     this.speechAnnounced = false;
     this.candidateSamples = 0;
     this.dipSamples = 0;

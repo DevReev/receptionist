@@ -41,6 +41,7 @@ function harness(vad: Vad, options?: { bargeInMs?: number }): Harness {
     vad,
     policy: POLICY,
     bargeInMs: options?.bargeInMs,
+    detection: 'hybrid',
     observer: {
       onUtterance: (u) => utterances.push(u),
       onBargeIn: (e) => bargeIns.push(e),

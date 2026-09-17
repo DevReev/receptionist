@@ -71,6 +71,13 @@ const CONFIG: SarvamRealtimeConfig = {
   mode: 'transcribe',
   encoding: 'mulaw',
   sampleRate: 8000,
+  endpointing: 'manual',
+};
+
+const VAD_CONFIG: SarvamRealtimeConfig = {
+  ...CONFIG,
+  endpointing: 'vad',
+  vad: { threshold: 0.3, silenceMs: 500, minSpeechMs: 250 },
 };
 
 function harness(overrides: Partial<SarvamRealtimeConfig> = {}) {
@@ -321,5 +328,158 @@ describe('SarvamRealtimeStt', () => {
       { text: 'book Wednesday', utteranceIdx: 0 },
     ]);
     stt.close();
+  });
+});
+
+describe('SarvamRealtimeStt provider VAD mode', () => {
+  function vadHarness(overrides: Partial<SarvamRealtimeConfig> = {}) {
+    const socket = new FakeRealtimeSocket();
+    let url = '';
+    const connect: RealtimeSocketFactory = (u) => {
+      url = u;
+      return socket;
+    };
+    const stt = new SarvamRealtimeStt({
+      config: { ...VAD_CONFIG, ...overrides },
+      connect,
+      onTrace: undefined,
+    });
+    return { socket, stt, url: () => url };
+  }
+
+  it('connects with endpointing=vad and the provider VAD knobs', () => {
+    const h = vadHarness();
+    const url = new URL(h.url());
+    assert.equal(url.searchParams.get('endpointing'), 'vad');
+    assert.equal(url.searchParams.get('threshold'), '0.3');
+    assert.equal(url.searchParams.get('silence_duration_ms'), '500');
+    assert.equal(url.searchParams.get('min_speech_duration_ms'), '250');
+    h.stt.close();
+  });
+
+  it('omits the VAD knobs in manual mode', () => {
+    const h = harness();
+    const url = new URL(h.url());
+    assert.equal(url.searchParams.get('endpointing'), 'manual');
+    assert.equal(url.searchParams.get('threshold'), null);
+    assert.equal(url.searchParams.get('silence_duration_ms'), null);
+    assert.equal(url.searchParams.get('min_speech_duration_ms'), null);
+    h.stt.close();
+  });
+
+  it('streams every frame upstream immediately and never sends client boundaries', () => {
+    const h = vadHarness();
+    h.socket.peerOpen();
+    h.stt.pushAudio(Buffer.from([1, 2]));
+    h.stt.pushAudio(Buffer.from([3]));
+    assert.deepEqual(
+      h.socket.sentJson().map((m) => m['event']),
+      ['audio_input', 'audio_input'],
+      'provider VAD needs the whole audio diet, including silence',
+    );
+    h.stt.speechStart();
+    assert.equal(
+      h.socket.sentJson().some((m) => m['event'] === 'speech_start'),
+      false,
+    );
+    h.socket.peerMessage({ event: 'vad.speech_start', utterance_idx: 0 });
+    h.socket.peerMessage({ event: 'vad.speech_end', utterance_idx: 0 });
+    const pending = h.stt.finalize();
+    h.socket.peerMessage({ event: 'transcript.final', utterance_idx: 0, text: 'hours' });
+    return pending.then((tx) => {
+      assert.equal(tx.text, 'hours');
+      assert.equal(
+        h.socket.sentJson().some((m) => m['event'] === 'speech_end'),
+        false,
+        'the provider owns the boundary in VAD mode',
+      );
+      h.stt.close();
+    });
+  });
+
+  it('surfaces provider speech events and traces them', () => {
+    const events: string[] = [];
+    const traces: TraceEvent[] = [];
+    const socket = new FakeRealtimeSocket();
+    const stt = new SarvamRealtimeStt({
+      config: VAD_CONFIG,
+      connect: () => socket,
+      onTrace: (e) => traces.push(e),
+    });
+    stt.onVadEvent((event) => events.push(event));
+    socket.peerOpen();
+    socket.peerMessage({ event: 'vad.speech_start', utterance_idx: 0 });
+    socket.peerMessage({ event: 'vad.speech_end', utterance_idx: 0 });
+    assert.deepEqual(events, ['speech_start', 'speech_end']);
+    assert.deepEqual(
+      traces.filter((e) => e.component === 'stt' && String(e.event).startsWith('vad-')).map((e) => e.event),
+      ['vad-speech-start', 'vad-speech-end'],
+    );
+    stt.close();
+  });
+
+  it('resolves finalize from a final that landed before finalize was called', async () => {
+    const h = vadHarness();
+    h.socket.peerOpen();
+    h.socket.peerMessage({ event: 'vad.speech_start', utterance_idx: 0 });
+    h.socket.peerMessage({ event: 'vad.speech_end', utterance_idx: 0 });
+    h.socket.peerMessage({ event: 'transcript.final', utterance_idx: 0, text: 'book Wednesday' });
+    const tx = await h.stt.finalize();
+    assert.equal(tx.text, 'book Wednesday');
+    h.stt.close();
+  });
+
+  it('rejects finalize in VAD mode before any provider utterance', async () => {
+    const h = vadHarness();
+    h.socket.peerOpen();
+    await assert.rejects(() => h.stt.finalize(), /sarvam-realtime-not-streaming/);
+    h.stt.close();
+  });
+
+  it('tells the provider about a mid-utterance switch but keeps VAD locally until the boundary', async () => {
+    const h = vadHarness();
+    h.socket.peerOpen();
+    h.socket.peerMessage({ event: 'vad.speech_start', utterance_idx: 0 });
+    h.stt.setEndpointing!('manual');
+    const update = h.socket.sentJson().find((m) => m['event'] === 'config.update');
+    assert.equal(update?.['endpointing'], 'manual', 'the provider gates the change itself');
+    const pending = h.stt.finalize();
+    assert.equal(
+      h.socket.sentJson().some((m) => m['event'] === 'speech_end'),
+      false,
+      'the current utterance still belongs to the provider',
+    );
+    h.socket.peerMessage({ event: 'vad.speech_end', utterance_idx: 0 });
+    h.socket.peerMessage({ event: 'transcript.final', utterance_idx: 0, text: 'done' });
+    await pending;
+    h.stt.speechStart();
+    assert.equal(h.socket.sentJson().at(-1)!['event'], 'speech_start', 'manual owns the next utterance');
+    h.stt.close();
+  });
+
+  it('switches endpointing immediately when no utterance is open', () => {
+    const h = vadHarness();
+    h.socket.peerOpen();
+    h.stt.setEndpointing!('manual');
+    assert.equal(h.socket.sentJson().at(-1)!['endpointing'], 'manual');
+    h.stt.close();
+  });
+
+  it('sends client boundaries again after switching to manual at a boundary', async () => {
+    const h = vadHarness();
+    h.socket.peerOpen();
+    h.socket.peerMessage({ event: 'vad.speech_start', utterance_idx: 0 });
+    h.socket.peerMessage({ event: 'vad.speech_end', utterance_idx: 0 });
+    h.stt.setEndpointing!('manual');
+    h.stt.speechStart();
+    assert.deepEqual(
+      h.socket.sentJson().slice(-2).map((m) => m['event']),
+      ['config.update', 'speech_start'],
+    );
+    const pending = h.stt.finalize();
+    assert.equal(h.socket.sentJson().at(-1)!['event'], 'speech_end');
+    h.socket.peerMessage({ event: 'transcript.final', utterance_idx: 1, text: 'manual again' });
+    assert.equal((await pending).text, 'manual again');
+    h.stt.close();
   });
 });

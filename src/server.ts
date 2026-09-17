@@ -21,7 +21,7 @@ import { AppointmentsClient } from './appointments.ts';
 import { CallStore } from './calls.ts';
 import { deriveSttPrompt, loadClinicGuide, type ClinicGuide } from './clinic.ts';
 import { loadConfig, type Config } from './config.ts';
-import { type EndpointPolicy } from './endpoint.ts';
+import { LOCAL_ENDPOINT_FALLBACKS, type EndpointPolicy } from './endpoint.ts';
 import { FixedAudioCache } from './fixedAudio.ts';
 import { LiveCallSession } from './live.ts';
 import { formatFailureLine } from './log.ts';
@@ -113,7 +113,19 @@ function createTts(config: Config, trace?: TraceFn): Tts {
  */
 function createRealtimeStt(config: Config, trace?: TraceFn, prompt?: string): SarvamRealtimeStt | undefined {
   if (config.sttProvider !== 'sarvam' || !config.sarvam.sttRealtime) return undefined;
-  const { apiKey, baseUrl, sttRealtimeModel, sttLanguageCode, sttStreamType, sttMode, sttFinalTimeoutMs } = config.sarvam;
+  const {
+    apiKey,
+    baseUrl,
+    sttRealtimeModel,
+    sttLanguageCode,
+    sttStreamType,
+    sttMode,
+    sttFinalTimeoutMs,
+    sttVadThreshold,
+    sttVadSilenceMs,
+    sttVadMinSpeechMs,
+  } = config.sarvam;
+  const endpointing = config.turnDetection === 'sarvam' ? 'vad' : 'manual';
   return new SarvamRealtimeStt({
     config: {
       apiKey,
@@ -124,6 +136,10 @@ function createRealtimeStt(config: Config, trace?: TraceFn, prompt?: string): Sa
       mode: sttMode,
       encoding: 'mulaw',
       sampleRate: 8000,
+      endpointing,
+      ...(endpointing === 'vad'
+        ? { vad: { threshold: sttVadThreshold, silenceMs: sttVadSilenceMs, minSpeechMs: sttVadMinSpeechMs } }
+        : {}),
       finalTimeoutMs: sttFinalTimeoutMs,
       ...(prompt ? { prompt } : {}),
     },
@@ -133,9 +149,8 @@ function createRealtimeStt(config: Config, trace?: TraceFn, prompt?: string): Sa
 
 function endpointPolicy(config: Config): EndpointPolicy {
   return {
-    silenceMs: config.endpointSilenceMs,
+    ...LOCAL_ENDPOINT_FALLBACKS,
     minSpeechMs: config.endpointMinSpeechMs,
-    maxUtteranceMs: config.endpointMaxUtteranceMs,
     threshold: config.vadThreshold,
     latchDipMs: config.endpointLatchDipMs,
   };
@@ -383,6 +398,7 @@ export async function main(): Promise<void> {
             availabilityTimeoutMs: config.appointmentsWaitMs,
             bargeIn: config.bargeIn,
             interruptionMs: config.bargeInSpeechMs,
+            turnDetection: config.turnDetection,
             turnDeadlineMs: config.turnDeadlineMs,
             fixedCache,
             onProposeBooking: proposeBooking,
@@ -440,7 +456,13 @@ export async function main(): Promise<void> {
   server.listen(config.port, () => {
     readiness.ready = true;
     console.log(`receptionist listening on :${config.port}`);
-    bootTrace({ component: 'boot', event: 'ready', voiceLoop: config.voiceLoop, bargeIn: config.bargeIn });
+    bootTrace({
+      component: 'boot',
+      event: 'ready',
+      voiceLoop: config.voiceLoop,
+      turnDetection: config.turnDetection,
+      bargeIn: config.bargeIn,
+    });
   });
 }
 

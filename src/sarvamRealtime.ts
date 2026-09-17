@@ -5,6 +5,12 @@ import { defaultSocket, type RealtimeSocket, type RealtimeSocketFactory } from '
 
 export type { RealtimeSocket, RealtimeSocketFactory } from './ws.ts';
 
+/** Who decides utterance boundaries on this channel. */
+export type RealtimeEndpointing = 'manual' | 'vad';
+
+/** Provider VAD boundary event. */
+export type VadEvent = 'speech_start' | 'speech_end';
+
 /**
  * One call's live transcription channel. Audio is pushed as the Caller speaks
  * and the final transcript is read at the utterance boundary, so the Turn does
@@ -21,6 +27,12 @@ export interface RealtimeStt {
   reconfigure?(context: TranscriptionContext): void;
   /** Subscribe to partials for read-only speculation. */
   onPartial?(handler: (partial: PartialTranscript) => void): void;
+  /** Provider boundary events; present only when the provider owns boundaries. */
+  onVadEvent?(handler: (event: VadEvent) => void): void;
+  /** `vad` when this channel owns utterance boundaries. */
+  readonly endpointing?: RealtimeEndpointing;
+  /** Switch boundary ownership; applied at the next utterance boundary. */
+  setEndpointing?(mode: RealtimeEndpointing): void;
   /** Session over: release the socket. */
   close(): void;
 }
@@ -39,6 +51,16 @@ export interface PartialTranscript {
   language?: string;
 }
 
+/** Provider VAD tuning; only sent when `endpointing` is `vad`. */
+export interface SarvamVadConfig {
+  /** VAD sensitivity (0.0-1.0); provider default 0.3. */
+  threshold: number;
+  /** Silence in ms marking end-of-turn; provider default 500. */
+  silenceMs: number;
+  /** Minimum speech in ms to count as an utterance; provider default 250. */
+  minSpeechMs: number;
+}
+
 export interface SarvamRealtimeConfig {
   apiKey: string;
   baseUrl: string;
@@ -48,6 +70,10 @@ export interface SarvamRealtimeConfig {
   mode: string;
   encoding: string;
   sampleRate: number;
+  /** `vad`: the provider owns boundaries; `manual`: client sends speech_start/speech_end. */
+  endpointing: RealtimeEndpointing;
+  /** Provider VAD knobs; applied on the connection in `vad` mode. */
+  vad?: SarvamVadConfig;
   /** Stable terminology hint applied to finals. */
   prompt?: string;
   /** How long `finalize` waits for `transcript.final` before the caller falls back to REST. */
@@ -60,6 +86,8 @@ const DEFAULT_FINAL_TIMEOUT_MS = 2000;
 const DEFAULT_PRE_ROLL_BYTES = 8000;
 /** Server closes idle sessions with code 1008; a ping well under that keeps it open. */
 const PING_INTERVAL_MS = 15_000;
+/** VAD finals held for a finalize that may never come; older ones are junk. */
+const MAX_EARLY_FINALS = 4;
 
 function realtimeUrl(baseUrl: string, cfg: SarvamRealtimeConfig): string {
   const url = new URL(`${baseUrl.replace(/\/+$/, '')}/speech-to-text-realtime/ws`);
@@ -68,11 +96,16 @@ function realtimeUrl(baseUrl: string, cfg: SarvamRealtimeConfig): string {
   url.searchParams.set('model', cfg.model);
   url.searchParams.set('stream_type', cfg.streamType);
   url.searchParams.set('mode', cfg.mode);
-  // Manual endpointing until the provider VAD mode takes over turn boundaries
-  // (ADR-0003); the local turn-taking module owns them meanwhile, and the
-  // server just transcribes the audio it is sent between speech_start and
-  // speech_end.
-  url.searchParams.set('endpointing', 'manual');
+  // In `vad` mode the provider owns turn boundaries (ADR-0003): it hears the
+  // whole audio diet and emits vad.speech_start / vad.speech_end. In `manual`
+  // mode the local detector owns them and the server transcribes only the
+  // audio between client-sent speech_start and speech_end.
+  url.searchParams.set('endpointing', cfg.endpointing);
+  if (cfg.endpointing === 'vad' && cfg.vad) {
+    url.searchParams.set('threshold', String(cfg.vad.threshold));
+    url.searchParams.set('silence_duration_ms', String(cfg.vad.silenceMs));
+    url.searchParams.set('min_speech_duration_ms', String(cfg.vad.minSpeechMs));
+  }
   url.searchParams.set('encoding', cfg.encoding);
   url.searchParams.set('sample_rate', String(cfg.sampleRate));
   if (cfg.prompt) url.searchParams.set('prompt', cfg.prompt);
@@ -90,6 +123,10 @@ export class SarvamRealtimeStt implements RealtimeStt {
   private readonly preRollBytes: number;
   private readonly onTrace?: TraceFn;
   private partialHandler?: (partial: PartialTranscript) => void;
+  private vadEventHandler?: (event: VadEvent) => void;
+  private endpointingMode: RealtimeEndpointing;
+  /** A switch requested mid-utterance; applied once the boundary passes. */
+  private pendingEndpointing: RealtimeEndpointing | null = null;
   private readonly prompt?: string;
   private readonly promptHash?: string;
   private readonly pendingAudio: Buffer[] = [];
@@ -99,6 +136,8 @@ export class SarvamRealtimeStt implements RealtimeStt {
   private failed = false;
   private closed = false;
   private speechOpen = false;
+  /** A VAD utterance ended and its final has not been read yet. */
+  private vadBoundaryOpen = false;
   private pendingBytes = 0;
   private speechStartedAt = 0;
   private partials = 0;
@@ -106,6 +145,8 @@ export class SarvamRealtimeStt implements RealtimeStt {
   private speechUtteranceIdx: number | null = null;
   /** Timed-out finals remain in flight and must be ignored by their provider index. */
   private readonly timedOutUtterances = new Set<number>();
+  /** VAD-mode finals that land before the caller asks to finalize. */
+  private readonly earlyFinals = new Map<number, Transcription>();
   private waiting: {
     utteranceIdx: number;
     resolve: (tx: Transcription) => void;
@@ -123,6 +164,7 @@ export class SarvamRealtimeStt implements RealtimeStt {
     this.preRollBytes = opts.config.preRollBytes ?? DEFAULT_PRE_ROLL_BYTES;
     this.onTrace = opts.onTrace;
     this.partialHandler = opts.onPartial;
+    this.endpointingMode = opts.config.endpointing;
     this.prompt = opts.config.prompt;
     this.promptHash = opts.config.prompt
       ? createHash('sha256').update(opts.config.prompt).digest('hex').slice(0, 12)
@@ -189,6 +231,20 @@ export class SarvamRealtimeStt implements RealtimeStt {
       this.partialHandler?.(partial);
       return;
     }
+    if (event === 'vad.speech_start') {
+      if (!this.speechOpen) this.openUtterance();
+      this.onTrace?.({ component: 'stt', event: 'vad-speech-start', utteranceIdx: this.speechUtteranceIdx });
+      this.vadEventHandler?.('speech_start');
+      return;
+    }
+    if (event === 'vad.speech_end') {
+      this.onTrace?.({ component: 'stt', event: 'vad-speech-end', utteranceIdx: this.speechUtteranceIdx });
+      this.vadBoundaryOpen = this.speechOpen;
+      this.speechOpen = false;
+      this.vadEventHandler?.('speech_end');
+      this.adoptPendingEndpointing();
+      return;
+    }
     if (event === 'config.updated') {
       const applied = (parsed as { applied?: unknown }).applied;
       this.onTrace?.({
@@ -205,8 +261,22 @@ export class SarvamRealtimeStt implements RealtimeStt {
         this.onTrace?.({ component: 'stt', event: 'stale-final', utteranceIdx });
         return;
       }
+      const raw = (parsed as { text?: unknown }).text;
+      const text = typeof raw === 'string' ? raw : '';
       const waiting = this.waiting;
-      if (!waiting) return;
+      if (!waiting) {
+        // VAD mode: the provider may deliver the final before the session asks
+        // for it. Hold it for the matching finalize call.
+        if (this.endpointingMode === 'vad' && utteranceIdx !== undefined) {
+          this.traceFinal(utteranceIdx, text);
+          if (this.earlyFinals.size >= MAX_EARLY_FINALS) {
+            const oldest = this.earlyFinals.keys().next().value as number;
+            this.earlyFinals.delete(oldest);
+          }
+          this.earlyFinals.set(utteranceIdx, { text, noSpeech: text.trim().length === 0 });
+        }
+        return;
+      }
       if (utteranceIdx !== undefined && utteranceIdx !== waiting.utteranceIdx) {
         this.onTrace?.({
           component: 'stt',
@@ -224,18 +294,7 @@ export class SarvamRealtimeStt implements RealtimeStt {
         this.onTrace?.({ component: 'stt', event: 'stale-final', utteranceIdx: staleIdx });
         return;
       }
-      const raw = (parsed as { text?: unknown }).text;
-      const text = typeof raw === 'string' ? raw : '';
-      const ms = this.speechStartedAt > 0 ? Date.now() - this.speechStartedAt : undefined;
-      this.onTrace?.({
-        component: 'stt',
-        event: 'final',
-        ms,
-        chars: text.length,
-        partials: this.partials,
-        noSpeech: text.trim().length === 0,
-        utteranceIdx,
-      });
+      this.traceFinal(utteranceIdx, text);
       this.waiting = null;
       clearTimeout(waiting.timer);
       waiting.resolve({ text, noSpeech: text.trim().length === 0 });
@@ -245,6 +304,53 @@ export class SarvamRealtimeStt implements RealtimeStt {
       const code = (parsed as { code?: unknown }).code;
       this.fail(new Error(`sarvam-realtime-error-${typeof code === 'string' ? code : 'unknown'}`));
     }
+  }
+
+  private traceFinal(utteranceIdx: number | undefined, text: string): void {
+    const ms = this.speechStartedAt > 0 ? Date.now() - this.speechStartedAt : undefined;
+    this.onTrace?.({
+      component: 'stt',
+      event: 'final',
+      ms,
+      chars: text.length,
+      partials: this.partials,
+      noSpeech: text.trim().length === 0,
+      utteranceIdx,
+    });
+  }
+
+  /** `vad` when the provider owns utterance boundaries on this channel. */
+  get endpointing(): RealtimeEndpointing {
+    return this.endpointingMode;
+  }
+
+  /** Subscribe to provider boundary events (VAD mode). */
+  onVadEvent(handler: (event: VadEvent) => void): void {
+    this.vadEventHandler = handler;
+  }
+
+  /**
+   * Switch boundary ownership. The provider is told at once — it applies the
+   * change at its next utterance boundary — while this adapter keeps its local
+   * mode until the current utterance closes, so a stalled provider cannot
+   * strand the request.
+   */
+  setEndpointing(mode: RealtimeEndpointing): void {
+    if (this.closed || this.failed || mode === this.endpointingMode) return;
+    this.send({ event: 'config.update', endpointing: mode });
+    this.onTrace?.({ component: 'stt', event: 'endpointing-update', endpointing: mode });
+    if (this.speechOpen) {
+      this.pendingEndpointing = mode;
+      return;
+    }
+    this.endpointingMode = mode;
+  }
+
+  /** The utterance boundary passed: adopt the mode requested mid-utterance. */
+  private adoptPendingEndpointing(): void {
+    if (this.pendingEndpointing === null) return;
+    this.endpointingMode = this.pendingEndpointing;
+    this.pendingEndpointing = null;
   }
 
   private fail(err: Error): void {
@@ -261,7 +367,9 @@ export class SarvamRealtimeStt implements RealtimeStt {
 
   pushAudio(mulaw: Buffer): void {
     if (this.closed || this.failed || mulaw.length === 0) return;
-    if (this.speechOpen) {
+    // VAD mode streams the whole diet (silence included) so the provider's
+    // own VAD can hear it; manual mode streams only once speech is open.
+    if (this.endpointingMode === 'vad' || this.speechOpen) {
       this.send({ event: 'audio_input', audio: mulaw.toString('base64') });
       return;
     }
@@ -274,13 +382,22 @@ export class SarvamRealtimeStt implements RealtimeStt {
     }
   }
 
-  speechStart(): void {
-    if (this.closed || this.failed || this.speechOpen) return;
+  /** Claim the next utterance index and open one; shared by both modes. */
+  private openUtterance(): void {
     this.speechOpen = true;
+    this.vadBoundaryOpen = false;
     this.speechUtteranceIdx = this.nextUtteranceIdx;
     this.nextUtteranceIdx += 1;
     this.speechStartedAt = Date.now();
     this.partials = 0;
+  }
+
+  speechStart(): void {
+    if (this.closed || this.failed || this.speechOpen) return;
+    // VAD mode: the provider announces the boundary itself; a client
+    // speech_start would open a second, conflicting utterance.
+    if (this.endpointingMode === 'vad') return;
+    this.openUtterance();
     const bufferedBytes = this.pendingBytes;
     this.send({ event: 'speech_start' });
     for (const chunk of this.pendingAudio.splice(0)) {
@@ -311,14 +428,23 @@ export class SarvamRealtimeStt implements RealtimeStt {
   }
 
   finalize(): Promise<Transcription> {
-    if (this.closed || this.failed || !this.speechOpen || this.speechUtteranceIdx === null) {
+    // Manual mode streams between speech_start and speech_end; a VAD
+    // utterance is open from its boundary until its final is read.
+    if (this.closed || this.failed || this.speechUtteranceIdx === null || (!this.speechOpen && !this.vadBoundaryOpen)) {
       return Promise.reject(new Error('sarvam-realtime-not-streaming'));
     }
     if (this.waiting) return Promise.reject(new Error('sarvam-realtime-finalize-in-flight'));
     const utteranceIdx = this.speechUtteranceIdx;
-    this.send({ event: 'speech_end' });
+    if (this.endpointingMode === 'manual' && this.speechOpen) this.send({ event: 'speech_end' });
     this.speechOpen = false;
+    this.vadBoundaryOpen = false;
     this.speechUtteranceIdx = null;
+    const early = this.earlyFinals.get(utteranceIdx);
+    if (early) {
+      this.earlyFinals.delete(utteranceIdx);
+      this.adoptPendingEndpointing();
+      return Promise.resolve(early);
+    }
     return new Promise<Transcription>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.waiting = null;
@@ -326,7 +452,15 @@ export class SarvamRealtimeStt implements RealtimeStt {
         this.onTrace?.({ component: 'stt', event: 'final-timeout', ms: this.finalTimeoutMs, utteranceIdx });
         reject(new Error('sarvam-realtime-final-timeout'));
       }, this.finalTimeoutMs);
-      this.waiting = { utteranceIdx, resolve, reject, timer };
+      this.waiting = {
+        utteranceIdx,
+        resolve: (tx) => {
+          this.adoptPendingEndpointing();
+          resolve(tx);
+        },
+        reject,
+        timer,
+      };
     });
   }
 

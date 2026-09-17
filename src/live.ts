@@ -34,7 +34,7 @@ import type { RealtimeStt } from './sarvamRealtime.ts';
 import type { PlaybackResult } from './transport.ts';
 import type { StreamIdentity } from './stream.ts';
 import type { TraceFn } from './trace.ts';
-import { TurnTaking, type UtteranceSpeechStats } from './turnTaking.ts';
+import { TurnTaking, type TurnDetection, type UtteranceSpeechStats } from './turnTaking.ts';
 import { bufferedSpeech, type SpeechResponse, type Tts } from './tts.ts';
 import type { FailureEvent, TurnEvent } from './app.ts';
 
@@ -91,6 +91,12 @@ export interface LiveCallOptions {
   bargeIn?: boolean;
   /** Sustained speech threshold before barge-in fires. */
   interruptionMs?: number;
+  /**
+   * `sarvam` (default): the provider owns Turn boundaries when the realtime
+   * channel is in VAD mode. `hybrid`: the local detector owns them. Without a
+   * boundary-capable realtime channel the local detector is used either way.
+   */
+  turnDetection?: TurnDetection;
   /** Whole-Turn deadline for the LLM response. <=0 disables. */
   turnDeadlineMs?: number;
   /** Shared fixed-phrase audio cache; hits skip the provider. */
@@ -267,6 +273,8 @@ export class LiveCallSession {
   private readonly noResponseMs: number;
   private readonly availabilityTimeoutMs: number;
   private readonly bargeIn: boolean;
+  /** True when provider `vad.*` events own Turn boundaries on this call. */
+  private readonly providerBoundaries: boolean;
   private readonly turnDeadlineMs: number;
   private readonly fixedCache: FixedAudioCache | undefined;
   private readonly reducer: DialogueReducer;
@@ -335,6 +343,8 @@ export class LiveCallSession {
     this.noResponseMs = opts.noResponseMs ?? 0;
     this.availabilityTimeoutMs = opts.availabilityTimeoutMs ?? 0;
     this.bargeIn = opts.bargeIn ?? false;
+    this.providerBoundaries =
+      (opts.turnDetection ?? 'sarvam') === 'sarvam' && opts.realtime?.endpointing === 'vad';
     this.turnDeadlineMs = opts.turnDeadlineMs ?? DEFAULT_TURN_DEADLINE_MS;
     this.fixedCache = opts.fixedCache;
     this.reducer = opts.dialogue ?? new DialogueReducer();
@@ -359,6 +369,7 @@ export class LiveCallSession {
       vad: opts.vad,
       policy: opts.policy,
       bargeInMs: opts.interruptionMs,
+      detection: this.providerBoundaries ? 'sarvam' : 'hybrid',
       observer: {
         onUtterance: (utterance, stats) => {
           this.pending = this.pending.then(() => this.handleUtterance(utterance, stats)).catch(() => {});
@@ -366,7 +377,8 @@ export class LiveCallSession {
         onBargeIn: (event) => this.handleBargeIn(event),
         onSpeechStart: () => {
           this.cancelNoResponse();
-          this.realtime?.speechStart();
+          // In provider VAD mode the boundary came from the channel itself.
+          if (!this.providerBoundaries) this.realtime?.speechStart();
         },
         onUpstreamFrame: (frame) => this.realtime?.pushAudio(frame),
         onScore: (score, latched) => {
@@ -391,6 +403,15 @@ export class LiveCallSession {
     // A stable booking partial may start a read-only availability prefetch
     // before the Caller finishes; it can never write a Booking.
     opts.realtime?.onPartial?.((partial) => this.handlePartial(partial.text));
+    // Provider VAD mode: the provider's boundary opens and closes the
+    // utterance; the Turn's final is read from the same channel.
+    if (this.providerBoundaries) {
+      opts.realtime?.onVadEvent?.((event) => {
+        if (this.closed) return;
+        if (event === 'speech_start') this.turnTaking.providerSpeechStart();
+        else this.turnTaking.providerSpeechEnd();
+      });
+    }
   }
 
   get isClosed(): boolean {
@@ -821,6 +842,7 @@ export class LiveCallSession {
       component: 'vad',
       event: 'endpoint',
       turn,
+      source: this.providerBoundaries ? 'provider' : 'local',
       speechMs: utterance.durationMs,
       frames: stats.frames,
       maxScore: stats.maxScore,

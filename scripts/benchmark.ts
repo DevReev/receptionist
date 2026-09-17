@@ -73,6 +73,7 @@ export async function main(): Promise<void> {
           languageCode,
           streamType: candidate.streamType,
           mode: 'transcribe',
+          endpointing: 'manual',
           encoding: 'mulaw',
           sampleRate: 8000,
           finalTimeoutMs: 4000,

@@ -146,6 +146,47 @@ describe('config', () => {
     assert.throws(() => loadConfig({ ...base, SARVAM_STT_STREAM_TYPE: 'warp' }), /SARVAM_STT_STREAM_TYPE/);
   });
 
+  it('defaults turn boundaries to provider VAD with provider-default knobs, all tunable', () => {
+    const base = {
+      OPENROUTER_API_KEY: 'o',
+      TWILIO_ACCOUNT_SID: 'ACx',
+      TWILIO_AUTH_TOKEN: 't',
+      STREAM_WS_URL: 'wss://example.com/stream',
+      SARVAM_API_KEY: 'sk-sarvam',
+    };
+    const cfg = loadConfig(base);
+    assert.equal(cfg.turnDetection, 'sarvam');
+    assert.equal(cfg.sarvam.sttVadThreshold, 0.3);
+    assert.equal(cfg.sarvam.sttVadSilenceMs, 500);
+    assert.equal(cfg.sarvam.sttVadMinSpeechMs, 250);
+    const tuned = loadConfig({
+      ...base,
+      TURN_DETECTION: 'hybrid',
+      SARVAM_VAD_THRESHOLD: '0.45',
+      SARVAM_VAD_SILENCE_MS: '620',
+      SARVAM_VAD_MIN_SPEECH_MS: '260',
+    });
+    assert.equal(tuned.turnDetection, 'hybrid');
+    assert.equal(tuned.sarvam.sttVadThreshold, 0.45);
+    assert.equal(tuned.sarvam.sttVadSilenceMs, 620);
+    assert.equal(tuned.sarvam.sttVadMinSpeechMs, 260);
+    assert.throws(() => loadConfig({ ...base, TURN_DETECTION: 'local' }), /TURN_DETECTION/);
+  });
+
+  it('no longer carries the fixed silence and max-utterance knobs', () => {
+    const cfg = loadConfig({
+      OPENROUTER_API_KEY: 'o',
+      TWILIO_ACCOUNT_SID: 'ACx',
+      TWILIO_AUTH_TOKEN: 't',
+      STREAM_WS_URL: 'wss://example.com/stream',
+      SARVAM_API_KEY: 'sk-sarvam',
+      ENDPOINT_SILENCE_MS: '1000',
+      ENDPOINT_MAX_UTTERANCE_MS: '30000',
+    });
+    assert.equal(Object.hasOwn(cfg, 'endpointSilenceMs'), false);
+    assert.equal(Object.hasOwn(cfg, 'endpointMaxUtteranceMs'), false);
+  });
+
   it('keeps the Whisper/OpenAI providers selectable', () => {
     const cfg = loadConfig({
       OPENAI_API_KEY: 'sk-stt',
