@@ -1,6 +1,12 @@
 import { decodeMulaw } from './mulaw.ts';
 import { EchoGate, type EchoDecision, type EchoGateOptions } from './echoGate.ts';
-import type { BargeInEvent, EndpointPolicy, Utterance, Vad } from './endpoint.ts';
+import {
+  BARGE_IN_DEFAULTS,
+  type BargeInEvent,
+  type EndpointPolicy,
+  type Utterance,
+  type Vad,
+} from './endpoint.ts';
 
 /** 8 kHz mulaw: one sample per byte, so durations derive from sample counts. */
 const SAMPLE_RATE = 8000;
@@ -27,7 +33,7 @@ export interface TurnTakingObserver {
   onSpeechStart?(): void;
   /** Sustained Caller speech while the Receptionist holds the floor. */
   onBargeIn?(event: BargeInEvent): void;
-  /** A frame the live STT channel should hear; absent while muted. */
+  /** A frame the live STT channel should hear; Echo is replaced with silence, never dropped. */
   onUpstreamFrame?(frame: Buffer): void;
   /** Every frame heard while the Receptionist holds the floor, Echo or Caller. */
   onEchoDecision?(decision: EchoDecision): void;
@@ -47,21 +53,28 @@ export interface TurnTakingOptions {
   vad: Vad;
   policy: EndpointPolicy;
   observer: TurnTakingObserver;
-  /** Sustained speech before a Barge-in candidate fires while the Receptionist speaks. */
-  bargeInMs?: number;
+  /** Sustained non-Echo Caller speech that fires a Barge-in while the Receptionist speaks. */
+  bargeInMinSpeechMs?: number;
+  /** Sub-threshold dip a Barge-in candidate tolerates before resetting. */
+  bargeInDipToleranceMs?: number;
   /** Boundary authority for this call. */
   detection: TurnDetection;
   /** Echo-gate tuning; defaults ship the bench-tuned values. */
   echoGate?: EchoGateOptions;
 }
 
-type Floor = 'listening' | 'muted' | 'watching-barge-in';
+type Floor = 'listening' | 'watching-barge-in' | 'idle';
+
+/** A frame of mu-law silence (0xFF decodes to zero). */
+function silenceMulaw(length: number): Buffer {
+  return Buffer.alloc(length, 0xff);
+}
 
 /**
- * Owns one call's turn-taking surface: the frame diet to the live STT channel,
- * the local VAD gate, utterance segmentation, and Barge-in candidate state.
- * The session above it sees only Turns and Barge-ins. Durations derive from
- * sample counts, never wall-clock time, so behavior is deterministic in
+ * Owns one call's turn-taking surface: the upstream audio diet, the Echo
+ * gate, the local VAD gate, utterance segmentation, and Barge-in candidate
+ * state. The session above it sees only Turns and Barge-ins. Durations derive
+ * from sample counts, never wall-clock time, so behavior is deterministic in
  * tests. Calls serialize internally; callers may fire receiveAudio without
  * awaiting.
  */
@@ -69,7 +82,8 @@ export class TurnTaking {
   private readonly vad: Vad;
   private readonly policy: EndpointPolicy;
   private readonly observer: TurnTakingObserver;
-  private readonly bargeInMs: number;
+  private readonly bargeInMinSpeechMs: number;
+  private readonly bargeInDipToleranceMs: number;
   private readonly detection: TurnDetection;
   private readonly echoGate: EchoGate;
   private mode: Floor = 'listening';
@@ -77,6 +91,7 @@ export class TurnTaking {
   private speaking = false;
   /** Provider speech_open state; the utterance under capture in sarvam mode. */
   private providerOpen = false;
+  private providerCorroborated = false;
   private speechAnnounced = false;
   private candidateSamples = 0;
   private dipSamples = 0;
@@ -92,7 +107,8 @@ export class TurnTaking {
     this.vad = opts.vad;
     this.policy = opts.policy;
     this.observer = opts.observer;
-    this.bargeInMs = opts.bargeInMs ?? 200;
+    this.bargeInMinSpeechMs = opts.bargeInMinSpeechMs ?? BARGE_IN_DEFAULTS.minSpeechMs;
+    this.bargeInDipToleranceMs = opts.bargeInDipToleranceMs ?? BARGE_IN_DEFAULTS.dipToleranceMs;
     this.detection = opts.detection;
     this.echoGate = new EchoGate(opts.echoGate);
   }
@@ -118,11 +134,12 @@ export class TurnTaking {
   }
 
   /**
-   * The Receptionist takes the floor. With `watchForBargeIn`, sustained Caller
-   * speech still fires `onBargeIn`; otherwise inbound audio is discarded.
+   * The Receptionist takes the floor. Inbound audio keeps streaming upstream
+   * (Echo replaced with silence) and sustained non-Echo Caller speech fires
+   * `onBargeIn`; Barge-in is always on.
    */
-  startSpeaking(options?: { watchForBargeIn?: boolean }): void {
-    this.mode = options?.watchForBargeIn ? 'watching-barge-in' : 'muted';
+  startSpeaking(): void {
+    this.mode = 'watching-barge-in';
     this.reset();
   }
 
@@ -154,11 +171,18 @@ export class TurnTaking {
   }
 
   /**
-   * The provider opened an utterance (`vad.speech_start`). Audio since the
-   * pre-roll is the utterance's first word, so it is captured, not clipped.
+   * The provider opened an utterance (`vad.speech_start`). While the
+   * Receptionist holds the floor it never triggers a Barge-in; it only
+   * corroborates a local candidate, which the fire event carries. In
+   * listening it opens the utterance capture.
    */
   providerSpeechStart(): void {
-    if (this.detection !== 'sarvam' || this.mode !== 'listening' || this.providerOpen) return;
+    if (this.detection !== 'sarvam') return;
+    if (this.mode === 'watching-barge-in') {
+      this.providerCorroborated = true;
+      return;
+    }
+    if (this.mode !== 'listening' || this.providerOpen) return;
     this.providerOpen = true;
     this.adoptPreRoll();
     this.announceSpeechStart();
@@ -172,30 +196,45 @@ export class TurnTaking {
   }
 
   private async process(mulaw: Buffer): Promise<void> {
-    if (this.mode === 'muted') {
-      if (mulaw.length > 0) this.emitEchoDecision(decodeMulaw(mulaw));
+    if (this.mode === 'idle' || mulaw.length === 0) {
+      this.observer.onUpstreamFrame?.(mulaw);
       return;
     }
-    this.observer.onUpstreamFrame?.(mulaw);
-    if (mulaw.length === 0) return;
     const pcm = decodeMulaw(mulaw);
-    // While listening, inbound audio only feeds the Echo gate's history; the
-    // first frame of the next Receptionist speech then correlates over a full
-    // window instead of one noisy 20 ms slice.
-    if (this.mode === 'listening') this.echoGate.observe(pcm);
-    // While the Receptionist holds the floor, every frame is classified before
-    // any Barge-in logic looks at it, so traces and benches see the evidence.
-    if (this.mode === 'watching-barge-in') this.emitEchoDecision(pcm);
-    if (this.bargeInPending) return;
-    // The provider owns boundaries in this mode: keep the fallback capture
-    // and leave the local VAD to Barge-in watching only.
-    if (this.detection === 'sarvam' && this.mode === 'listening') {
-      this.captureProviderFrame(pcm);
-      return;
+    let isEcho = false;
+    let silent = false;
+    if (this.mode === 'listening') {
+      // Listening frames stream as-is and only feed the Echo gate's history;
+      // the first frame of the next Receptionist speech then correlates over a
+      // full window instead of one noisy 20 ms slice.
+      this.observer.onUpstreamFrame?.(mulaw);
+      this.echoGate.observe(pcm);
+      // The provider owns boundaries in this mode: keep the fallback capture
+      // and leave the local VAD to Barge-in watching only.
+      if (this.detection === 'sarvam') {
+        this.captureProviderFrame(pcm);
+        return;
+      }
+    } else {
+      // The Receptionist holds the floor: audio still streams upstream for the
+      // whole call, but the gate replaces our own voice returning through the
+      // phone with silence so the live STT channel never hears it as a Caller.
+      const decision = this.echoGate.classify(pcm);
+      this.observer.onEchoDecision?.(decision);
+      isEcho = decision.echo;
+      // The gate knows a silent frame carries no Caller speech, whatever the
+      // VAD says: a returning Echo that has not arrived yet must not count.
+      silent = decision.reason === 'silence';
+      this.observer.onUpstreamFrame?.(isEcho ? silenceMulaw(mulaw.length) : mulaw);
     }
+    if (this.bargeInPending) return;
     const score = await this.vad.score(pcm);
     this.observer.onScore?.(score, this.speaking);
-    const isSpeech = score >= this.policy.threshold;
+    // Echo and silence are never Caller speech, however speech-like the VAD finds them.
+    const isSpeech = !isEcho && !silent && score >= this.policy.threshold;
+    // Echo frames keep their timing in the utterance but contribute silence,
+    // so a Barge-in Turn never transcribes the Receptionist's own words.
+    const frame = isEcho ? new Int16Array(pcm.length) : pcm;
     if (this.speaking) {
       this.announceSpeechStart();
       if (isSpeech) {
@@ -207,16 +246,18 @@ export class TurnTaking {
     if (!this.speaking) {
       if (!isSpeech) {
         if (this.candidateSamples === 0) {
-          this.pushPreRoll(pcm);
+          this.pushPreRoll(frame);
           return;
         }
-        this.candidateSamples += pcm.length;
-        this.dipSamples += pcm.length;
-        this.chunks.push(pcm);
-        this.bufferedSamples += pcm.length;
+        this.candidateSamples += frame.length;
+        this.dipSamples += frame.length;
+        this.chunks.push(frame);
+        this.bufferedSamples += frame.length;
         // Short VAD dips remain part of the candidate phrase. A dip past
         // the budget means the noise burst is over: drop it all.
-        if (toMs(this.dipSamples) >= this.policy.latchDipMs) {
+        const dipToleranceMs =
+          this.mode === 'watching-barge-in' ? this.bargeInDipToleranceMs : this.policy.latchDipMs;
+        if (toMs(this.dipSamples) >= dipToleranceMs) {
           this.candidateSamples = 0;
           this.chunks = [];
           this.bufferedSamples = 0;
@@ -225,11 +266,11 @@ export class TurnTaking {
         return;
       }
       if (this.candidateSamples === 0) this.adoptPreRoll();
-      this.candidateSamples += pcm.length;
+      this.candidateSamples += frame.length;
       this.dipSamples = 0;
-      this.chunks.push(pcm);
-      this.bufferedSamples += pcm.length;
-      if (this.mode === 'watching-barge-in' && toMs(this.candidateSamples) >= this.bargeInMs) {
+      this.chunks.push(frame);
+      this.bufferedSamples += frame.length;
+      if (this.mode === 'watching-barge-in' && toMs(this.candidateSamples) >= this.bargeInMinSpeechMs) {
         this.fireBargeIn();
         return;
       }
@@ -238,12 +279,12 @@ export class TurnTaking {
       }
       return;
     }
-    this.chunks.push(pcm);
-    this.bufferedSamples += pcm.length;
-    this.trailingSilenceSamples = isSpeech ? 0 : this.trailingSilenceSamples + pcm.length;
+    this.chunks.push(frame);
+    this.bufferedSamples += frame.length;
+    this.trailingSilenceSamples = isSpeech ? 0 : this.trailingSilenceSamples + frame.length;
     if (this.mode === 'watching-barge-in') {
       const speechMs = toMs(this.bufferedSamples - this.trailingSilenceSamples);
-      if (speechMs >= this.bargeInMs) {
+      if (speechMs >= this.bargeInMinSpeechMs) {
         this.fireBargeIn();
       } else if (toMs(this.trailingSilenceSamples) >= this.policy.silenceMs) {
         this.reset();
@@ -254,11 +295,6 @@ export class TurnTaking {
     if (trailingMs >= this.policy.silenceMs || this.bufferedMs() >= this.policy.maxUtteranceMs) {
       this.emit();
     }
-  }
-
-  /** Echo-gate one frame heard while the Receptionist holds the floor. */
-  private emitEchoDecision(pcm: Int16Array): void {
-    this.observer.onEchoDecision?.(this.echoGate.classify(pcm));
   }
 
   private bufferedMs(): number {
@@ -332,7 +368,7 @@ export class TurnTaking {
   }
 
   private emit(): void {
-    this.mode = 'muted';
+    this.mode = 'idle';
     const utterance = this.speechAudio();
     const stats = this.takeStats();
     this.reset();
@@ -340,16 +376,18 @@ export class TurnTaking {
   }
 
   private fireBargeIn(): void {
-    const event = this.speechAudio();
+    const audio = this.speechAudio();
+    const corroborated = this.providerCorroborated;
     this.reset();
     this.bargeInPending = true;
-    this.observer.onBargeIn?.(event);
+    this.observer.onBargeIn?.({ ...audio, corroborated });
   }
 
   private reset(): void {
     this.bargeInPending = false;
     this.speaking = false;
     this.providerOpen = false;
+    this.providerCorroborated = false;
     this.speechAnnounced = false;
     this.candidateSamples = 0;
     this.dipSamples = 0;

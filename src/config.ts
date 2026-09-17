@@ -1,4 +1,5 @@
 import type { AppointmentsEnv } from './appointments.ts';
+import { BARGE_IN_DEFAULTS } from './endpoint.ts';
 import type { TurnDetection } from './turnTaking.ts';
 import type { SttConfig } from './whisper.ts';
 
@@ -68,9 +69,7 @@ export interface Config {
   streamWsUrl: string;
   /** Boundary authority: `sarvam` (provider VAD, default) or `hybrid` (local detector). */
   turnDetection: TurnDetection;
-  endpointMinSpeechMs: number;
   vadThreshold: number;
-  endpointLatchDipMs: number;
   /** Echo gate: correlation needed to classify an inbound frame as Echo. */
   echoGateCorrelation: number;
   /** Echo gate: dB above the learned return level that counts as Caller double-talk. */
@@ -84,10 +83,10 @@ export interface Config {
   noResponseMs: number;
   /** Overall deadline for one Availability read; <=0 waits forever. */
   appointmentsWaitMs: number;
-  /** Stop audible speech on sustained Caller speech. Off until live validation. */
-  bargeIn: boolean;
-  /** Sustained Caller speech before barge-in fires. */
-  bargeInSpeechMs: number;
+  /** Sustained non-Echo Caller speech before a Barge-in fires. */
+  bargeInMinSpeechMs: number;
+  /** Sub-threshold dip a Barge-in candidate tolerates before resetting. */
+  bargeInDipToleranceMs: number;
   /** Whole-Turn deadline for the LLM response; <=0 disables. */
   turnDeadlineMs: number;
   /** Shared fixed-phrase cache directory; unset means in-memory only. */
@@ -218,9 +217,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     voiceLoop,
     streamWsUrl,
     turnDetection,
-    endpointMinSpeechMs: int(env, 'ENDPOINT_MIN_SPEECH_MS', 300),
     vadThreshold: float(env, 'VAD_SPEECH_THRESHOLD', 0.1),
-    endpointLatchDipMs: int(env, 'ENDPOINT_LATCH_DIP_MS', 200),
     echoGateCorrelation: float(env, 'ECHO_GATE_CORRELATION', 0.7),
     echoGateLevelMarginDb: float(env, 'ECHO_GATE_LEVEL_MARGIN_DB', 6),
     echoGateMaxDelayMs: int(env, 'ECHO_GATE_MAX_DELAY_MS', 600),
@@ -228,8 +225,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     speakHoldMs: int(env, 'SPEAK_HOLD_MS', 3000),
     noResponseMs: int(env, 'NO_RESPONSE_MS', 8000),
     appointmentsWaitMs: int(env, 'APPOINTMENTS_WAIT_MS', 10000),
-    bargeIn: bool(env, 'BARGE_IN', false),
-    bargeInSpeechMs: int(env, 'BARGE_IN_SPEECH_MS', 200),
+    bargeInMinSpeechMs: int(env, 'BARGE_IN_MIN_SPEECH_MS', BARGE_IN_DEFAULTS.minSpeechMs),
+    bargeInDipToleranceMs: int(env, 'BARGE_IN_DIP_TOLERANCE_MS', BARGE_IN_DEFAULTS.dipToleranceMs),
     turnDeadlineMs: int(env, 'TURN_DEADLINE_MS', 6000),
     fixedAudioCacheDir: env.FIXED_AUDIO_CACHE_DIR,
     fixedPrewarmMs: int(env, 'FIXED_AUDIO_PREWARM_MS', 8000),

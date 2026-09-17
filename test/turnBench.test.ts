@@ -300,28 +300,10 @@ describe('turn bench behavior scenarios', () => {
     assert.equal(run.metrics.replyLatencyMs.samples, 1);
   });
 
-  it('reports a missed stop while Barge-in is off (the shipped baseline)', async () => {
+  it('stops on sustained Caller speech while the Receptionist speaks', async () => {
     const run = await runScenario(
       {
-        name: 'barge-in-off',
-        run: async (ctx) => {
-          await ctx.call('what are your hours', 60);
-          await ctx.awaitReply();
-          await ctx.interrupt('no wait', 30);
-          await ctx.silence(120);
-        },
-      },
-      { policy: POLICY, bargeIn: false },
-    );
-    assert.equal(run.observations.clears.length, 0);
-    assert.equal(run.metrics.stopLatencyMs.samples, 0);
-    assert.equal(run.metrics.stopLatencyMs.missed, 1);
-  });
-
-  it('measures stop latency once Barge-in is on', async () => {
-    const run = await runScenario(
-      {
-        name: 'barge-in-on',
+        name: 'barge-in',
         run: async (ctx) => {
           await ctx.call('what are your hours', 60);
           await ctx.awaitReply();
@@ -329,7 +311,7 @@ describe('turn bench behavior scenarios', () => {
           await ctx.silence(120);
         },
       },
-      { policy: POLICY, bargeIn: true, interruptionMs: 200 },
+      { policy: POLICY, bargeInMinSpeechMs: 200 },
     );
     assert.equal(run.observations.clears.length, 1);
     assert.equal(run.metrics.stopLatencyMs.samples, 1);
@@ -338,7 +320,7 @@ describe('turn bench behavior scenarios', () => {
     assert.equal(run.metrics.stopLatencyMs.missed, 0);
   });
 
-  it('does not stop on a Backchannel while the Receptionist speaks (baseline)', async () => {
+  it('records a Backchannel false-stop until absorption lands (ticket 06)', async () => {
     const run = await runScenario(
       {
         name: 'backchannel',
@@ -349,14 +331,14 @@ describe('turn bench behavior scenarios', () => {
           await ctx.silence(100);
         },
       },
-      { policy: POLICY, bargeIn: false },
+      { policy: POLICY },
     );
     assert.equal(run.observations.backchannels.length, 1);
-    assert.equal(run.metrics.backchannelFalseStops, 0);
+    assert.equal(run.metrics.backchannelFalseStops, 1, 'short callers still take the floor');
     assert.equal(run.metrics.selfEchoTurns, 0);
   });
 
-  it('does not stop on returned Echo while the Receptionist speaks (baseline)', async () => {
+  it('never stops on returned Echo while the Receptionist speaks', async () => {
     const run = await runScenario(
       {
         name: 'echo',
@@ -367,7 +349,7 @@ describe('turn bench behavior scenarios', () => {
           await ctx.silence(100);
         },
       },
-      { policy: POLICY, bargeIn: false },
+      { policy: POLICY },
     );
     assert.equal(run.observations.echos.length, 1);
     assert.equal(run.metrics.echoFalseStops, 0);
@@ -375,7 +357,7 @@ describe('turn bench behavior scenarios', () => {
     assert.equal(run.observations.clears.length, 0);
   });
 
-  it('stops a greeting Barge-in when Barge-in is on', async () => {
+  it('stops a greeting Barge-in', async () => {
     const run = await runScenario(
       {
         name: 'greeting-barge-in',
@@ -385,7 +367,7 @@ describe('turn bench behavior scenarios', () => {
           await ctx.silence(120);
         },
       },
-      { policy: POLICY, bargeIn: true, interruptionMs: 200 },
+      { policy: POLICY },
     );
     assert.equal(run.observations.clears.length, 1);
     assert.equal(run.metrics.stopLatencyMs.samples, 1);
@@ -402,7 +384,7 @@ describe('turn bench behavior scenarios', () => {
           await ctx.silence(120);
         },
       },
-      { policy: POLICY, bargeIn: true, interruptionMs: 200 },
+      { policy: POLICY },
     );
     assert.equal(run.metrics.stopLatencyMs.samples, 1);
     assert.equal(run.metrics.echoFalseStops, 0);
@@ -420,17 +402,21 @@ describe('turn bench behavior scenarios', () => {
           await ctx.silence(80);
         },
       },
-      { policy: POLICY, bargeIn: false },
+      { policy: POLICY },
     );
-    // Ticket 04 is classification only: half-duplex stays.
-    assert.equal(run.observations.clears.length, 0);
+    // The Echo span never stops the receptionist; the Declared interruption does.
+    assert.equal(run.observations.clears.length, 1);
+    assert.equal(run.metrics.stopLatencyMs.samples, 1);
+    assert.equal(run.metrics.echoFalseStops, 0);
+    assert.equal(run.metrics.selfEchoTurns, 0);
     assert.ok(run.observations.gateDecisions.length > 0);
     // The echo span starts as the reply begins; its first frames carry no
     // reference yet, so only frames with Echo energy are scored.
     assert.ok(run.metrics.gate.echoFrames >= 24, `echo frames ${run.metrics.gate.echoFrames}`);
     assert.equal(run.metrics.gate.echoFalsePasses, 0);
     assert.ok(run.metrics.gate.falsePassRate <= ECHO_GATE_BARS.falsePassRate);
-    assert.equal(run.metrics.gate.callerFrames, 20);
+    // The stop lands mid-interruption, so only its opening frames reach the gate.
+    assert.ok(run.metrics.gate.callerFrames >= 10, `caller frames ${run.metrics.gate.callerFrames}`);
     assert.equal(run.metrics.gate.callerFalseBlocks, 0);
   });
 });
@@ -445,13 +431,19 @@ describe('turn bench report', () => {
       }),
     );
     const report = formatTurnBenchReport(
-      { build: 'abc1234', policy: POLICY, fixtures: 3, bargeIn: false },
+      {
+        build: 'abc1234',
+        policy: POLICY,
+        fixtures: 3,
+        bargeInMinSpeechMs: 200,
+        bargeInDipToleranceMs: 200,
+      },
       [scenario],
       aggregateMetrics([scenario]),
     );
     assert.match(report, /build abc1234/);
     assert.match(report, /silence 1000ms/);
-    assert.match(report, /note: Barge-in is off/);
+    assert.match(report, /barge-in: min-speech 200ms  dip-tolerance 200ms/);
     assert.match(report, /steady-turn/);
     assert.match(report, /false-cut 0\.0% \(0\/1\)/);
     assert.match(report, /reply p50 1000ms p95 1000ms \(n=1\)/);
@@ -459,6 +451,7 @@ describe('turn bench report', () => {
     assert.match(report, /backchannel false-stop 0\.0% \(0\/0\)/);
     assert.match(report, /echo false-stop 0\.0% \(0\/0\)/);
     assert.match(report, /echo-gate bars: false-pass <= 5\.0%  false-block <= 5\.0%  ->  PASS/);
+    assert.match(report, /safety bar: self-echo Turns == 0  ->  PASS \(0\)/);
     assert.match(report, /gate pass 0\.0% \(0\/0\)/);
     assert.match(report, /TOTAL/);
   });

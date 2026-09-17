@@ -345,9 +345,10 @@ export interface TurnBenchScenario {
 
 export interface TurnBenchOptions {
   policy: EndpointPolicy;
-  /** Shipped configuration until Barge-in becomes always-on (ticket 05). */
-  bargeIn?: boolean;
-  interruptionMs?: number;
+  /** Sustained non-Echo Caller speech that fires a Barge-in. */
+  bargeInMinSpeechMs?: number;
+  /** Sub-threshold dip a Barge-in candidate tolerates before resetting. */
+  bargeInDipToleranceMs?: number;
   /** Print session phase/trace lines while a scenario runs. */
   debug?: boolean;
 }
@@ -529,8 +530,8 @@ class ScenarioRunner implements TurnBenchContext {
       guide: { raw: '# Clinic Guide — Bench Clinic\n', name: 'Bench Clinic' },
       assistant,
       calls: new CallStore(),
-      bargeIn: options.bargeIn ?? false,
-      interruptionMs: options.interruptionMs,
+      bargeInMinSpeechMs: options.bargeInMinSpeechMs,
+      bargeInDipToleranceMs: options.bargeInDipToleranceMs,
       noResponseMs: 0,
       holdAfterMs: 0,
       turnDeadlineMs: 0,
@@ -657,7 +658,21 @@ class ScenarioRunner implements TurnBenchContext {
     return text;
   }
 
+  /**
+   * A caller-audio frame from the bank. Captured utterances end in trailing
+   * silence and have dips; skipping inaudible slices keeps every declared
+   * speech frame content-bearing instead of replaying a capture's silence.
+   */
   private speechFrame(): Buffer {
+    const frames = Math.max(1, Math.ceil(this.callerBank.length / FRAME_BYTES));
+    let frame = this.readFrame();
+    for (let attempt = 1; attempt < frames && !hasCallerEnergy(frame); attempt++) {
+      frame = this.readFrame();
+    }
+    return frame;
+  }
+
+  private readFrame(): Buffer {
     const slice = Buffer.alloc(FRAME_BYTES, 0xff);
     for (let i = 0; i < FRAME_BYTES; i++) {
       slice[i] = this.callerBank[(this.speechOffset + i) % this.callerBank.length]!;
@@ -728,8 +743,10 @@ export interface TurnBenchReportMeta {
   build: string;
   policy: EndpointPolicy;
   fixtures: number;
-  /** False on the pre-change build: stops and false-stop rates are degenerate. */
-  bargeIn: boolean;
+  /** Sustained non-Echo speech that fires a Barge-in in this run. */
+  bargeInMinSpeechMs: number;
+  /** Dip tolerance a Barge-in candidate ran with. */
+  bargeInDipToleranceMs: number;
 }
 
 /**
@@ -738,6 +755,12 @@ export interface TurnBenchReportMeta {
  * frames heard while the Receptionist speaks may be blocked as Echo.
  */
 export const ECHO_GATE_BARS = { falsePassRate: 0.05, falseBlockRate: 0.05 } as const;
+
+/**
+ * Hard safety bar (ticket 05): the Receptionist's own voice returning through
+ * the Caller's phone must never start a Turn, however loud the return is.
+ */
+export const SELF_ECHO_BAR = { selfEchoTurns: 0 } as const;
 
 function percent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
@@ -790,15 +813,17 @@ export function formatTurnBenchReport(
   const lines = [
     `turn-taking bench  build ${meta.build}  fixtures ${meta.fixtures}`,
     `policy: silence ${meta.policy.silenceMs}ms  min-speech ${meta.policy.minSpeechMs}ms  max-utterance ${meta.policy.maxUtteranceMs}ms  threshold ${meta.policy.threshold}  dip ${meta.policy.latchDipMs}ms`,
+    `barge-in: min-speech ${meta.bargeInMinSpeechMs}ms  dip-tolerance ${meta.bargeInDipToleranceMs}ms`,
   ];
-  if (!meta.bargeIn) {
-    lines.push('note: Barge-in is off — stop latency and false-stop rates are degenerate (the baseline record).');
-  }
   const gatePass =
     aggregate.gate.falsePassRate <= ECHO_GATE_BARS.falsePassRate &&
     aggregate.gate.falseBlockRate <= ECHO_GATE_BARS.falseBlockRate;
   lines.push(
     `echo-gate bars: false-pass <= ${percent(ECHO_GATE_BARS.falsePassRate)}  false-block <= ${percent(ECHO_GATE_BARS.falseBlockRate)}  ->  ${gatePass ? 'PASS' : 'FAIL'}`,
+  );
+  const selfEchoPass = aggregate.selfEchoTurns <= SELF_ECHO_BAR.selfEchoTurns;
+  lines.push(
+    `safety bar: self-echo Turns == ${SELF_ECHO_BAR.selfEchoTurns}  ->  ${selfEchoPass ? 'PASS' : 'FAIL'} (${aggregate.selfEchoTurns})`,
   );
   lines.push('', metricLine({ ...aggregate, name: 'TOTAL' }), ...runs.map(metricLine));
   return lines.join('\n');
@@ -808,8 +833,7 @@ export function formatTurnBenchReport(
  * The scripted corpus the bench gates run. Each scenario declares what the
  * Caller did; the live session runs for real underneath. Echo return is
  * synthesized from the session's own outbound reference at varied delay and
- * attenuation. The baseline build has Barge-in off, so its stop, Backchannel,
- * and Echo numbers are degenerate.
+ * attenuation. Barge-in is always on; the Caller's declared speech fires it.
  */
 export interface EchoVariant {
   delayMs: number;

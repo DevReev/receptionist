@@ -88,10 +88,10 @@ export interface LiveCallOptions {
   availabilityTimeoutMs?: number;
   /** Single-attempt booking proposal, same seam as the legacy loop. */
   onProposeBooking?: (args: LiveProposeBookingArgs) => Promise<BookingOutcome>;
-  /** Stop audible speech on sustained Caller speech. Default off until live validation. */
-  bargeIn?: boolean;
-  /** Sustained speech threshold before barge-in fires. */
-  interruptionMs?: number;
+  /** Sustained non-Echo Caller speech that fires a Barge-in while the Receptionist speaks. */
+  bargeInMinSpeechMs?: number;
+  /** Sub-threshold dip a Barge-in candidate tolerates before resetting. */
+  bargeInDipToleranceMs?: number;
   /**
    * `sarvam` (default): the provider owns Turn boundaries when the realtime
    * channel is in VAD mode. `hybrid`: the local detector owns them. Without a
@@ -275,7 +275,6 @@ export class LiveCallSession {
   private readonly holdAfterMs: number;
   private readonly noResponseMs: number;
   private readonly availabilityTimeoutMs: number;
-  private readonly bargeIn: boolean;
   /** True when provider `vad.*` events own Turn boundaries on this call. */
   private readonly providerBoundaries: boolean;
   private readonly turnDeadlineMs: number;
@@ -307,6 +306,10 @@ export class LiveCallSession {
   /** Responses at or below this generation were interrupted and must not play. */
   private cancelledThrough = 0;
   private activeSpeech: ActiveSpeech | null = null;
+  /** Abort controller of the Turn's LLM generation, if one is running. */
+  private turnAbort: AbortController | null = null;
+  /** Last Turn interrupted by a Barge-in; its pending generation must not speak. */
+  private interruptedTurn = 0;
   /** One Availability read per Turn, however many times the assistant asks. */
   private availabilityForTurn: { turn: number; value: Promise<{ block: string; slots: SlotOption[] }> } | null = null;
   /** Availability read started when the session opened; early Turns reuse it. */
@@ -345,7 +348,6 @@ export class LiveCallSession {
     this.holdAfterMs = opts.holdAfterMs ?? 3000;
     this.noResponseMs = opts.noResponseMs ?? 0;
     this.availabilityTimeoutMs = opts.availabilityTimeoutMs ?? 0;
-    this.bargeIn = opts.bargeIn ?? false;
     this.providerBoundaries =
       (opts.turnDetection ?? 'sarvam') === 'sarvam' && opts.realtime?.endpointing === 'vad';
     this.turnDeadlineMs = opts.turnDeadlineMs ?? DEFAULT_TURN_DEADLINE_MS;
@@ -371,7 +373,8 @@ export class LiveCallSession {
     this.turnTaking = new TurnTaking({
       vad: opts.vad,
       policy: opts.policy,
-      bargeInMs: opts.interruptionMs,
+      bargeInMinSpeechMs: opts.bargeInMinSpeechMs,
+      bargeInDipToleranceMs: opts.bargeInDipToleranceMs,
       detection: this.providerBoundaries ? 'sarvam' : 'hybrid',
       echoGate: opts.echoGate,
       observer: {
@@ -687,31 +690,37 @@ export class LiveCallSession {
     }
   }
 
-  /** While speaking: mute, or watch for Barge-in candidates when barge-in is on. */
+  /** While speaking: always watch for Barge-in candidates over echo-gated audio. */
   private prepareSpeaking(): void {
-    this.turnTaking.startSpeaking({ watchForBargeIn: this.bargeIn });
+    this.turnTaking.startSpeaking();
     this.cancelNoResponse();
   }
 
-  /** Sustained Caller speech during a response: clear audio and open a new Turn. */
+  /** Sustained non-Echo Caller speech during a response: clear audio and open a new Turn. */
   private handleBargeIn(event: BargeInEvent): void {
-    if (this.closed || !this.bargeIn || this.phase !== 'SPEAKING') return;
+    if (this.closed) return;
     const speech = this.activeSpeech;
     this.setPhase('INTERRUPTING');
+    if (this.activeTurn) this.interruptedTurn = this.activeTurn.turn;
     this.trace?.({
       component: 'call',
       event: 'barge-in',
       generation: speech?.generation,
       candidateMs: event.durationMs,
+      corroborated: event.corroborated,
     });
     this.clearPlaybackFn?.('caller-barge-in');
     if (speech) {
       speech.cancelled = true;
-      speech.abort.abort();
+      speech.abort.abort('caller-barge-in');
       speech.response.cancel('caller-barge-in');
       this.cancelledThrough = speech.generation;
       if (speech.kind === 'readback') this.dialogue = this.reducer.clearReadback(this.dialogue);
     }
+    // A reply still waiting on its first token (e.g. behind a hold line) is
+    // aborted too, so the interrupted Turn never speaks after the Caller has
+    // taken the floor.
+    this.turnAbort?.abort('caller-barge-in');
     this.activeSpeech = null;
     // The retained candidate becomes the start of the next utterance: the
     // first word is preserved instead of being dropped with the response.
@@ -1214,6 +1223,7 @@ export class LiveCallSession {
       this.logPhase('availability', 'injected', { turn, chars: availabilityBlock.length });
     }
     const controller = new AbortController();
+    this.turnAbort = controller;
     const deadline = this.turnDeadlineMs > 0 ? setTimeout(() => controller.abort(), this.turnDeadlineMs) : null;
     deadline?.unref?.();    const ctx = {
       transcript: excerpt,
@@ -1277,9 +1287,11 @@ export class LiveCallSession {
     }
     if (this.closed || this.activeTurn === null) return;
     // Barge-in: unheard wording never enters history, and the promoted Caller
-    // utterance is already the next Turn.
+    // utterance is already the next Turn. A reply waiting behind a hold line
+    // is aborted before it ever speaks.
     if (replyGeneration > 0 && replyGeneration <= this.cancelledThrough) return;
     if (controller.signal.aborted && !generationCompleted) {
+      if (this.interruptedTurn === turn) return;
       this.logPhase('turn', 'deadline', { turn, ms: this.turnDeadlineMs });
       this.logTurn?.({ callSid: this.identity.callSid, turn, excerpt, reply: REPROMPT_LINE, endCall: false, miss: true });
       this.activeTurn = null;
@@ -1348,6 +1360,10 @@ export class LiveCallSession {
     const startedAt = Date.now();
     let firstToken = false;
     const run = this.speechTail.then(async () => {
+      // Barge-in during the hold line marks the Turn interrupted before this
+      // run starts; the interrupted Turn must not speak once the Caller has
+      // taken the floor.
+      if (this.closed || this.interruptedTurn === turn) return { text: '', generation: 0 };
       const generation = this.nextGeneration();
       const response = this.createSpeechResponse(generation);
       const speech: ActiveSpeech = {
@@ -1369,8 +1385,7 @@ export class LiveCallSession {
             if (this.closed || speech.cancelled || generation !== this.generation) return;
             this.sendAudio(chunk);
           }
-        })();
-        let streamError: Error | undefined;
+        })();        let streamError: Error | undefined;
         try {
           let next = first;
           while (!next.done) {
@@ -1423,6 +1438,7 @@ export class LiveCallSession {
         if (this.activeTurn) this.activeTurn.replySoFar = fullReply;
         return { text: fullReply, generation };
       } finally {
+        if (this.turnAbort === controller) this.turnAbort = null;
         this.activeSpeech = null;
         if (!this.closed && this.phase === 'SPEAKING') this.beginListening();
       }

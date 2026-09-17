@@ -4,36 +4,13 @@ import { encodeMulaw } from '../src/audio.ts';
 import { TurnTaking } from '../src/turnTaking.ts';
 import type { BargeInEvent, Utterance, Vad } from '../src/endpoint.ts';
 import type { EchoDecision } from '../src/echoGate.ts';
+import { echoFrame, voice } from './voiceFixtures.ts';
 
 const FRAME = 160; // 20 ms of 8 kHz telephony
 const POLICY = { silenceMs: 700, minSpeechMs: 300, maxUtteranceMs: 30000, threshold: 0.1, latchDipMs: 200 };
 
-/** Deterministic speech-like PCM, so two seeds are uncorrelated signals. */
-function voice(samples: number, seed = 1): Int16Array {
-  const pcm = new Int16Array(samples);
-  let state = seed >>> 0;
-  const rand = (): number => {
-    state = (1664525 * state + 1013904223) >>> 0;
-    return state / 2 ** 32;
-  };
-  for (let i = 0; i < samples; i++) {
-    const t = i / 8000;
-    const pitch = 140 + 60 * Math.sin(2 * Math.PI * 0.7 * t) + 20 * rand();
-    pcm[i] = Math.round(6000 * Math.sin(2 * Math.PI * pitch * t) * (0.6 + 0.4 * Math.sin(2 * Math.PI * 3 * t)));
-  }
-  return pcm;
-}
-
-function echoFrame(ref: Int16Array, frameIndex: number, delaySamples: number, gain: number): Int16Array {
-  const out = new Int16Array(FRAME);
-  for (let i = 0; i < FRAME; i++) {
-    const src = frameIndex * FRAME + i - delaySamples;
-    if (src >= 0 && src < ref.length) out[i] = Math.round(ref[src]! * gain);
-  }
-  return out;
-}
-
 const scriptVad = (): Vad => ({ score: async () => 0.9, reset: () => {} });
+const SILENCE_FRAME = Buffer.alloc(FRAME, 0xff);
 
 interface Harness {
   turnTaking: TurnTaking;
@@ -43,7 +20,7 @@ interface Harness {
   upstream: Buffer[];
 }
 
-function harness(): Harness {
+function harness(options?: { bargeInMinSpeechMs?: number }): Harness {
   const decisions: EchoDecision[] = [];
   const utterances: Utterance[] = [];
   const bargeIns: BargeInEvent[] = [];
@@ -52,6 +29,7 @@ function harness(): Harness {
     vad: scriptVad(),
     policy: POLICY,
     detection: 'hybrid',
+    bargeInMinSpeechMs: options?.bargeInMinSpeechMs,
     observer: {
       onUtterance: (utterance) => utterances.push(utterance),
       onBargeIn: (event) => bargeIns.push(event),
@@ -63,7 +41,7 @@ function harness(): Harness {
 }
 
 describe('turn taking echo gate', () => {
-  it('flags returned Echo as Echo while the Receptionist speaks, without segmenting or stopping', async () => {
+  it('flags returned Echo and replaces it with mulaw silence upstream, without segmenting or stopping', async () => {
     const h = harness();
     const ref = voice(FRAME * 200, 3);
     for (let t = 0; t < 5; t++) {
@@ -71,21 +49,32 @@ describe('turn taking echo gate', () => {
     }
     h.turnTaking.startSpeaking();
     h.upstream.length = 0;
+    const fed: Buffer[] = [];
     let echoed = 0;
     for (let t = 0; t < 100; t++) {
       h.turnTaking.retainReference(encodeMulaw(ref.subarray(t * FRAME, (t + 1) * FRAME)));
-      await h.turnTaking.receiveAudio(encodeMulaw(echoFrame(ref, t, 960, 0.125)));
+      const inbound = encodeMulaw(echoFrame(ref, t, 960, 0.125));
+      fed.push(inbound);
+      await h.turnTaking.receiveAudio(inbound);
       if (t >= 7 && h.decisions[t]!.echo) echoed += 1;
     }
     assert.equal(h.decisions.length, 100);
     assert.ok(echoed >= 92, `echo frames flagged: ${echoed}/93`);
     assert.equal(h.utterances.length, 0);
     assert.equal(h.bargeIns.length, 0);
-    assert.equal(h.upstream.length, 0);
+    // The whole call streams upstream: flagged Echo becomes silence, everything
+    // else passes through untouched.
+    assert.equal(h.upstream.length, 100);
+    for (let t = 0; t < 100; t++) {
+      if (h.decisions[t]!.echo) assert.deepEqual(h.upstream[t], SILENCE_FRAME);
+      else assert.deepEqual(h.upstream[t], fed[t]);
+    }
   });
 
-  it('passes clean Caller speech while the Receptionist speaks', async () => {
-    const h = harness();
+  it('passes clean Caller speech upstream while the Receptionist speaks', async () => {
+    // A high candidate threshold keeps this test on gate classification; the
+    // fire-on-Caller-speech case lives in the barge-in suite.
+    const h = harness({ bargeInMinSpeechMs: 60_000 });
     const ref = voice(FRAME * 100, 3);
     const caller = voice(FRAME * 100, 51);
     for (let t = 0; t < 5; t++) {
@@ -93,15 +82,18 @@ describe('turn taking echo gate', () => {
     }
     h.turnTaking.startSpeaking();
     h.upstream.length = 0;
+    const fed: Buffer[] = [];
     for (let t = 0; t < 60; t++) {
       h.turnTaking.retainReference(encodeMulaw(ref.subarray(t * FRAME, (t + 1) * FRAME)));
-      await h.turnTaking.receiveAudio(encodeMulaw(caller.subarray((t + 5) * FRAME, (t + 6) * FRAME)));
+      const inbound = encodeMulaw(caller.subarray((t + 5) * FRAME, (t + 6) * FRAME));
+      fed.push(inbound);
+      await h.turnTaking.receiveAudio(inbound);
     }
     assert.equal(h.decisions.length, 60);
     assert.equal(h.decisions.filter((decision) => decision.echo).length, 0);
     assert.equal(h.utterances.length, 0);
     assert.equal(h.bargeIns.length, 0);
-    assert.equal(h.upstream.length, 0);
+    assert.deepEqual(h.upstream, fed);
   });
 
   it('does not classify inbound frames while listening', async () => {

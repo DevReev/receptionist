@@ -210,6 +210,30 @@ describe('config', () => {
     assert.equal(Object.hasOwn(cfg, 'endpointMaxUtteranceMs'), false);
   });
 
+  it('names the Barge-in candidate knobs and drops the Barge-in boolean', () => {
+    const base = {
+      OPENROUTER_API_KEY: 'o',
+      TWILIO_ACCOUNT_SID: 'ACx',
+      TWILIO_AUTH_TOKEN: 't',
+      STREAM_WS_URL: 'wss://example.com/stream',
+      SARVAM_API_KEY: 'sk-sarvam',
+      BARGE_IN: 'true',
+      BARGE_IN_SPEECH_MS: '250',
+      ENDPOINT_MIN_SPEECH_MS: '300',
+      ENDPOINT_LATCH_DIP_MS: '200',
+    };
+    const cfg = loadConfig(base);
+    assert.equal(Object.hasOwn(cfg, 'bargeIn'), false, 'Barge-in is always on');
+    assert.equal(Object.hasOwn(cfg, 'bargeInSpeechMs'), false);
+    assert.equal(Object.hasOwn(cfg, 'endpointMinSpeechMs'), false);
+    assert.equal(Object.hasOwn(cfg, 'endpointLatchDipMs'), false);
+    assert.equal(cfg.bargeInMinSpeechMs, 200);
+    assert.equal(cfg.bargeInDipToleranceMs, 200);
+    const tuned = loadConfig({ ...base, BARGE_IN_MIN_SPEECH_MS: '150', BARGE_IN_DIP_TOLERANCE_MS: '120' });
+    assert.equal(tuned.bargeInMinSpeechMs, 150);
+    assert.equal(tuned.bargeInDipToleranceMs, 120);
+  });
+
   it('keeps the Whisper/OpenAI providers selectable', () => {
     const cfg = loadConfig({
       OPENAI_API_KEY: 'sk-stt',

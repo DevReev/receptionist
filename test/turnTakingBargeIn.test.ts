@@ -1,9 +1,11 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { TurnTaking } from '../src/turnTaking.ts';
+import { encodeMulaw } from '../src/audio.ts';
+import { TurnTaking, type TurnDetection } from '../src/turnTaking.ts';
 import type { BargeInEvent, Utterance, Vad } from '../src/endpoint.ts';
 import { attachStreamSocket } from '../src/stream.ts';
 import { FakeSocket, twilioMedia, twilioStart } from './fakeStream.ts';
+import { echoFrame, voice } from './voiceFixtures.ts';
 
 const FRAME_BYTES = 160; // 20 ms of 8 kHz mulaw, the Twilio media frame size.
 const POLICY = { silenceMs: 700, minSpeechMs: 300, maxUtteranceMs: 30000, threshold: 0.1, latchDipMs: 200 };
@@ -29,22 +31,28 @@ interface Harness {
   socket: FakeSocket;
   utterances: Utterance[];
   bargeIns: BargeInEvent[];
+  upstream: Buffer[];
   turnTaking: TurnTaking;
   feed(pattern: Frame[]): Promise<void>;
 }
 
-function harness(vad: Vad, options?: { bargeInMs?: number }): Harness {
+function harness(
+  vad: Vad,
+  options?: { bargeInMinSpeechMs?: number; detection?: TurnDetection },
+): Harness {
   const socket = new FakeSocket();
   const utterances: Utterance[] = [];
   const bargeIns: BargeInEvent[] = [];
+  const upstream: Buffer[] = [];
   const turnTaking = new TurnTaking({
     vad,
     policy: POLICY,
-    bargeInMs: options?.bargeInMs,
-    detection: 'hybrid',
+    bargeInMinSpeechMs: options?.bargeInMinSpeechMs,
+    detection: options?.detection ?? 'hybrid',
     observer: {
       onUtterance: (u) => utterances.push(u),
       onBargeIn: (e) => bargeIns.push(e),
+      onUpstreamFrame: (frame) => upstream.push(frame),
     },
   });
   let tail: Promise<unknown> = Promise.resolve();
@@ -60,6 +68,7 @@ function harness(vad: Vad, options?: { bargeInMs?: number }): Harness {
     socket,
     utterances,
     bargeIns,
+    upstream,
     turnTaking,
     feed: async (pattern) => {
       for (const kind of pattern) {
@@ -75,41 +84,34 @@ function harness(vad: Vad, options?: { bargeInMs?: number }): Harness {
 describe('turn taking barge-in candidates', () => {
   it('fires onBargeIn after sustained speech while watching', async () => {
     const h = harness(scriptVad(speech(30)));
-    h.turnTaking.startSpeaking({ watchForBargeIn: true });
+    h.turnTaking.startSpeaking();
     await h.feed(speech(30));
     assert.equal(h.bargeIns.length, 1);
     const event = h.bargeIns[0]!;
     assert.ok(event.durationMs >= 200);
     assert.equal(event.audio.length, event.durationMs * 8);
+    assert.equal(event.corroborated, false, 'the local trigger needs no provider event');
     assert.equal(h.utterances.length, 0);
   });
 
   it('does not fire on a short burst below the barge-in threshold', async () => {
     const h = harness(scriptVad([...speech(5), ...silence(50)]));
-    h.turnTaking.startSpeaking({ watchForBargeIn: true });
+    h.turnTaking.startSpeaking();
     await h.feed([...speech(5), ...silence(50)]);
     assert.equal(h.bargeIns.length, 0);
   });
 
-  it('never fires while fully muted', async () => {
-    const h = harness(scriptVad(speech(30)));
-    h.turnTaking.startSpeaking();
-    await h.feed(speech(30));
-    assert.equal(h.bargeIns.length, 0);
-    assert.equal(h.utterances.length, 0);
-  });
-
   it('fires exactly once and drops audio until the candidate is accepted', async () => {
     const h = harness(scriptVad(speech(100)));
-    h.turnTaking.startSpeaking({ watchForBargeIn: true });
+    h.turnTaking.startSpeaking();
     await h.feed(speech(100));
     assert.equal(h.bargeIns.length, 1);
     assert.equal(h.utterances.length, 0);
   });
 
   it('honors a custom barge-in threshold', async () => {
-    const h = harness(scriptVad(speech(20)), { bargeInMs: 100 });
-    h.turnTaking.startSpeaking({ watchForBargeIn: true });
+    const h = harness(scriptVad(speech(20)), { bargeInMinSpeechMs: 100 });
+    h.turnTaking.startSpeaking();
     await h.feed(speech(20));
     assert.equal(h.bargeIns.length, 1);
     assert.equal(h.bargeIns[0]!.durationMs, 100);
@@ -118,7 +120,7 @@ describe('turn taking barge-in candidates', () => {
 
   it('retains pre-roll so the first word is not clipped', async () => {
     const h = harness(scriptVad([...silence(20), ...speech(15)]));
-    h.turnTaking.startSpeaking({ watchForBargeIn: true });
+    h.turnTaking.startSpeaking();
     await h.feed([...silence(20), ...speech(15)]);
     assert.equal(h.bargeIns.length, 1);
     assert.equal(h.bargeIns[0]!.durationMs, 500);
@@ -126,7 +128,7 @@ describe('turn taking barge-in candidates', () => {
 
   it('accepts the barge-in audio as the start of the next utterance', async () => {
     const h = harness(scriptVad([...speech(30), ...silence(80)]));
-    h.turnTaking.startSpeaking({ watchForBargeIn: true });
+    h.turnTaking.startSpeaking();
     await h.feed(speech(15));
     assert.equal(h.bargeIns.length, 1);
     const event = h.bargeIns[0]!;
@@ -148,19 +150,67 @@ describe('turn taking barge-in candidates', () => {
     h.turnTaking.startSpeaking();
     assert.equal(h.turnTaking.isListening, false);
 
-    h.turnTaking.startSpeaking({ watchForBargeIn: true });
-    assert.equal(h.turnTaking.isListening, false);
-
     h.turnTaking.startListening();
     assert.equal(h.turnTaking.isListening, true);
   });
 
   it('emits normally after resuming listening', async () => {
     const h = harness(scriptVad([...speech(50), ...silence(50)]));
-    h.turnTaking.startSpeaking({ watchForBargeIn: true });
+    h.turnTaking.startSpeaking();
     h.turnTaking.startListening();
     await h.feed([...speech(50), ...silence(50)]);
     assert.equal(h.utterances.length, 1);
     assert.equal(h.bargeIns.length, 0);
+  });
+
+  it('never counts the Receptionist\'s own returning Echo as a candidate', async () => {
+    const h = harness(scriptVad(speech(200)));
+    const ref = voice(FRAME_BYTES * 200, 3);
+    for (let t = 0; t < 5; t++) {
+      await h.turnTaking.receiveAudio(encodeMulaw(voice(FRAME_BYTES, 90 + t)));
+    }
+    h.turnTaking.startSpeaking();
+    for (let t = 0; t < 100; t++) {
+      h.turnTaking.retainReference(encodeMulaw(ref.subarray(t * FRAME_BYTES, (t + 1) * FRAME_BYTES)));
+      await h.turnTaking.receiveAudio(encodeMulaw(echoFrame(ref, t, 960, 0.125)));
+    }
+    assert.equal(h.bargeIns.length, 0, 'Echo alone never takes the floor');
+    assert.equal(h.utterances.length, 0);
+  });
+
+  it('fires on clean Caller speech while Echo is also returning', async () => {
+    const h = harness(scriptVad(speech(200)));
+    const ref = voice(FRAME_BYTES * 200, 3);
+    const caller = voice(FRAME_BYTES * 200, 51);
+    for (let t = 0; t < 5; t++) {
+      await h.turnTaking.receiveAudio(encodeMulaw(caller.subarray(t * FRAME_BYTES, (t + 1) * FRAME_BYTES)));
+    }
+    h.turnTaking.startSpeaking();
+    for (let t = 0; t < 60 && h.bargeIns.length === 0; t++) {
+      h.turnTaking.retainReference(encodeMulaw(ref.subarray(t * FRAME_BYTES, (t + 1) * FRAME_BYTES)));
+      await h.turnTaking.receiveAudio(encodeMulaw(caller.subarray((t + 5) * FRAME_BYTES, (t + 6) * FRAME_BYTES)));
+    }
+    assert.equal(h.bargeIns.length, 1);
+    assert.equal(h.bargeIns[0]!.corroborated, false);
+  });
+
+  it('never counts a silent frame as speech, whatever the VAD scores', async () => {
+    const h = harness(scriptVad(speech(100)));
+    h.turnTaking.startSpeaking();
+    await h.feed(silence(100));
+    assert.equal(h.bargeIns.length, 0, 'silence can never take the floor');
+    assert.equal(h.utterances.length, 0);
+  });
+
+  it('carries provider corroboration without letting it trigger alone', async () => {
+    const h = harness(scriptVad(speech(200)), { detection: 'sarvam' });
+    h.turnTaking.startSpeaking();
+    h.turnTaking.providerSpeechStart();
+    await h.feed(silence(5));
+    assert.equal(h.bargeIns.length, 0, 'a provider speech-start never triggers Barge-in');
+
+    await h.feed(speech(12));
+    assert.equal(h.bargeIns.length, 1);
+    assert.equal(h.bargeIns[0]!.corroborated, true);
   });
 });

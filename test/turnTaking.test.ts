@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { TurnTaking, type UtteranceSpeechStats } from '../src/turnTaking.ts';
-import type { Utterance, Vad } from '../src/endpoint.ts';
+import type { BargeInEvent, Utterance, Vad } from '../src/endpoint.ts';
 import { attachStreamSocket } from '../src/stream.ts';
 import { FakeSocket, twilioMedia, twilioStart, twilioStop } from './fakeStream.ts';
 
@@ -35,6 +35,7 @@ interface Harness {
   socket: FakeSocket;
   utterances: Utterance[];
   stats: UtteranceSpeechStats[];
+  bargeIns: BargeInEvent[];
   speechStarts: number;
   turnTaking: TurnTaking;
   /** Feed scripted frames through the socket; resolves when all audio is processed. */
@@ -45,6 +46,7 @@ function harness(vad: Vad): Harness {
   const socket = new FakeSocket();
   const utterances: Utterance[] = [];
   const stats: UtteranceSpeechStats[] = [];
+  const bargeIns: BargeInEvent[] = [];
   const state = { speechStarts: 0 };
   const turnTaking = new TurnTaking({
     vad,
@@ -54,6 +56,9 @@ function harness(vad: Vad): Harness {
       onUtterance: (utterance, utteranceStats) => {
         utterances.push(utterance);
         stats.push(utteranceStats);
+      },
+      onBargeIn: (event) => {
+        bargeIns.push(event);
       },
       onSpeechStart: () => {
         state.speechStarts += 1;
@@ -72,13 +77,18 @@ function harness(vad: Vad): Harness {
     socket,
     utterances,
     stats,
+    bargeIns,
     get speechStarts() {
       return state.speechStarts;
     },
     turnTaking,
     feed: async (pattern) => {
-      for (const _mark of pattern) {
-        socket.peerMessage(twilioMedia(Buffer.alloc(FRAME_BYTES, 0xff).toString('base64')));
+      let frame = 0;
+      for (const mark of pattern) {
+        // Audible bytes for speech: 0xFF is mu-law silence and is never Caller speech.
+        const byte = mark === 'speech' ? (frame % 254) + 1 : 0xff;
+        frame += 1;
+        socket.peerMessage(twilioMedia(Buffer.alloc(FRAME_BYTES, byte).toString('base64')));
       }
       await tail;
     },
@@ -176,12 +186,12 @@ describe('turn taking', () => {
     assert.equal(h.utterances.length, 2);
   });
 
-  it('discards audio while the Receptionist holds the floor and restarts clean', async () => {
-    // Muted frames are never scored, so the script covers only post-listening audio.
+  it('watches for Barge-in while the Receptionist holds the floor and restarts clean', async () => {
     const h = harness(scriptVad([...speech(50), ...silence(50)]));
     h.turnTaking.startSpeaking();
     await h.feed(speech(200));
-    assert.equal(h.utterances.length, 0);
+    assert.equal(h.utterances.length, 0, 'holding the floor never emits a Turn');
+    assert.equal(h.bargeIns.length, 1, 'sustained speech interrupts instead');
     h.turnTaking.startListening();
     await h.feed([...speech(50), ...silence(50)]);
     assert.equal(h.utterances.length, 1);
@@ -202,7 +212,7 @@ describe('turn taking', () => {
     assert.equal(h.utterances.length, 1);
   });
 
-  it('streams frames upstream only while it can hear the Caller', async () => {
+  it('streams frames upstream for the whole call, gated only while the Receptionist speaks', async () => {
     const upstream: Buffer[] = [];
     const turnTaking = new TurnTaking({
       vad: scriptVad(speech(10)),
@@ -216,13 +226,12 @@ describe('turn taking', () => {
     await turnTaking.receiveAudio(Buffer.alloc(FRAME_BYTES, 0x11));
     turnTaking.startSpeaking();
     await turnTaking.receiveAudio(Buffer.alloc(FRAME_BYTES, 0x22));
-    turnTaking.startSpeaking({ watchForBargeIn: true });
-    await turnTaking.receiveAudio(Buffer.alloc(FRAME_BYTES, 0x33));
     turnTaking.startListening();
     await turnTaking.receiveAudio(Buffer.alloc(FRAME_BYTES, 0x44));
     assert.deepEqual(upstream, [
       Buffer.alloc(FRAME_BYTES, 0x11),
-      Buffer.alloc(FRAME_BYTES, 0x33),
+      // No Echo reference yet, so the gate cannot call our own voice: pass it.
+      Buffer.alloc(FRAME_BYTES, 0x22),
       Buffer.alloc(FRAME_BYTES, 0x44),
     ]);
   });

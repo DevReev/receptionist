@@ -5,11 +5,20 @@ export interface Vad {
 }
 
 /**
- * Local (hybrid) detector fallbacks for the two knobs that left the env
- * surface when the provider took over primary boundaries. Silence keeps the
- * last shipped value (`.env`, 1000 ms) until the adaptive pause lands.
+ * Local (hybrid) detector fallbacks for the knobs that left the env surface:
+ * the provider owns primary boundaries, and the Barge-in candidate knobs are
+ * separate. Silence keeps the last shipped value (`.env`, 1000 ms) until the
+ * adaptive pause lands (ticket 07).
  */
-export const LOCAL_ENDPOINT_FALLBACKS = { silenceMs: 1000, maxUtteranceMs: 30_000 } as const;
+export const LOCAL_ENDPOINT_FALLBACKS = {
+  silenceMs: 1000,
+  minSpeechMs: 300,
+  maxUtteranceMs: 30_000,
+  latchDipMs: 200,
+} as const;
+
+/** Shipped Barge-in candidate defaults: sustained non-Echo speech and dip tolerance. */
+export const BARGE_IN_DEFAULTS = { minSpeechMs: 200, dipToleranceMs: 200 } as const;
 
 export interface EndpointPolicy {
   silenceMs: number;
@@ -33,4 +42,6 @@ export interface Utterance {
 export interface BargeInEvent {
   audio: Int16Array;
   durationMs: number;
+  /** True when a provider `vad.speech_start` corroborated the local candidate. */
+  corroborated: boolean;
 }

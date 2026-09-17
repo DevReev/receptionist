@@ -2,24 +2,9 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeMulaw } from '../src/audio.ts';
 import { aggregateEchoBench, classifyEchoMix } from '../src/echoGateBench.ts';
+import { voice } from './voiceFixtures.ts';
 
 const FRAME = 160;
-
-/** Deterministic speech-like PCM, so two seeds are uncorrelated signals. */
-function voice(samples: number, seed = 1): Int16Array {
-  const pcm = new Int16Array(samples);
-  let state = seed >>> 0;
-  const rand = (): number => {
-    state = (1664525 * state + 1013904223) >>> 0;
-    return state / 2 ** 32;
-  };
-  for (let i = 0; i < samples; i++) {
-    const t = i / 8000;
-    const pitch = 140 + 60 * Math.sin(2 * Math.PI * 0.7 * t) + 20 * rand();
-    pcm[i] = Math.round(6000 * Math.sin(2 * Math.PI * pitch * t) * (0.6 + 0.4 * Math.sin(2 * Math.PI * 3 * t)));
-  }
-  return pcm;
-}
 
 /** Silence, then returning Echo, then Caller speech after the Echo ends. */
 function scriptedCaller(): Buffer {

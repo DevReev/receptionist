@@ -1,7 +1,10 @@
 # Twilio Media Streams Latency Design
 
-Status: implemented. Barge-in stays off by default (`BARGE_IN=false`) until the
-acceptance gate below passes on real Twilio fixtures.
+Status: implemented. Barge-in is always on over the echo-gated upstream diet
+(see `docs/adr/0003-always-on-barge-in.md` and ticket 05 in
+`.scratch/natural-turn-taking/issues/`); the `BARGE_IN` boolean and the
+acceptance gate below are superseded, with the live speakerphone gate tracked
+in ticket 10.
 
 ## Decision
 

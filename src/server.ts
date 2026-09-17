@@ -150,9 +150,7 @@ function createRealtimeStt(config: Config, trace?: TraceFn, prompt?: string): Sa
 function endpointPolicy(config: Config): EndpointPolicy {
   return {
     ...LOCAL_ENDPOINT_FALLBACKS,
-    minSpeechMs: config.endpointMinSpeechMs,
     threshold: config.vadThreshold,
-    latchDipMs: config.endpointLatchDipMs,
   };
 }
 
@@ -396,8 +394,8 @@ export async function main(): Promise<void> {
             holdAfterMs: config.speakHoldMs,
             noResponseMs: config.noResponseMs,
             availabilityTimeoutMs: config.appointmentsWaitMs,
-            bargeIn: config.bargeIn,
-            interruptionMs: config.bargeInSpeechMs,
+            bargeInMinSpeechMs: config.bargeInMinSpeechMs,
+            bargeInDipToleranceMs: config.bargeInDipToleranceMs,
             turnDetection: config.turnDetection,
             echoGate: {
               correlationThreshold: config.echoGateCorrelation,
@@ -471,7 +469,6 @@ export async function main(): Promise<void> {
       event: 'ready',
       voiceLoop: config.voiceLoop,
       turnDetection: config.turnDetection,
-      bargeIn: config.bargeIn,
     });
   });
 }

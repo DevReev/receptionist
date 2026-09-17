@@ -212,7 +212,7 @@ describe('playback tracking (ticket 10)', () => {
     const live = new LiveCallSession({
       identity: { callSid: 'CAplay', streamSid: 'MZplay' },
       sendAudio: () => {},
-      vad: scriptVad([...speech(50), ...silence(50)]),
+      vad: scriptVad([...silence(100), ...speech(50), ...silence(50)]),
       policy: POLICY,
       transcriber: stubTranscriber('hi', { audio: [], contentType: [] }),
       tts: blockingTts,
@@ -221,7 +221,8 @@ describe('playback tracking (ticket 10)', () => {
       onPlaybackComplete: (t) => completions.push(t),
     });
     const speaking = live.speak('blocked reply');
-    // Inbound audio during playback is discarded: no utterance can complete.
+    // Inbound audio during playback stays below the Barge-in threshold: no
+    // utterance can complete and the reply is not interrupted.
     for (let i = 0; i < 100; i++) {
       await live.receiveAudio(Buffer.alloc(FRAME_BYTES, 0xff));
     }

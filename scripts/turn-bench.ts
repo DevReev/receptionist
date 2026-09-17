@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { writeFile } from 'node:fs/promises';
 import { loadFixtures } from '../src/benchmark.ts';
-import { LOCAL_ENDPOINT_FALLBACKS } from '../src/endpoint.ts';
+import { BARGE_IN_DEFAULTS, LOCAL_ENDPOINT_FALLBACKS } from '../src/endpoint.ts';
 import {
   aggregateMetrics,
   defaultTurnBenchScenarios,
@@ -23,12 +23,6 @@ function floatEnv(name: string, fallback: number): number {
   if (raw === undefined) return fallback;
   const parsed = Number.parseFloat(raw);
   return Number.isNaN(parsed) ? fallback : parsed;
-}
-
-function boolEnv(name: string, fallback: boolean): boolean {
-  const raw = process.env[name];
-  if (raw === undefined) return fallback;
-  return raw === 'true' || raw === '1';
 }
 
 function buildId(): string {
@@ -81,17 +75,16 @@ export async function main(): Promise<void> {
       ? { callerAudio: fixtures[index % fixtures.length]!.audio }
       : {}),
   }));
-  const bargeIn = boolEnv('BARGE_IN', false);
   const options: TurnBenchOptions = {
     policy: {
       silenceMs: intEnv('TURN_BENCH_SILENCE_MS', LOCAL_ENDPOINT_FALLBACKS.silenceMs),
       maxUtteranceMs: intEnv('TURN_BENCH_MAX_UTTERANCE_MS', LOCAL_ENDPOINT_FALLBACKS.maxUtteranceMs),
-      minSpeechMs: intEnv('ENDPOINT_MIN_SPEECH_MS', 300),
+      minSpeechMs: intEnv('TURN_BENCH_MIN_SPEECH_MS', LOCAL_ENDPOINT_FALLBACKS.minSpeechMs),
       threshold: floatEnv('VAD_SPEECH_THRESHOLD', 0.1),
-      latchDipMs: intEnv('ENDPOINT_LATCH_DIP_MS', 200),
+      latchDipMs: intEnv('TURN_BENCH_LATCH_DIP_MS', LOCAL_ENDPOINT_FALLBACKS.latchDipMs),
     },
-    bargeIn,
-    interruptionMs: intEnv('BARGE_IN_SPEECH_MS', 200),
+    bargeInMinSpeechMs: intEnv('BARGE_IN_MIN_SPEECH_MS', BARGE_IN_DEFAULTS.minSpeechMs),
+    bargeInDipToleranceMs: intEnv('BARGE_IN_DIP_TOLERANCE_MS', BARGE_IN_DEFAULTS.dipToleranceMs),
     ...(process.env.TURN_BENCH_DEBUG === 'true' ? { debug: true } : {}),
   };
   const runs = [];
@@ -100,7 +93,13 @@ export async function main(): Promise<void> {
   }
   const metrics = runs.map((run) => run.metrics);
   const aggregate = aggregateMetrics(metrics);
-  const meta = { build: buildId(), policy: options.policy, fixtures: fixtures.length, bargeIn };
+  const meta = {
+    build: buildId(),
+    policy: options.policy,
+    fixtures: fixtures.length,
+    bargeInMinSpeechMs: options.bargeInMinSpeechMs!,
+    bargeInDipToleranceMs: options.bargeInDipToleranceMs!,
+  };
   console.log(formatTurnBenchReport(meta, metrics, aggregate));
   const jsonPath = process.env.TURN_BENCH_JSON;
   if (jsonPath) {
