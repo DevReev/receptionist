@@ -1,0 +1,32 @@
+Capture setup for the fixture corpus.
+
+1. Start the server with capture on (from the repo root):
+
+     npm run build
+     DEBUG_AUDIO_DIR=./debug-audio node --env-file=.env dist/server.js
+
+   or add DEBUG_AUDIO_DIR=./debug-audio to .env and run:
+     npm run build && node --env-file=.env dist/server.js
+
+2. Wait for "receptionist listening" and a healthz 200. Place one trial call
+   and say one line. Then check the capture directory:
+     ls debug-audio
+   You should see <callSid>-turn1.wav and <callSid>-turn1.json. If the JSON is
+   missing, the turn did not transcribe; keep the call short and repeat.
+
+3. Place the five scripted calls (call-01.txt ... call-05.txt). One script per
+   call. Speak naturally; do not coach the agent. If it mishears, repeat the
+   line once and continue.
+
+4. Stop the server, then build fixtures:
+     npm run fixtures
+   Raw pairs land in bench-fixtures/ (gitignored, Patient PII). References
+   start as the STT decode; they get corrected against the scripts before any
+   benchmark number is trusted.
+
+5. Benchmark (needs SARVAM_API_KEY):
+     BENCH_STT_MODELS=saaras:v3-realtime:fast,saaras:v3-realtime:balanced \
+       BENCH_FIXTURES=./bench-fixtures npm run benchmark
+
+Never commit debug-audio/ or bench-fixtures/: they contain real voices, names,
+and phone digits.

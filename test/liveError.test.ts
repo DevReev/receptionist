@@ -181,23 +181,11 @@ describe('live error contract (ticket 12)', () => {
     assert.equal(live.isClosed, true);
   });
 
-  it('bounds a hanging availability read inside the getAvailability tool, keeping the call alive', async () => {
+  it('bounds a hanging availability read, says the system line, and keeps the call alive', async () => {
     const calls = new CallStore();
     const { tts, texts } = stubTts();
     const phases: Record<string, unknown>[] = [];
     const failures: FailureEvent[] = [];
-    let toolError = '';
-    const assistant: Assistant = {
-      reply: async () => ({ text: '', endCall: false }),
-      replyStream: async function* (ctx) {
-        try {
-          await ctx.getAvailability();
-        } catch (err) {
-          toolError = err instanceof Error ? err.message : String(err);
-        }
-        yield 'Sorry, the clinic will confirm. ';
-      },
-    };
     const live = new LiveCallSession({
       identity: { callSid: 'CA12hangavail', streamSid: 'MZ12hangavail' },
       sendAudio: () => {},
@@ -206,7 +194,12 @@ describe('live error contract (ticket 12)', () => {
       transcriber: { transcribe: async () => ({ text: 'any slot?', noSpeech: false }) },
       tts,
       guide: GUIDE,
-      assistant,
+      assistant: {
+        reply: async () => ({ text: '', endCall: false }),
+        replyStream: async function* () {
+          yield 'unused';
+        },
+      },
       availability: () => new Promise<string>(() => {}),
       availabilityTimeoutMs: 30,
       calls,
@@ -214,13 +207,14 @@ describe('live error contract (ticket 12)', () => {
       logFailure: (e) => failures.push(e),
     });
     await feed(live, 100);
-    assert.match(toolError, /availability-timeout after 30ms/);
-    assert.ok(texts.some((t) => t.includes('clinic will confirm')));
-    assert.equal(failures.length, 0, 'availability failure must not end the call');
-    assert.equal(live.isClosed, false);
+    assert.ok(texts.includes(BOOKING_FAILURE_LINE));
+    assert.equal(failures.length, 1, 'the availability failure is logged for handoff');
+    assert.match(failures[0]!.detail ?? '', /availability-error: availability-timeout after 30ms/);
+    assert.equal(live.isClosed, false, 'availability failure must not end the call');
     const names = phases.map((p) => `${String(p.phase)}:${String(p.event)}`);
     assert.ok(names.includes('availability:start'));
     assert.ok(names.includes('availability:error'));
+    assert.ok(names.includes('availability:turn-error'));
   });
 
   it('caller hangup mid-turn logs the partial turn', async () => {
@@ -266,36 +260,30 @@ describe('live error contract (ticket 12)', () => {
     assert.equal(live.isClosed, true);
   });
 
-  it('booking write failures stay single-attempt: log first, speak the booking-system line, end', async () => {
+  it('booking write failures are logged, speak the booking-system line, and end', async () => {
     const calls = new CallStore();
     const order: string[] = [];
     const { tts, texts } = stubTts(order);
     const turns: TurnEvent[] = [];
     const failures: FailureEvent[] = [];
     let attempts = 0;
-    const assistant: Assistant = {
-      reply: async () => ({ text: '', endCall: false }),
-      replyStream: async function* (ctx) {
-        yield 'One moment. ';
-        await ctx.proposeBooking({
-          service: 'Appointment',
-          location: 'Bobby Clinic',
-          date: '2026-09-30',
-          time: '09:30',
-          callerName: 'Asha',
-          callerPhone: '+911234567890',
-        });
-      },
-    };
+    let transcriptions = 0;
     const live = new LiveCallSession({
       identity: { callSid: 'CA12book', streamSid: 'MZ12book' },
       sendAudio: () => {},
-      vad: scriptVad([...speech(50), ...silence(50)]),
+      vad: scriptVad([...speech(50), ...silence(50), ...speech(50), ...silence(50)]),
       policy: POLICY,
-      transcriber: { transcribe: async () => ({ text: 'yes book it', noSpeech: false }) },
+      transcriber: {
+        transcribe: async () => {
+          transcriptions += 1;
+          return transcriptions === 1
+            ? { text: 'book Wednesday at 9:30, my name is Asha, 9840950950', noSpeech: false }
+            : { text: 'yes', noSpeech: false };
+        },
+      },
       tts,
       guide: GUIDE,
-      assistant,
+      availability: 'AVAILABILITY\n- 2026-09-30 09:30 Appointment with Bob Gowda at Bobby Clinic',
       calls,
       onProposeBooking: async () => {
         attempts += 1;
@@ -308,23 +296,24 @@ describe('live error contract (ticket 12)', () => {
       },
     });
     await feed(live, 100);
+    await feed(live, 100);
     assert.equal(attempts, 1);
     assert.equal(failures.length, 1);
     assert.match(failures[0]!.detail ?? '', /booking-error: picktime save blew up/);
     assert.ok(texts.includes(BOOKING_FAILURE_LINE));
     assert.ok(order.indexOf('failure-log') < order.indexOf(`tts:${BOOKING_FAILURE_LINE}`));
-    assert.equal(turns[0]!.reply, BOOKING_FAILURE_LINE);
+    assert.equal(turns.at(-1)!.reply, BOOKING_FAILURE_LINE);
     assert.equal(live.isClosed, true);
   });
 
-  it('a second booking proposal in one turn never reaches the writer', async () => {
+  it('a model proposeBooking never reaches the writer', async () => {
     const calls = new CallStore();
-    const { tts } = stubTts();
+    const { tts, texts } = stubTts();
     let attempts = 0;
     const assistant: Assistant = {
       reply: async () => ({ text: '', endCall: false }),
       replyStream: async function* (ctx) {
-        const first = await ctx.proposeBooking({
+        const outcome = await ctx.proposeBooking({
           service: 'Appointment',
           location: 'Bobby Clinic',
           date: '2026-09-30',
@@ -332,17 +321,8 @@ describe('live error contract (ticket 12)', () => {
           callerName: 'Asha',
           callerPhone: '+911234567890',
         });
-        assert.equal(first.ok, true);
-        const second = await ctx.proposeBooking({
-          service: 'Appointment',
-          location: 'Bobby Clinic',
-          date: '2026-09-30',
-          time: '09:30',
-          callerName: 'Asha',
-          callerPhone: '+911234567890',
-        });
-        assert.equal(second.ok, false);
-        yield 'Booked once. ';
+        assert.equal(outcome.ok, false);
+        yield 'The controller confirms that first. ';
       },
     };
     const live = new LiveCallSession({
@@ -361,8 +341,9 @@ describe('live error contract (ticket 12)', () => {
       },
     });
     await feed(live, 100);
-    assert.equal(attempts, 1);
+    assert.equal(attempts, 0, 'only the controller authorizes a write');
     assert.equal(live.isClosed, false);
+    assert.ok(texts.some((t) => t.includes('controller confirms')));
   });
 
   it('fake driver: mid-turn failure is logged before audio leaves the socket and the session ends', async () => {

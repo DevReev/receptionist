@@ -42,7 +42,8 @@ interface ParsedDirectory {
 }
 
 const DEFAULT_BASE = 'https://www.picktime.com';
-const DEFAULT_DAY_CONCURRENCY = 4;
+/** One wave covers a 5-working-day window (at most 7 calendar days). */
+const DEFAULT_DAY_CONCURRENCY = 8;
 
 /** Playwright-driven Chromium fronting the Tool API (ADR-0001). XHR surface per research. */
 export class PlaywrightDriver implements PicktimeDriver {

@@ -12,7 +12,13 @@ describe('config', () => {
     assert.equal(cfg.port, 3000);
     assert.equal(cfg.timeZone, 'Asia/Kolkata');
     assert.equal(cfg.poolSize, 4);
+    assert.equal(cfg.dayConcurrency, 8);
     assert.equal(cfg.pageId, 'page-1');
     assert.equal(cfg.rateLimitPerMinute, 60);
+  });
+
+  it('tunes the per-day fan-out for one session', () => {
+    const cfg = loadConfig({ PICKTIME_PAGE_ID: 'page-1', DAY_CONCURRENCY: '3' });
+    assert.equal(cfg.dayConcurrency, 3);
   });
 });

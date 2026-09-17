@@ -15,6 +15,7 @@ export function main(): void {
         pageId: config.pageId,
         navigationTimeoutMs: config.navigationTimeoutMs,
         actionTimeoutMs: config.actionTimeoutMs,
+        dayConcurrency: config.dayConcurrency,
         headed: false,
       })
     : new MemoryDriver();

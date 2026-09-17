@@ -6,7 +6,8 @@ const READ_ATTEMPTS = 5;
 
 export interface AppointmentsEnv {
   baseUrl: string;
-  windowDays: number;
+  /** How many working days (Mon–Fri) ahead Availability is read, today included. */
+  windowWorkingDays: number;
 }
 
 interface DirectoryEntry {
@@ -61,6 +62,26 @@ function addDays(dateOnly: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
+function isWeekend(dateOnly: string): boolean {
+  const [year, month, day] = dateOnly.split('-').map(Number);
+  const weekday = new Date(Date.UTC(year!, month! - 1, day!)).getUTCDay();
+  return weekday === 0 || weekday === 6;
+}
+
+/**
+ * Last date of the `days`-working-day window that starts on `from` (today
+ * counts when it is a working day; weekends are skipped).
+ */
+function addWorkingDays(from: string, days: number): string {
+  let date = from;
+  let counted = 0;
+  while (counted < days) {
+    if (!isWeekend(date)) counted += 1;
+    if (counted < days) date = addDays(date, 1);
+  }
+  return date;
+}
+
 function normalizeTime(raw: string): string {
   const match = /^(\d{1,2}):(\d{2})$/.exec(raw.trim());
   if (!match) return raw.trim();
@@ -112,21 +133,28 @@ async function failureReason(res: Response): Promise<string> {
  */
 export class AppointmentsClient {
   private readonly baseUrl: string;
-  private readonly windowDays: number;
+  private readonly windowWorkingDays: number;
   private readonly fetchFn: typeof fetch;
+  private readonly now: () => Date;
   private readonly onEvent: ((event: Record<string, unknown>) => void) | undefined;
   private metaCache: { at: number; value: MetaResponse } | null = null;
   private slotsCache: { at: number; value: SlotsResponse } | null = null;
+  /** In-flight reads shared by concurrent Turns/calls; never two browser sessions for one read. */
+  private metaInFlight: Promise<MetaResponse> | null = null;
+  private slotsInFlight: Promise<SlotsResponse> | null = null;
 
   constructor(opts: {
     appointments: AppointmentsEnv;
     fetchFn?: typeof fetch;
+    /** Test seam for the window clock; defaults to the wall clock. */
+    now?: () => Date;
     /** Console handoff channel: one JSON line per booking-API request and error. */
     onEvent?: (event: Record<string, unknown>) => void;
   }) {
     this.baseUrl = opts.appointments.baseUrl.replace(/\/+$/, '');
-    this.windowDays = opts.appointments.windowDays;
+    this.windowWorkingDays = opts.appointments.windowWorkingDays;
     this.fetchFn = opts.fetchFn ?? fetch;
+    this.now = opts.now ?? (() => new Date());
     this.onEvent = opts.onEvent;
   }
 
@@ -178,9 +206,20 @@ export class AppointmentsClient {
       this.log({ event: 'cache', resource: 'meta', hit: true });
       return this.metaCache.value;
     }
-    const value = await this.readJson<MetaResponse>('/v1/meta');
-    this.metaCache = { at: Date.now(), value };
-    return value;
+    if (this.metaInFlight) {
+      this.log({ event: 'cache', resource: 'meta', hit: false, shared: true });
+      return this.metaInFlight;
+    }
+    const read = this.readJson<MetaResponse>('/v1/meta')
+      .then((value) => {
+        this.metaCache = { at: Date.now(), value };
+        return value;
+      })
+      .finally(() => {
+        this.metaInFlight = null;
+      });
+    this.metaInFlight = read;
+    return read;
   }
 
   private async slots(): Promise<SlotsResponse> {
@@ -188,9 +227,26 @@ export class AppointmentsClient {
       this.log({ event: 'cache', resource: 'slots', hit: true });
       return this.slotsCache.value;
     }
+    if (this.slotsInFlight) {
+      this.log({ event: 'cache', resource: 'slots', hit: false, shared: true });
+      return this.slotsInFlight;
+    }
+    const read = this.readSlots()
+      .then((value) => {
+        this.slotsCache = { at: Date.now(), value };
+        return value;
+      })
+      .finally(() => {
+        this.slotsInFlight = null;
+      });
+    this.slotsInFlight = read;
+    return read;
+  }
+
+  private async readSlots(): Promise<SlotsResponse> {
     const meta = await this.meta();
-    const from = isoDateInTimeZone(new Date(), meta.timeZone);
-    const to = addDays(from, this.windowDays - 1);
+    const from = isoDateInTimeZone(this.now(), meta.timeZone);
+    const to = addWorkingDays(from, this.windowWorkingDays);
     const perService = await Promise.all(
       meta.services.map((service) =>
         this.readJson<SlotsResponse>(
@@ -206,7 +262,6 @@ export class AppointmentsClient {
       slots,
       ...(slots.length === 0 ? { reason: 'none-available' } : {}),
     };
-    this.slotsCache = { at: Date.now(), value };
     this.log({ event: 'result', resource: 'slots', count: slots.length, fetchedAt });
     return value;
   }
@@ -217,7 +272,7 @@ export class AppointmentsClient {
     const live = await this.slots();
     const header = `AVAILABILITY (fetched ${live.fetchedAt}, timezone ${live.timeZone} — only these slots exist)`;
     if (live.slots.length === 0) {
-      return `${header}\n- none: no Slots are open in the next ${this.windowDays} days. Do not offer any times.`;
+      return `${header}\n- none: no Slots are open in the next ${this.windowWorkingDays} working days. Do not offer any times.`;
     }
     const serviceName = new Map(meta.services.map((s) => [s.id, s.name]));
     const locationName = new Map(meta.locations.map((l) => [l.id, shortName(l.name)]));

@@ -109,6 +109,34 @@ describe('caller turn', () => {
     assert.match(text, /<Record\b/);
     assert.match(text, /action="\/voice\/turn"/);
   });
+
+  it('passes the caller number to the assistant and ignores anonymous callers', async () => {
+    const seen: (string | undefined)[] = [];
+    const srv = startTestServer({
+      assistant: {
+        reply: async (ctx) => {
+          seen.push(ctx.callerPhone);
+          return { text: 'ok', endCall: false };
+        },
+      },
+    });
+    try {
+      await srv.post('/voice/incoming', { CallSid: 'CA223', From: '+919840950950' });
+      await srv.post('/voice/turn', {
+        CallSid: 'CA223',
+        From: '+919840950950',
+        RecordingUrl: 'https://api.twilio.com/recordings/RE223',
+      });
+      await srv.post('/voice/turn', {
+        CallSid: 'CA223',
+        From: 'anonymous',
+        RecordingUrl: 'https://api.twilio.com/recordings/RE224',
+      });
+      assert.deepEqual(seen, ['+919840950950', undefined]);
+    } finally {
+      srv.close();
+    }
+  });
 });
 
 describe('silence and unintelligible input', () => {

@@ -64,9 +64,9 @@ function stubFetch(routes: {
   }) as unknown as typeof fetch;
 }
 
-function client(fetchFn: typeof fetch, windowDays = 14): AppointmentsClient {
+function client(fetchFn: typeof fetch, windowWorkingDays = 5): AppointmentsClient {
   return new AppointmentsClient({
-    appointments: { baseUrl: 'http://stub-api', windowDays },
+    appointments: { baseUrl: 'http://stub-api', windowWorkingDays },
     fetchFn,
   });
 }
@@ -85,6 +85,51 @@ describe('AppointmentsClient availability', () => {
     assert.match(slotCalls[0]!.url, /from=\d{4}-\d{2}-\d{2}&to=\d{4}-\d{2}-\d{2}/);
     await appointments.availabilityBlock();
     assert.equal(calls.filter((c) => c.url.includes('/v1/get_available_slots')).length, 1);
+  });
+
+  it('shares one in-flight read between concurrent callers', async () => {
+    const calls: Call[] = [];
+    const delayed = (async (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => {
+      calls.push({
+        url: String(url),
+        method: init?.method ?? 'GET',
+        headers: init?.headers ?? {},
+        body: init?.body ?? '',
+      });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      if (String(url).includes('/v1/meta')) return jsonResponse(META);
+      if (String(url).includes('/v1/get_available_slots')) return jsonResponse(SLOTS);
+      return new Response('not found', { status: 404 });
+    }) as unknown as typeof fetch;
+    const appointments = client(delayed);
+    const [a, b] = await Promise.all([appointments.availabilityBlock(), appointments.availabilityBlock()]);
+    assert.equal(a, b);
+    assert.equal(calls.filter((c) => c.url.includes('/v1/meta')).length, 1);
+    assert.equal(calls.filter((c) => c.url.includes('/v1/get_available_slots')).length, 1);
+  });
+
+  it('reads only the next 5 working days, counting today when it is a working day', async () => {
+    const calls: Call[] = [];
+    const appointments = new AppointmentsClient({
+      appointments: { baseUrl: 'http://stub-api', windowWorkingDays: 5 },
+      fetchFn: stubFetch({ calls }),
+      now: () => new Date('2026-09-11T04:00:00Z'), // Friday 09:30 IST
+    });
+    await appointments.availabilityBlock();
+    const slotCall = calls.find((c) => c.url.includes('/v1/get_available_slots'));
+    assert.match(slotCall!.url, /from=2026-09-11&to=2026-09-17/); // Fri through Thu
+  });
+
+  it('starts the working-day window on the coming Monday when called at the weekend', async () => {
+    const calls: Call[] = [];
+    const appointments = new AppointmentsClient({
+      appointments: { baseUrl: 'http://stub-api', windowWorkingDays: 5 },
+      fetchFn: stubFetch({ calls }),
+      now: () => new Date('2026-09-12T04:00:00Z'), // Saturday 09:30 IST
+    });
+    await appointments.availabilityBlock();
+    const slotCall = calls.find((c) => c.url.includes('/v1/get_available_slots'));
+    assert.match(slotCall!.url, /from=2026-09-12&to=2026-09-18/); // Sat through next Fri
   });
 
   it('says none available instead of listing nothing', async () => {
@@ -115,7 +160,7 @@ describe('AppointmentsClient availability', () => {
     const events: Record<string, unknown>[] = [];
     let attempts = 0;
     const appointments = new AppointmentsClient({
-      appointments: { baseUrl: 'http://stub-api', windowDays: 14 },
+      appointments: { baseUrl: 'http://stub-api', windowWorkingDays: 14 },
       fetchFn: stubFetch({
         calls: [],
         slots: () => {

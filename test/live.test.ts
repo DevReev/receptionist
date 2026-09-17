@@ -111,6 +111,29 @@ describe('live transcription (ticket 09)', () => {
     assert.equal(calls.get('CA9').turn, 1);
   });
 
+  it('hands each transcribed utterance to the fixture capture hook', async () => {
+    const calls = new CallStore();
+    const { tts } = stubTts();
+    const captured: { turn: number; text: string; riff: string }[] = [];
+    const live = new LiveCallSession({
+      identity: { callSid: 'CAcapture', streamSid: 'MZcapture' },
+      sendAudio: () => {},
+      vad: scriptVad([...speech(50), ...silence(50)]),
+      policy: POLICY,
+      transcriber: stubTranscriber('book Wednesday', { audio: [], contentType: [] }),
+      tts,
+      guide: GUIDE,
+      calls,
+      onUtteranceTranscribed: ({ turn, text, wav }) =>
+        captured.push({ turn, text, riff: wav.subarray(0, 4).toString('ascii') }),
+    });
+    for (let i = 0; i < 100; i++) {
+      await live.receiveAudio(Buffer.alloc(FRAME_BYTES, 0xff));
+    }
+    await live.flush();
+    assert.deepEqual(captured, [{ turn: 1, text: 'book Wednesday', riff: 'RIFF' }]);
+  });
+
   it('counts empty audio as one miss and reprompts through TTS', async () => {
     const calls = new CallStore();
     const { tts, texts, completions } = stubTts();
@@ -232,9 +255,15 @@ describe('playback tracking (ticket 10)', () => {
       guide: GUIDE,
       calls,
       onPlaybackComplete: (t) => completions.push(t),
+      waitForPlayback: () => session.waitForPlayback(),
     });
     assert.equal(texts.length, 0);
-    await live.speak('hello there');
+    const speaking = live.speak('hello there');
+    await waitFor(() => socket.sentJson().some((frame) => (frame as { event?: string }).event === 'mark'), 'playback mark');
+    assert.deepEqual(completions, []);
+    const mark = (socket.sentJson() as { event: string; mark?: { name?: string } }[]).find((frame) => frame.event === 'mark');
+    socket.peerMessage({ event: 'mark', streamSid: 'MZdrv', mark: { name: mark!.mark!.name } });
+    await speaking;
     assert.deepEqual(texts, ['hello there']);
     assert.deepEqual(completions, ['hello there']);
     assert.ok(socket.sent.length >= 1);

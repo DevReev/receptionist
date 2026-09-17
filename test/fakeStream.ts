@@ -4,6 +4,7 @@ import type { StreamObserver, StreamSocket } from '../src/stream.ts';
 export class FakeSocket implements StreamSocket {
   readonly sent: string[] = [];
   closedByServer = false;
+  buffered = 0;
   private messageCb: ((data: string) => void) | null = null;
   private closeCb: (() => void) | null = null;
 
@@ -13,6 +14,10 @@ export class FakeSocket implements StreamSocket {
 
   close(): void {
     this.closedByServer = true;
+  }
+
+  bufferedAmount(): number {
+    return this.buffered;
   }
 
   onMessage(cb: (data: string) => void): void {
@@ -42,6 +47,7 @@ export class FakeSocket implements StreamSocket {
 export interface TwilioStart {
   callSid: string;
   streamSid: string;
+  customParameters?: Record<string, string>;
 }
 
 export function twilioConnected(): unknown {
@@ -57,8 +63,15 @@ export function twilioStart(start: TwilioStart): unknown {
   };
 }
 
-export function twilioMedia(payloadB64: string): unknown {
-  return { event: 'media', media: { payload: payloadB64 } };
+export function twilioMedia(payloadB64: string, opts: { chunk?: number; timestampMs?: number } = {}): unknown {
+  return {
+    event: 'media',
+    media: {
+      payload: payloadB64,
+      ...(opts.chunk !== undefined ? { chunk: opts.chunk } : {}),
+      ...(opts.timestampMs !== undefined ? { timestamp: opts.timestampMs } : {}),
+    },
+  };
 }
 
 export function twilioStop(): unknown {

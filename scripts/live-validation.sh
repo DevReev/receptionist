@@ -53,8 +53,8 @@ if [ -n "${TWILIO_ACCOUNT_SID:-}" ] && [ -n "${TWILIO_AUTH_TOKEN:-}" ]; then
     resp="$(curl -sS -u "${TWILIO_ACCOUNT_SID}:${TWILIO_AUTH_TOKEN}" \
       "https://api.twilio.com/2010-04-01/Accounts/${TWILIO_ACCOUNT_SID}.json" || true)"
     case "$resp" in
-      *'"type": "Trial"'*) warn "Twilio account is Trial — streaming verbs are stripped; upgrade before the live call" ;;
-      *'"status": "active"'*) ok "Twilio account reachable and active (see type field for Trial vs Full)" ;;
+      *'"type": "Trial"'*) ok "Twilio account is Trial — streaming works on free trial, no upgrade needed" ;;
+      *'"status": "active"'*) ok "Twilio account reachable and active" ;;
       *) say "info: could not confirm Twilio tier from API; response: $(printf '%s' "$resp" | head -c 200)" ;;
     esac
   else

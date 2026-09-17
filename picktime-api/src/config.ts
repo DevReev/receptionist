@@ -3,6 +3,8 @@ export interface Config {
   pageId: string;
   timeZone: string;
   poolSize: number;
+  /** Parallel per-day slot reads inside one browser session. */
+  dayConcurrency: number;
   navigationTimeoutMs: number;
   actionTimeoutMs: number;
   rateLimitPerMinute: number;
@@ -37,6 +39,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     pageId,
     timeZone: optional(env, 'TZ', 'Asia/Kolkata'),
     poolSize: int(env, 'BROWSER_POOL_SIZE', 4),
+    dayConcurrency: int(env, 'DAY_CONCURRENCY', 8),
     navigationTimeoutMs: int(env, 'NAVIGATION_TIMEOUT_MS', 20_000),
     actionTimeoutMs: int(env, 'ACTION_TIMEOUT_MS', 15_000),
     rateLimitPerMinute: int(env, 'RATE_LIMIT_PER_MINUTE', 60),

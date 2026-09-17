@@ -1,0 +1,22 @@
+Scenario: noisy room, thinking pauses, and two corrections. Verifies
+endpointing through background noise, no split utterances, slot/name
+correction handling, and no double booking.
+
+Setup: put a fan or television near the phone at low volume for the whole
+call. Leave a 2-3 second pause where marked; do not fill it with speech.
+
+Watch for:
+- the agent does not endpoint the pause as a whole turn mid-sentence
+- the second "Monday" replaces Friday, and the readback shows Monday only
+- the readback shows "Ravi Kumar", not "Ravi" alone
+- exactly one booking after your "yes"
+
+Ground truth fields (exact):
+- name: Ravi Kumar
+- slot: the Monday time the agent offers (note it)
+
+Caller lines (say in order):
+1. (over fan/TV noise) Hello?
+2. Book me for Friday. [pause 3 seconds] Actually, make that Monday.
+3. (When asked for the name) Ravi. [pause 2 seconds] Sorry, Ravi Kumar.
+4. (After the readback) Yes, book it.

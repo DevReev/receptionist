@@ -1,15 +1,32 @@
 import type {
   Assistant,
   AssistantContext,
+  AssistantEvent,
   AssistantReply,
   BookingOutcome,
   ChatTurn,
   ClinicGuide,
   ProposedSlot,
 } from './app.ts';
+import { clip } from './trace.ts';
 
 const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
 const MAX_TOOL_ROUNDS = 5;
+/** Providers occasionally return an empty completion; one retry usually recovers. */
+const MAX_EMPTY_RETRIES = 1;
+
+/**
+ * OpenRouter routing: favour whatever provider currently has the lowest
+ * observed latency, restricted to providers that support every request
+ * parameter (tools included). Without this, requests land on the default
+ * provider and TTFT can swing from under a second to many seconds. The p90
+ * preference is a soft reorder over a rolling window, never a hard deadline.
+ */
+const PROVIDER_PREFERENCE = {
+  sort: 'latency',
+  require_parameters: true,
+  preferred_max_latency: { p90: 2.0 },
+} as const;
 
 const GET_AVAILABILITY_TOOL = {
   type: 'function',
@@ -30,18 +47,22 @@ const PROPOSE_BOOKING_TOOL = {
   function: {
     name: 'propose_booking',
     description:
-      'Propose a booking once service, location, date, time, caller name, and caller phone are all collected, the caller has confirmed, and the slot came from get_availability.',
+      "Propose a booking once the date, time, and patient name are collected, the caller has confirmed the slot from get_availability, and the mobile number is settled. Location and service default to Bobby Clinic and the standard Appointment — pass them only when the caller asked for something else. Omit callerPhone when the caller confirmed the number they are calling from.",
     parameters: {
       type: 'object',
       additionalProperties: false,
-      required: ['service', 'location', 'date', 'time', 'callerName', 'callerPhone'],
+      required: ['date', 'time', 'callerName'],
       properties: {
-        service: { type: 'string' },
-        location: { type: 'string', description: 'One of the locations named in the availability block.' },
+        service: { type: 'string', description: 'Defaults to the standard Appointment service.' },
+        location: { type: 'string', description: 'Defaults to Bobby Clinic.' },
         date: { type: 'string', description: 'YYYY-MM-DD exactly as listed in the availability block.' },
         time: { type: 'string', description: 'HH:MM exactly as listed in the availability block.' },
-        callerName: { type: 'string' },
-        callerPhone: { type: 'string' },
+        callerName: { type: 'string', description: 'The patient name.' },
+        callerPhone: {
+          type: 'string',
+          description:
+            'The patient mobile number. Omit only when the caller confirmed the number they are calling from.',
+        },
       },
     },
   },
@@ -49,9 +70,11 @@ const PROPOSE_BOOKING_TOOL = {
 
 const TOOLS = [GET_AVAILABILITY_TOOL, PROPOSE_BOOKING_TOOL];
 
-const SLOT_FIELDS = ['service', 'location', 'date', 'time', 'callerName', 'callerPhone'] as const;
+const DEFAULT_SERVICE = 'Appointment';
+const DEFAULT_LOCATION = 'Bobby Clinic';
+const REQUIRED_SLOT_FIELDS = ['date', 'time', 'callerName'] as const;
 
-function parseSlot(argsText: string): ProposedSlot | null {
+function parseSlot(argsText: string, callerPhone?: string): ProposedSlot | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(argsText);
@@ -60,20 +83,26 @@ function parseSlot(argsText: string): ProposedSlot | null {
   }
   if (typeof parsed !== 'object' || parsed === null) return null;
   const record = parsed as Record<string, unknown>;
-  for (const field of SLOT_FIELDS) {
+  for (const field of REQUIRED_SLOT_FIELDS) {
     if (typeof record[field] !== 'string' || (record[field] as string).trim() === '') return null;
   }
+  const optional = (field: string, fallback: string): string => {
+    const value = record[field];
+    return typeof value === 'string' && value.trim() !== '' ? value : fallback;
+  };
+  const phone = optional('callerPhone', callerPhone ?? '');
+  if (phone === '') return null;
   return {
-    service: record.service as string,
-    location: record.location as string,
+    service: optional('service', DEFAULT_SERVICE),
+    location: optional('location', DEFAULT_LOCATION),
     date: record.date as string,
     time: record.time as string,
     callerName: record.callerName as string,
-    callerPhone: record.callerPhone as string,
+    callerPhone: phone,
   };
 }
 
-function systemPrompt(guide: ClinicGuide): string {
+function systemPrompt(guide: ClinicGuide, callerPhone?: string): string {
   return [
     `You are the phone receptionist for ${guide.name} — warm, natural, and brief.`,
     'The CLINIC GUIDE below is your source of truth; its CONVERSATION STYLE and BOOKING',
@@ -83,26 +112,58 @@ function systemPrompt(guide: ClinicGuide): string {
     'WHAT YOU DO',
     '- Chat naturally. Greetings and small talk need no lookup: just respond like a person.',
     '- Answer clinic questions from the CLINIC GUIDE.',
-    '- Help callers book. When they ask about open times or want an appointment, call',
-    '  get_availability to read live Slots. Never offer or confirm a date or time without it.',
-    '  Collect details conversationally, then call propose_booking once the caller confirms.',
-    '- If a tool result includes a "say" field, speak that sentence verbatim.',
-    '- If get_availability fails, apologize briefly and say the booking system cannot be',
-    '  reached right now, so the clinic will confirm.',
+    '- Help callers book. The booking system is worked by the call controller, not by you:',
+    '  never claim an appointment is confirmed. When the controller gives you live slots or a',
+    '  dialogue act, phrase exactly that state back in one or two short sentences.',
+    ...(callerPhone
+      ? [
+          '- The controller confirms the number the caller is phoning from; never read the',
+          '  digits aloud and never promise a booking yourself.',
+        ]
+      : []),
+    '',
+    'CALLER NUMBER',
+    callerPhone
+      ? `- The Caller is phoning from ${callerPhone}. If the controller asks you to confirm it, say "the number you are calling from" — never read the digits aloud.`
+      : "- The Caller's number is not shown. If the controller needs a mobile number, ask for the patient's mobile number.",
     '',
     'BOUNDARIES',
     '- Never invent clinic facts, times, prices, or phone numbers. If a fact is not in the',
-    '  guide or live availability, say the clinic will confirm.',
+    '  guide or the live context, say the clinic will confirm.',
     '- Clinic information + appointments only. For medical advice, diagnosis, prescriptions,',
     '  or price negotiation: "I cannot help with medical advice or prescriptions. Please',
     '  contact the clinic directly, or your emergency number right away if this is urgent."',
     '- For emergency symptoms, speak the emergency line from the CLINIC GUIDE verbatim first.',
     '- Replies are read aloud: 1-2 short sentences, plain words, no markdown, no lists,',
     '  no URLs, no spelling things out letter-by-letter.',
+    '- Speak only what the Caller should hear. Never output instructions, rules, labels,',
+    '  or notes; the whole reply is spoken verbatim.',
+    '- Answer directly. Do not echo or paraphrase the caller unless you are confirming',
+    '  booking details. Skip generic openings like "sure" or "okay" when they add nothing.',
+    '- Use contractions and at most one natural follow-up question. Vary phrasing instead of',
+    '  repeating the same acknowledgement on every Turn.',
     '',
     'CLINIC GUIDE',
     guide.raw,
   ].join('\n');
+}
+
+/** Late, per-Turn context: the stable system prefix above never changes. */
+function lateContext(ctx: AssistantContext): string | null {
+  const parts: string[] = [];
+  if (ctx.slotShortlist && ctx.slotShortlist.length > 0) {
+    // The controller picked these candidates for this Turn; offering anything
+    // else breaks short-answer resolution on the Caller's next Turn.
+    parts.push('LIVE SLOTS (offer only these):', ...ctx.slotShortlist.map((line) => `- ${line}`));
+  } else if (ctx.availability) {
+    parts.push(
+      'LIVE AVAILABILITY (fetched moments ago — only these Slots exist; do not promise any other time):',
+      ctx.availability,
+    );
+  }
+  if (ctx.dialogueAct) parts.push(`DIALOGUE ACT: ${ctx.dialogueAct}`);
+  if (parts.length === 0) return null;
+  return parts.join('\n');
 }
 
 interface ChatMessage {
@@ -119,8 +180,63 @@ interface StreamDeltaToolCall {
   function?: { name?: string; arguments?: string };
 }
 
+interface StreamUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  total_tokens?: number;
+}
+
 interface StreamChunk {
-  choices?: { delta?: { content?: string | null; tool_calls?: StreamDeltaToolCall[] } }[];
+  provider?: string;
+  model?: string;
+  /** OpenRouter can report a mid-stream failure on an HTTP 200 response. */
+  error?: { message?: unknown; code?: unknown };
+  usage?: StreamUsage | null;
+  choices?: {
+    delta?: {
+      content?: string | null;
+      reasoning?: string | null;
+      reasoning_content?: string | null;
+      reasoning_details?: unknown;
+      tool_calls?: StreamDeltaToolCall[];
+    };
+    finish_reason?: string | null;
+  }[];
+}
+
+/** Count reasoning text across OpenRouter's `reasoning`/`reasoning_details` shapes. */
+function reasoningChars(delta: NonNullable<NonNullable<StreamChunk['choices']>[number]['delta']>): number {
+  const direct = delta.reasoning ?? delta.reasoning_content;
+  let total = typeof direct === 'string' ? direct.length : 0;
+  if (Array.isArray(delta.reasoning_details)) {
+    for (const detail of delta.reasoning_details as unknown[]) {
+      if (typeof detail === 'string') total += detail.length;
+      else if (detail && typeof detail === 'object' && typeof (detail as { text?: unknown }).text === 'string') {
+        total += ((detail as { text: string }).text).length;
+      }
+    }
+  }
+  return total;
+}
+
+/** Per-round diagnostics filled by `postStream` for the `done` trace event. */
+interface RoundTrace {
+  status?: number;
+  requestId?: string | null;
+  provider?: string;
+  servedModel?: string;
+  chunks: number;
+  sseLines: number;
+  skippedLines: number;
+  finish?: string | null;
+  reasoningChars: number;
+  usage?: StreamUsage | null;
+  lastChunk?: string;
+}
+
+function usageFields(usage: StreamUsage | null | undefined): AssistantEvent['usage'] {
+  if (!usage) return null;
+  return { prompt: usage.prompt_tokens, completion: usage.completion_tokens, total: usage.total_tokens };
 }
 
 export class OpenRouterAssistant implements Assistant {
@@ -129,6 +245,12 @@ export class OpenRouterAssistant implements Assistant {
   private readonly temperature: number;
   private readonly maxTokens: number;
   private readonly fetchFn: typeof fetch;
+  /**
+   * `legacy` keeps the tool-driven booking loop for the record-based voice
+   * loop; `phase` is the live controller-owned mode where the model words
+   * replies and only an explicitly re-enabled read may use a tool.
+   */
+  private readonly toolsMode: 'legacy' | 'phase';
 
   constructor(opts: {
     apiKey: string;
@@ -136,12 +258,14 @@ export class OpenRouterAssistant implements Assistant {
     temperature?: number;
     maxTokens?: number;
     fetchFn?: typeof fetch;
+    tools?: 'legacy' | 'phase';
   }) {
     this.apiKey = opts.apiKey;
     this.model = opts.model ?? 'deepseek/deepseek-v4-flash-0731';
     this.temperature = opts.temperature ?? 0.4;
-    this.maxTokens = opts.maxTokens ?? 1000;
+    this.maxTokens = opts.maxTokens ?? 200;
     this.fetchFn = opts.fetchFn ?? fetch;
+    this.toolsMode = opts.tools ?? 'legacy';
   }
 
   private initialMessages(ctx: AssistantContext): ChatMessage[] {
@@ -149,19 +273,40 @@ export class OpenRouterAssistant implements Assistant {
       role: t.role === 'caller' ? 'user' : 'assistant',
       content: t.text,
     }));
+    const latest = ctx.history.at(-1);
+    const currentAlreadyInHistory = latest?.role === 'caller' && latest.text === ctx.transcript;
+    // The prompt must end with the current Caller utterance: a trailing system
+    // message lets the model answer the instructions instead of the Caller and
+    // leak rule text into speech. Drop the duplicate history entry and always
+    // append the utterance as the final user message.
+    const prior = currentAlreadyInHistory ? history.slice(0, -1) : history;
+    const late = lateContext(ctx);
     return [
-      { role: 'system', content: systemPrompt(ctx.guide) },
-      ...history,
+      { role: 'system', content: systemPrompt(ctx.guide, ctx.callerPhone) },
+      ...prior,
+      ...(late ? [{ role: 'system', content: late }] : []),
       { role: 'user', content: ctx.transcript },
     ];
+  }
+
+  /**
+   * Phase mode exposes no booking write to the model; availability reads are
+   * controller-owned, so only an explicitly ambiguous Turn may keep the
+   * read-only lookup. Legacy mode preserves the tool-driven loop.
+   */
+  private toolsFor(ctx: AssistantContext): readonly unknown[] {
+    if (this.toolsMode === 'legacy') {
+      return ctx.availability ? [PROPOSE_BOOKING_TOOL] : TOOLS;
+    }
+    if (ctx.availability || ctx.slotShortlist?.length) return [];
+    return ctx.allowAvailabilityTool ? [GET_AVAILABILITY_TOOL] : [];
   }
 
   /** One tool call → its `tool` message, including speakable failures. */
   private async runTool(
     toolCall: { id: string; function?: { name?: string; arguments?: string } },
     ctx: AssistantContext,
-  ): Promise<ChatMessage> {
-    const id = toolCall.id;
+  ): Promise<ChatMessage> {    const id = toolCall.id;
     const name = toolCall.function?.name;
     const argsText = toolCall.function?.arguments ?? '{}';
     try {
@@ -170,12 +315,12 @@ export class OpenRouterAssistant implements Assistant {
         return { role: 'tool', tool_call_id: id, content: JSON.stringify({ ok: true, availability }) };
       }
       if (name === 'propose_booking') {
-        const slot = parseSlot(argsText);
+        const slot = parseSlot(argsText, ctx.callerPhone);
         if (!slot) {
           return {
             role: 'tool',
             tool_call_id: id,
-            content: JSON.stringify({ ok: false, reason: 'invalid booking details; ask for service, date, time, name, and phone again' }),
+            content: JSON.stringify({ ok: false, reason: 'invalid booking details; ask for date, time, patient name, and phone again' }),
           };
         }
         const outcome: BookingOutcome = await ctx.proposeBooking(slot);
@@ -204,26 +349,101 @@ export class OpenRouterAssistant implements Assistant {
     return Promise.all((message.tool_calls ?? []).map((toolCall) => this.runTool(toolCall, ctx)));
   }
 
-  async reply(ctx: AssistantContext): Promise<AssistantReply> {
-    const base = {
+  private requestBase(ctx: AssistantContext): Record<string, unknown> {
+    return {
       model: this.model,
       temperature: this.temperature,
       max_tokens: this.maxTokens,
-      tools: TOOLS,
+      tools: this.toolsFor(ctx),
       tool_choice: 'auto',
+      parallel_tool_calls: false,
+      reasoning: { effort: 'none' },
+      provider: PROVIDER_PREFERENCE,
+      ...(ctx.sessionId ? { session_id: ctx.sessionId } : {}),
     };
+  }
+
+  async reply(ctx: AssistantContext, signal?: AbortSignal): Promise<AssistantReply> {
+    const base = this.requestBase(ctx);
     let messages = this.initialMessages(ctx);
     for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
-      const message = await this.complete({ ...base, messages });
-      if (!message.tool_calls || message.tool_calls.length === 0) {
-        return { text: message.content ?? '', endCall: false };
+      const roundNo = round + 1;
+      const roundStarted = Date.now();
+      ctx.onAssistantEvent?.({
+        round: roundNo,
+        event: 'round-start',
+        messages: messages.length,
+        tools: this.toolNames(ctx),
+        model: this.model,
+        availabilityChars: ctx.availability?.length ?? 0,
+      });
+      const completion = await this.complete({ ...base, messages }, signal);
+      const text = completion.message.content ?? '';
+      const toolCalls = completion.message.tool_calls ?? [];
+      ctx.onAssistantEvent?.({
+        round: roundNo,
+        event: 'done',
+        ms: Date.now() - roundStarted,
+        chars: text.length,
+        toolCalls: toolCalls.length,
+        finish: completion.finish,
+        provider: completion.provider,
+        usage: usageFields(completion.usage),
+        detail: text.trim() === '' && toolCalls.length === 0 ? 'empty-completion' : undefined,
+      });
+      if (toolCalls.length === 0) {
+        return { text, endCall: false };
       }
-      messages = [...messages, message, ...(await this.runTools(message, ctx))];
+      const toolStarted = Date.now();
+      const results = await this.runTools(completion.message, ctx);
+      this.emitToolDone(ctx, roundNo, toolCalls, results, toolStarted);
+      messages = [...messages, completion.message, ...results];
     }
     return { text: '', endCall: false };
   }
 
-  private async complete(body: Record<string, unknown>): Promise<ChatMessage> {
+  private toolNames(ctx: AssistantContext): string[] {
+    return this.toolsFor(ctx).map((tool) => (tool as { function: { name: string } }).function.name);
+  }
+
+  /** One `tool-done` event per tool call, carrying its outcome size and ok flag. */
+  private emitToolDone(
+    ctx: AssistantContext,
+    round: number,
+    toolCalls: { function?: { name?: string } }[],
+    results: ChatMessage[],
+    started: number,
+  ): void {
+    const ms = Date.now() - started;
+    toolCalls.forEach((toolCall, index) => {
+      const content = results[index]?.content ?? '';
+      let ok: boolean | undefined;
+      try {
+        const parsed = JSON.parse(content) as { ok?: unknown };
+        if (typeof parsed?.ok === 'boolean') ok = parsed.ok;
+      } catch {
+        ok = undefined;
+      }
+      ctx.onAssistantEvent?.({
+        round,
+        event: 'tool-done',
+        name: toolCall.function?.name,
+        ms,
+        ok,
+        resultChars: content.length,
+      });
+    });
+  }
+
+  private async complete(
+    body: Record<string, unknown>,
+    signal?: AbortSignal,
+  ): Promise<{
+    message: ChatMessage;
+    finish: string | null;
+    usage: StreamUsage | null;
+    provider?: string;
+  }> {
     const res = await this.fetchFn(ENDPOINT, {
       method: 'POST',
       headers: {
@@ -231,16 +451,33 @@ export class OpenRouterAssistant implements Assistant {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify(body),
+      signal,
     });
-    if (!res.ok) throw new Error(`openrouter-http-${res.status}`);
-    const data = (await res.json()) as { choices?: { message?: ChatMessage }[] };
-    const message = data.choices?.[0]?.message;
-    if (!message) throw new Error('openrouter-empty-choices');
-    return message;
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`openrouter-http-${res.status}${detail ? `: ${clip(detail)}` : ''}`);
+    }
+    const data = (await res.json()) as {
+      choices?: { message?: ChatMessage; finish_reason?: string | null }[];
+      usage?: StreamUsage;
+      provider?: string;
+    };
+    const choice = data.choices?.[0];
+    if (!choice?.message) throw new Error('openrouter-empty-choices');
+    return {
+      message: choice.message,
+      finish: choice.finish_reason ?? null,
+      usage: data.usage ?? null,
+      provider: data.provider,
+    };
   }
 
   /** SSE token stream for one chat request; same model and tools as `reply`. */
-  private async *postStream(body: Record<string, unknown>): AsyncGenerator<StreamChunk> {
+  private async *postStream(
+    body: Record<string, unknown>,
+    trace: RoundTrace,
+    signal?: AbortSignal,
+  ): AsyncGenerator<StreamChunk> {
     const res = await this.fetchFn(ENDPOINT, {
       method: 'POST',
       headers: {
@@ -248,8 +485,14 @@ export class OpenRouterAssistant implements Assistant {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ ...body, stream: true }),
+      signal,
     });
-    if (!res.ok) throw new Error(`openrouter-http-${res.status}`);
+    trace.status = res.status;
+    trace.requestId = res.headers.get('x-request-id') ?? res.headers.get('x-or-request-id') ?? null;
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new Error(`openrouter-http-${res.status}${detail ? `: ${clip(detail)}` : ''}`);
+    }
     if (!res.body) throw new Error('openrouter-empty-stream');
     const decoder = new TextDecoder();
     let buffered = '';
@@ -261,12 +504,16 @@ export class OpenRouterAssistant implements Assistant {
         const line = buffered.slice(0, idx).trim();
         buffered = buffered.slice(idx + 1);
         if (!line.startsWith('data:')) continue;
+        trace.sseLines += 1;
         const payload = line.slice('data:'.length).trim();
         if (!payload || payload === '[DONE]') continue;
+        trace.lastChunk = clip(payload, 400);
         try {
           chunks.push(JSON.parse(payload) as StreamChunk);
+          trace.chunks += 1;
         } catch {
-          // Skip keep-alive or partial lines; the next chunk completes them.
+          // Keep-alive or partial line; count it so format drift is visible.
+          trace.skippedLines += 1;
         }
       }
     };
@@ -278,42 +525,117 @@ export class OpenRouterAssistant implements Assistant {
     while (chunks.length > 0) yield chunks.shift()!;
   }
 
+  /** Stream metadata attached to every per-round outcome event. */
+  private traceFields(trace: RoundTrace): Partial<AssistantEvent> {
+    return {
+      status: trace.status,
+      requestId: trace.requestId ?? null,
+      provider: trace.provider,
+      servedModel: trace.servedModel,
+      chunks: trace.chunks,
+      sseLines: trace.sseLines,
+      skippedLines: trace.skippedLines,
+      finish: trace.finish ?? null,
+      reasoningChars: trace.reasoningChars,
+      usage: usageFields(trace.usage),
+    };
+  }
+
   /**
    * Streaming twin of `reply`: same model, same tools, same rule — speakable
    * text is yielded as it arrives, and tool rounds (availability reads,
    * booking writes) continue the conversation until the model answers.
    */
-  async *replyStream(ctx: AssistantContext): AsyncGenerator<string> {
-    const base = {
-      model: this.model,
-      temperature: this.temperature,
-      max_tokens: this.maxTokens,
-      tools: TOOLS,
-      tool_choice: 'auto',
-    };
+  async *replyStream(ctx: AssistantContext, signal?: AbortSignal): AsyncGenerator<string> {
+    const base = this.requestBase(ctx);
     let messages = this.initialMessages(ctx);
+    let emptyRetries = 0;
     for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+      const roundNo = round + 1;
+      const roundStarted = Date.now();
+      const trace: RoundTrace = { chunks: 0, sseLines: 0, skippedLines: 0, reasoningChars: 0 };
+      ctx.onAssistantEvent?.({
+        round: roundNo,
+        event: 'round-start',
+        messages: messages.length,
+        tools: this.toolNames(ctx),
+        model: this.model,
+        availabilityChars: ctx.availability?.length ?? 0,
+      });
       const content: string[] = [];
+      let firstToken = false;
       const toolIds = new Map<number, string>();
       const toolNames = new Map<number, string>();
       const toolArgs = new Map<number, string>();
-      for await (const chunk of this.postStream({ ...base, messages })) {
-        const delta = chunk.choices?.[0]?.delta;
-        if (!delta) continue;
-        if (typeof delta.content === 'string' && delta.content) {
-          content.push(delta.content);
-          yield delta.content;
-        }
-        for (const tc of delta.tool_calls ?? []) {
-          const index = tc.index ?? 0;
-          if (tc.id) toolIds.set(index, tc.id);
-          if (tc.function?.name) toolNames.set(index, tc.function.name);
-          if (typeof tc.function?.arguments === 'string') {
-            toolArgs.set(index, (toolArgs.get(index) ?? '') + tc.function.arguments);
+      try {
+        for await (const chunk of this.postStream({ ...base, messages }, trace, signal)) {
+          if (chunk.error) {
+            throw new Error(`openrouter-stream-error: ${clip(JSON.stringify(chunk.error))}`);
+          }
+          if (chunk.provider) trace.provider = chunk.provider;
+          if (chunk.model) trace.servedModel = chunk.model;
+          if (chunk.usage) trace.usage = chunk.usage;
+          const choice = chunk.choices?.[0];
+          if (choice?.finish_reason) trace.finish = choice.finish_reason;
+          const delta = choice?.delta;
+          if (!delta) continue;
+          if (typeof delta.content === 'string' && delta.content) {
+            if (!firstToken) {
+              firstToken = true;
+              ctx.onAssistantEvent?.({ round: roundNo, event: 'first-token', ms: Date.now() - roundStarted });
+            }
+            content.push(delta.content);
+            yield delta.content;
+          }
+          trace.reasoningChars += reasoningChars(delta);
+          for (const tc of delta.tool_calls ?? []) {
+            const index = tc.index ?? 0;
+            if (tc.id) toolIds.set(index, tc.id);
+            if (tc.function?.name) toolNames.set(index, tc.function.name);
+            if (typeof tc.function?.arguments === 'string') {
+              toolArgs.set(index, (toolArgs.get(index) ?? '') + tc.function.arguments);
+            }
           }
         }
+      } catch (err) {
+        // A failed round is itself a trace: status, request id, and how far
+        // the stream got before it died are the first things to look at.
+        ctx.onAssistantEvent?.({
+          round: roundNo,
+          event: 'done',
+          ms: Date.now() - roundStarted,
+          chars: content.join('').length,
+          toolCalls: 0,
+          detail: err instanceof Error ? err.message : String(err),
+          ...this.traceFields(trace),
+        });
+        throw err;
       }
-      if (toolNames.size === 0) return;
+      const produced = content.join('');
+      ctx.onAssistantEvent?.({
+        round: roundNo,
+        event: 'done',
+        ms: Date.now() - roundStarted,
+        chars: produced.length,
+        toolCalls: toolNames.size,
+        ...this.traceFields(trace),
+      });
+      if (toolNames.size === 0) {
+        // Silence here would leave the Caller hearing nothing: retry the same
+        // request once before giving up, then let the session reprompt.
+        if (produced.trim() === '' && emptyRetries < MAX_EMPTY_RETRIES) {
+          emptyRetries += 1;
+          ctx.onAssistantEvent?.({
+            round: roundNo,
+            event: 'empty-retry',
+            detail: 'empty-completion',
+            lastChunk: trace.lastChunk,
+            ...this.traceFields(trace),
+          });
+          continue;
+        }
+        return;
+      }
       const toolCalls = [...toolNames.entries()]
         .sort(([a], [b]) => a - b)
         .map(([index, name]) => ({
@@ -326,11 +648,10 @@ export class OpenRouterAssistant implements Assistant {
         content: content.join('') || null,
         tool_calls: toolCalls,
       };
-      messages = [
-        ...messages,
-        assistantMessage,
-        ...(await Promise.all(toolCalls.map((toolCall) => this.runTool(toolCall, ctx)))),
-      ];
+      const toolStarted = Date.now();
+      const results = await Promise.all(toolCalls.map((toolCall) => this.runTool(toolCall, ctx)));
+      this.emitToolDone(ctx, roundNo, toolCalls, results, toolStarted);
+      messages = [...messages, assistantMessage, ...results];
     }
   }
 }

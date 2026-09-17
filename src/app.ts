@@ -29,13 +29,80 @@ export interface Assistant {
    * `reply`) and yields only speakable text. The live Stream session
    * prefers this when present and falls back to `reply` otherwise.
    */
-  replyStream?(ctx: AssistantContext): AsyncIterable<string>;
+  replyStream?(ctx: AssistantContext, signal?: AbortSignal): AsyncIterable<string>;
+}
+
+export interface AssistantEvent {
+  /** 1-based LLM request this event belongs to; later rounds follow tool calls. */
+  round: number;
+  event: 'round-start' | 'first-token' | 'done' | 'empty-retry' | 'tool-done';
+  ms?: number;
+  /** Tool name, for `tool-done`. */
+  name?: string;
+  /** Content characters produced in the round, for `done`. */
+  chars?: number;
+  /** Request shape, for `round-start`: message count, tool names, model. */
+  messages?: number;
+  tools?: string[];
+  model?: string;
+  availabilityChars?: number;
+  /** HTTP status of the round's request. */
+  status?: number;
+  requestId?: string | null;
+  /** Provider that actually served the round (OpenRouter routing). */
+  provider?: string;
+  /** Model the provider reported serving; may differ from the requested one. */
+  servedModel?: string;
+  /** Parsed SSE chunks in the round; zero means the stream was empty. */
+  chunks?: number;
+  /** `data:` lines seen in the round, including keep-alives and `[DONE]`. */
+  sseLines?: number;
+  /** `data:` payloads that were not valid JSON (format drift). */
+  skippedLines?: number;
+  /** Last `finish_reason` reported by the stream. */
+  finish?: string | null;
+  /** Reasoning/thinking characters the provider streamed (never spoken). */
+  reasoningChars?: number;
+  /** Tool calls requested in the round. */
+  toolCalls?: number;
+  usage?: { prompt?: number; completion?: number; total?: number } | null;
+  /** Tool outcome, for `tool-done`. */
+  ok?: boolean;
+  resultChars?: number;
+  /** Failure detail: HTTP body snippet, stream error, or `empty-completion`. */
+  detail?: string;
+  /** Raw tail of the stream, for empty rounds where the payload explains why. */
+  lastChunk?: string;
 }
 
 export interface AssistantContext {
   transcript: string;
   history: ChatTurn[];
   guide: ClinicGuide;
+  /**
+   * The number the Caller is phoning from (Twilio `From`), when it is a real
+   * number. The assistant confirms it before using it as the patient phone.
+   */
+  callerPhone?: string;
+  /**
+   * Live Availability block already fetched for this Turn. When present the
+   * assistant answers straight from it and the `get_availability` tool is
+   * withheld for the Turn; absent means it must ask for the read.
+   */
+  availability?: string;
+  /** Stable opaque call id passed to OpenRouter as `session_id`. */
+  sessionId?: string;
+  /** Structured dialogue act for this Turn, when the controller decided one. */
+  dialogueAct?: string;
+  /** Compact Slot shortlist (2-4 lines) injected late in the prompt. */
+  slotShortlist?: string[];
+  /**
+   * Controller-owned phases leave the model no tools; ambiguous migration
+   * Turns may re-enable the read-only availability lookup explicitly.
+   */
+  allowAvailabilityTool?: boolean;
+  /** Per-round timing for the live loop's console trace. */
+  onAssistantEvent?: (event: AssistantEvent) => void;
   /**
    * Live Availability block. Fetched only when the assistant decides it
    * needs it (booking intent), never on every Turn.
@@ -108,6 +175,8 @@ export interface AppDeps {
   }) => Promise<BookingOutcome>;
   /** Per-turn outcome log; optional so tests stay quiet unless they opt in. */
   logTurn?: (event: TurnEvent) => void;
+  /** Readiness gate: /healthz reports 503 until the streaming endpoint is usable. */
+  isReady?: () => boolean;
 }
 
 export const TURN_ACTION = '/voice/turn';
@@ -118,6 +187,8 @@ export function greetingFor(guide: ClinicGuide): string {
 }
 
 export const REPROMPT_LINE = "Sorry, I didn't catch that. Could you say that again?";
+/** Spoken when the Caller stays silent after a question; paired with the last question asked. */
+export const NO_RESPONSE_LINE = 'Are you still there?';
 export const FAILURE_LINE = "Sorry, I'm having trouble with that. The clinic will confirm shortly.";
 /** Spoken while the assistant is slow to answer, so the Caller does not hear dead air. */
 export const HOLD_ASSISTANT_LINE = 'Let me check that for you.';
@@ -127,6 +198,16 @@ export const BOOKING_FAILURE_LINE =
 
 export function goodbyeFor(guide: ClinicGuide): string {
   return `Thanks for calling ${guide.name}. Goodbye.`;
+}
+
+/**
+ * Twilio `From` is E.164 for real Callers. Blocked or anonymous calls send
+ * values like `anonymous`, which must never become a patient phone.
+ */
+export function callerPhoneFrom(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const value = raw.trim();
+  return /^\+[1-9]\d{6,14}$/.test(value) ? value : undefined;
 }
 
 /** Placeholder until the Picktime availability ticket lands: no slots known, model must not offer times. */
@@ -186,14 +267,16 @@ export function createApp(deps: AppDeps): Express {
   }
 
   app.get('/healthz', (_req, res) => {
-    res.type('text/plain').send('ok');
+    const ready = deps.isReady ? deps.isReady() : true;
+    res.status(ready ? 200 : 503).type('text/plain').send(ready ? 'ok' : 'starting');
   });
 
   app.post('/voice/incoming', async (req: Request, res: Response) => {
     const callSid = String(req.body?.CallSid ?? 'unknown');
     calls.reset(callSid);
     if (deps.voiceLoop === 'stream') {
-      sendTwiml(res, twiml(connectStream(deps.streamWsUrl)));
+      const callerPhone = callerPhoneFrom(req.body?.From);
+      sendTwiml(res, twiml(connectStream(deps.streamWsUrl, callerPhone ? { callerPhone } : {})));
       return;
     }
     const guide = await loadClinicGuide(deps.guidePath);
@@ -225,6 +308,7 @@ export function createApp(deps: AppDeps): Express {
       miss('');
       return;
     }
+    const callerPhone = callerPhoneFrom(req.body?.From);
     let rec: Recording | null;
     try {
       rec = await deps.recordingFetcher.fetch(recordingUrl);
@@ -255,6 +339,7 @@ export function createApp(deps: AppDeps): Express {
         transcript: tx.text,
         history: [...state.history],
         guide,
+        callerPhone,
         getAvailability: () =>
           deps.availability ? deps.availability() : Promise.resolve(availabilityPlaceholder()),
         proposeBooking: (slot) =>

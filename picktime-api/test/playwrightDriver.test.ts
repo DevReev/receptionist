@@ -132,6 +132,14 @@ async function driverFor(state: FakeState, actionTimeoutMs = 5_000): Promise<Pla
   return driver;
 }
 
+/** Driver with production defaults: day concurrency must cover a 5-working-day window. */
+async function defaultDriverFor(state: FakeState, actionTimeoutMs = 5_000): Promise<PlaywrightDriver> {
+  const baseUrl = await startFakePage(state);
+  const driver = new PlaywrightDriver({ pageId: 'page-test', baseUrl, navigationTimeoutMs: 5_000, actionTimeoutMs });
+  DRIVERS.push(driver);
+  return driver;
+}
+
 describe('PlaywrightDriver sessions (local fake page)', () => {
   it('navigates once and loads the directory once per session', async () => {
     const state = freshState();
@@ -169,6 +177,23 @@ describe('PlaywrightDriver sessions (local fake page)', () => {
     );
     assert.equal(state.slotRequests, 8);
     assert.ok(state.maxSlotInFlight >= 2, `expected parallel fetches, max was ${state.maxSlotInFlight}`);
+  });
+
+  it('fetches a full 5-working-day window in one parallel wave by default', async () => {
+    const state = freshState();
+    state.slotDelayMs = 300;
+    const driver = await defaultDriverFor(state);
+    await driver.withSession((session) =>
+      session.listSlots({
+        serviceId: 'svc-1',
+        doctorId: 'doc-1',
+        locationId: 'loc-1',
+        from: '2026-10-03', // Sat through Fri: the widest 5-working-day span
+        to: '2026-10-09',
+      }),
+    );
+    assert.equal(state.slotRequests, 7);
+    assert.equal(state.maxSlotInFlight, 7, `expected the whole window in flight, max was ${state.maxSlotInFlight}`);
   });
 
   it('retries a timed-out day read once', async () => {

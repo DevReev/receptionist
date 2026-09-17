@@ -3,3 +3,7 @@ dist/
 .env
 *.log
 .DS_Store
+
+# Captured call audio and fixtures contain Patient PII: never commit them.
+debug-audio/
+bench-fixtures/

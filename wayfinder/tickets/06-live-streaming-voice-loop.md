@@ -41,7 +41,7 @@ Carry each call on a live bidirectional Stream session: caller audio flows to th
 
 ## Implementation Decisions
 
-- Transport is Twilio's raw bidirectional media stream primitive: the voice webhook answers with a connect-style TwiML document pointing at the server's streaming endpoint, and one Stream session lives for the whole call. This assumes an upgraded Twilio account, since the streaming verbs are stripped on trial accounts; verifying the account tier is step zero.
+- Transport is Twilio's raw bidirectional media stream primitive: the voice webhook answers with a connect-style TwiML document pointing at the server's streaming endpoint, and one Stream session lives for the whole call. `<Connect><Stream>` works on Twilio Trial accounts, so no account upgrade is required.
 - The streaming endpoint upgrades the existing HTTP server to websockets on the same port; no separate host or process is introduced.
 - A new Stream session module owns one call's lifecycle: session open, greeting spoken, listen → endpoint → transcribe → reply → listen loop, session close. It reuses the existing per-call history store, failure logger, Turn logger, and booking guardrail unchanged.
 - Endpointing uses an on-device voice activity detector over the inbound audio stream. An utterance ends after the configured trailing-silence duration with no speech; sub-minimum-speech noises never start an utterance; a maximum utterance duration forces an endpoint. While reply audio is playing, inbound audio is discarded and the endpoint timer only starts after playback finishes (no barge-in, per glossary).

@@ -1,0 +1,22 @@
+Scenario: standard booking using the caller-ID number. Verifies live
+availability read, slot matching, deterministic readback, and booking only
+after a later confirmation turn.
+
+Watch for:
+- one availability read, no repeated lookup loops
+- readback includes the patient name, slot date/time, and location
+- the phone is confirmed as "the number you are calling from"; digits are
+  never read aloud
+- booking success line only after your "yes"
+- one booking, not two
+
+Ground truth fields (exact):
+- name: Asha Ravi
+- phone: the number this test phone calls from (caller ID)
+
+Caller lines (say in order):
+1. Hi, I'd like to book an appointment.
+2. Wednesday morning would be good.
+   (If the agent offers live times, pick the first one it offers; note it.)
+3. (When asked for the name) Asha Ravi.
+4. (After the readback) Yes, please go ahead.

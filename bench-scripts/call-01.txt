@@ -1,0 +1,15 @@
+Scenario: FAQ call, no booking. Verifies FAQ turns never read availability
+and that a clear goodbye closes the call.
+
+Watch for:
+- hours answered from the guide (Mon-Fri, 9:00-17:00), no invented times
+- fee answered as Rs 700
+- no "let me check availability" on any turn
+- goodbye followed by a clean close (no dangling "are you still there?")
+
+Ground truth fields: none (FAQ only)
+
+Caller lines (say in order):
+1. Hi, what time do you open on weekdays?
+2. How much is an appointment?
+3. Thanks, that's all. Goodbye.

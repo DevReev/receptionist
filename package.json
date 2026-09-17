@@ -10,6 +10,8 @@
     "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts",
+    "benchmark": "node scripts/benchmark.ts",
+    "fixtures": "node scripts/build-fixtures.ts",
     "start": "node dist/server.js"
   },
   "dependencies": {

@@ -1,0 +1,23 @@
+Scenario: non-default location, a long Indian name, and a mobile number
+spoken in groups. Verifies location switching, name fidelity, phone digit
+exactness, and the selective second-decode path.
+
+Watch for:
+- "Bobby Hospital" in the readback, not the default Bobby Clinic
+- the full name "Venkatanarasimha Iyer" in the readback
+- phone digits accepted exactly from grouped speech
+- no booking until your confirmation
+
+Ground truth fields (exact):
+- name: Venkatanarasimha Iyer
+- phone: 9840950950 (+91 98409 50950)
+- location: Bobby Hospital
+
+Caller lines (say in order):
+1. Hello, I need an appointment at Bobby Hospital.
+2. Tomorrow afternoon, please.
+   (If the agent offers live times, pick any it offers; note it.)
+3. (When asked for the name) My name is Venkatanarasimha Iyer.
+4. (When asked for the number) My mobile number is 98409 50950.
+   (Say the digits slowly in two groups: "98409" pause "50950".)
+5. (After the readback) Yes, that's correct.

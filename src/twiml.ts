@@ -25,8 +25,13 @@ export function recordTurn(opts: {
   );
 }
 
-export function connectStream(url: string): string {
-  return `<Connect><Stream url="${esc(url)}"/></Connect>`;
+export function connectStream(url: string, params: Record<string, string> = {}): string {
+  const entries = Object.entries(params);
+  if (entries.length === 0) return `<Connect><Stream url="${esc(url)}"/></Connect>`;
+  const children = entries
+    .map(([name, value]) => `<Parameter name="${esc(name)}" value="${esc(value)}"/>`)
+    .join('');
+  return `<Connect><Stream url="${esc(url)}">${children}</Stream></Connect>`;
 }
 
 export function hangup(): string {
