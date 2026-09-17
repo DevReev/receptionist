@@ -56,3 +56,9 @@ suite 403/403. Bench on the committed build is recorded in
 (was 980 ms), `long-pause` false cut 0 (was 1), `short-pause` 0, self-echo 0,
 gates pass. The held-pause scenarios pay the emergency cap (p95 1480 ms) because
 the bench's scripted partial never improves past the fragment it declared.
+
+Accepted residual: hybrid Barge-in while watching is still energy-only — the
+manual socket opens no utterance while the Receptionist speaks, so Backchannel
+partials do not flow there and short acknowledgements take the floor. Ticket
+06's residual stands; opening watching utterances for candidates is its own
+change (the channel has no cancel-utterance path yet).
