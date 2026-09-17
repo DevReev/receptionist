@@ -1,3 +1,5 @@
+import { readFile, readdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import type { Transcription } from './app.ts';
 
 /** One consented, deidentified 8 kHz mu-law utterance plus its expected fields. */
@@ -152,4 +154,32 @@ export function summarize(candidate: string, results: BenchmarkResult[]): Candid
       p99: percentile(latencies, 99),
     },
   };
+}
+
+/** Read every `.mulaw` fixture in a directory, with its optional JSON sidecar. */
+export async function loadFixtures(dir: string): Promise<BenchmarkFixture[]> {
+  const files = (await readdir(dir)).filter((name) => name.endsWith('.mulaw')).sort();
+  const fixtures: BenchmarkFixture[] = [];
+  for (const file of files) {
+    const name = file.replace(/\.mulaw$/, '');
+    const audio = await readFile(join(dir, file));
+    let reference = '';
+    let fields: Record<string, string> = {};
+    try {
+      const meta = JSON.parse(await readFile(join(dir, `${name}.json`), 'utf8')) as {
+        reference?: unknown;
+        fields?: unknown;
+      };
+      if (typeof meta.reference === 'string') reference = meta.reference;
+      if (meta.fields && typeof meta.fields === 'object') {
+        fields = Object.fromEntries(
+          Object.entries(meta.fields as Record<string, unknown>).filter(([, v]) => typeof v === 'string') as [string, string][],
+        );
+      }
+    } catch {
+      // No sidecar metadata: latency-only fixture.
+    }
+    fixtures.push({ name, audio, reference, fields });
+  }
+  return fixtures;
 }

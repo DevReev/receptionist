@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test test/*.test.ts",
     "benchmark": "node scripts/benchmark.ts",
+    "turn-bench": "node scripts/turn-bench.ts",
+    "echo-fixtures": "node scripts/echo-fixtures.ts",
     "fixtures": "node scripts/build-fixtures.ts",
     "start": "node dist/server.js"
   },

@@ -1,6 +1,4 @@
-import { readdir, readFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { benchmarkFixture, summarize, type BenchmarkFixture, type BenchmarkResult } from '../src/benchmark.ts';
+import { benchmarkFixture, loadFixtures, summarize, type BenchmarkResult } from '../src/benchmark.ts';
 import { SarvamRealtimeStt } from '../src/sarvamRealtime.ts';
 
 interface Candidate {
@@ -19,33 +17,6 @@ function candidates(): Candidate[] {
       const [model, streamType = 'fast'] = entry.split(':');
       return { name: entry, model: model!, streamType };
     });
-}
-
-async function loadFixtures(dir: string): Promise<BenchmarkFixture[]> {
-  const files = (await readdir(dir)).filter((name) => name.endsWith('.mulaw')).sort();
-  const fixtures: BenchmarkFixture[] = [];
-  for (const file of files) {
-    const name = file.replace(/\.mulaw$/, '');
-    const audio = await readFile(join(dir, file));
-    let reference = '';
-    let fields: Record<string, string> = {};
-    try {
-      const meta = JSON.parse(await readFile(join(dir, `${name}.json`), 'utf8')) as {
-        reference?: unknown;
-        fields?: unknown;
-      };
-      if (typeof meta.reference === 'string') reference = meta.reference;
-      if (meta.fields && typeof meta.fields === 'object') {
-        fields = Object.fromEntries(
-          Object.entries(meta.fields as Record<string, unknown>).filter(([, v]) => typeof v === 'string') as [string, string][],
-        );
-      }
-    } catch {
-      // No sidecar metadata: latency-only fixture.
-    }
-    fixtures.push({ name, audio, reference, fields });
-  }
-  return fixtures;
 }
 
 function pad(value: string | number, width: number): string {
