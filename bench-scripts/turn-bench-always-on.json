@@ -1,0 +1,415 @@
+{
+  "meta": {
+    "build": "cbe1adc",
+    "policy": {
+      "silenceMs": 1000,
+      "maxUtteranceMs": 30000,
+      "minSpeechMs": 300,
+      "threshold": 0.1,
+      "latchDipMs": 200
+    },
+    "fixtures": 35,
+    "bargeInMinSpeechMs": 200,
+    "bargeInDipToleranceMs": 200
+  },
+  "scenarios": [
+    {
+      "name": "steady-turn",
+      "utterances": 1,
+      "falseCuts": 0,
+      "falseCutRate": 0,
+      "replyLatenciesMs": [
+        980
+      ],
+      "replyLatencyMs": {
+        "samples": 1,
+        "p50": 980,
+        "p95": 980
+      },
+      "stopLatenciesMs": [],
+      "stopLatencyMs": {
+        "samples": 0,
+        "p50": 0,
+        "p95": 0,
+        "missed": 0
+      },
+      "backchannels": 0,
+      "backchannelFalseStops": 0,
+      "backchannelFalseStopRate": 0,
+      "echoSpans": 0,
+      "echoFalseStops": 0,
+      "echoFalseStopRate": 0,
+      "selfEchoTurns": 0,
+      "gate": {
+        "echoFrames": 0,
+        "echoFalsePasses": 0,
+        "callerFrames": 0,
+        "callerFalseBlocks": 0,
+        "falsePassRate": 0,
+        "falseBlockRate": 0
+      }
+    },
+    {
+      "name": "short-pause",
+      "utterances": 1,
+      "falseCuts": 0,
+      "falseCutRate": 0,
+      "replyLatenciesMs": [
+        980
+      ],
+      "replyLatencyMs": {
+        "samples": 1,
+        "p50": 980,
+        "p95": 980
+      },
+      "stopLatenciesMs": [],
+      "stopLatencyMs": {
+        "samples": 0,
+        "p50": 0,
+        "p95": 0,
+        "missed": 0
+      },
+      "backchannels": 0,
+      "backchannelFalseStops": 0,
+      "backchannelFalseStopRate": 0,
+      "echoSpans": 0,
+      "echoFalseStops": 0,
+      "echoFalseStopRate": 0,
+      "selfEchoTurns": 0,
+      "gate": {
+        "echoFrames": 0,
+        "echoFalsePasses": 0,
+        "callerFrames": 0,
+        "callerFalseBlocks": 0,
+        "falsePassRate": 0,
+        "falseBlockRate": 0
+      }
+    },
+    {
+      "name": "long-pause",
+      "utterances": 1,
+      "falseCuts": 1,
+      "falseCutRate": 1,
+      "replyLatenciesMs": [],
+      "replyLatencyMs": {
+        "samples": 0,
+        "p50": 0,
+        "p95": 0
+      },
+      "stopLatenciesMs": [],
+      "stopLatencyMs": {
+        "samples": 0,
+        "p50": 0,
+        "p95": 0,
+        "missed": 0
+      },
+      "backchannels": 0,
+      "backchannelFalseStops": 0,
+      "backchannelFalseStopRate": 0,
+      "echoSpans": 0,
+      "echoFalseStops": 0,
+      "echoFalseStopRate": 0,
+      "selfEchoTurns": 0,
+      "gate": {
+        "echoFrames": 0,
+        "echoFalsePasses": 0,
+        "callerFrames": 0,
+        "callerFalseBlocks": 0,
+        "falsePassRate": 0,
+        "falseBlockRate": 0
+      }
+    },
+    {
+      "name": "barge-in-reply",
+      "utterances": 1,
+      "falseCuts": 0,
+      "falseCutRate": 0,
+      "replyLatenciesMs": [
+        980
+      ],
+      "replyLatencyMs": {
+        "samples": 1,
+        "p50": 980,
+        "p95": 980
+      },
+      "stopLatenciesMs": [
+        180
+      ],
+      "stopLatencyMs": {
+        "samples": 1,
+        "p50": 180,
+        "p95": 180,
+        "missed": 0
+      },
+      "backchannels": 0,
+      "backchannelFalseStops": 0,
+      "backchannelFalseStopRate": 0,
+      "echoSpans": 0,
+      "echoFalseStops": 0,
+      "echoFalseStopRate": 0,
+      "selfEchoTurns": 0,
+      "gate": {
+        "echoFrames": 0,
+        "echoFalsePasses": 0,
+        "callerFrames": 10,
+        "callerFalseBlocks": 0,
+        "falsePassRate": 0,
+        "falseBlockRate": 0
+      }
+    },
+    {
+      "name": "barge-in-greeting",
+      "utterances": 0,
+      "falseCuts": 0,
+      "falseCutRate": 0,
+      "replyLatenciesMs": [],
+      "replyLatencyMs": {
+        "samples": 0,
+        "p50": 0,
+        "p95": 0
+      },
+      "stopLatenciesMs": [
+        180
+      ],
+      "stopLatencyMs": {
+        "samples": 1,
+        "p50": 180,
+        "p95": 180,
+        "missed": 0
+      },
+      "backchannels": 0,
+      "backchannelFalseStops": 0,
+      "backchannelFalseStopRate": 0,
+      "echoSpans": 0,
+      "echoFalseStops": 0,
+      "echoFalseStopRate": 0,
+      "selfEchoTurns": 0,
+      "gate": {
+        "echoFrames": 0,
+        "echoFalsePasses": 0,
+        "callerFrames": 10,
+        "callerFalseBlocks": 0,
+        "falsePassRate": 0,
+        "falseBlockRate": 0
+      }
+    },
+    {
+      "name": "backchannel-reply",
+      "utterances": 1,
+      "falseCuts": 0,
+      "falseCutRate": 0,
+      "replyLatenciesMs": [
+        980
+      ],
+      "replyLatencyMs": {
+        "samples": 1,
+        "p50": 980,
+        "p95": 980
+      },
+      "stopLatenciesMs": [],
+      "stopLatencyMs": {
+        "samples": 0,
+        "p50": 0,
+        "p95": 0,
+        "missed": 0
+      },
+      "backchannels": 1,
+      "backchannelFalseStops": 1,
+      "backchannelFalseStopRate": 1,
+      "echoSpans": 0,
+      "echoFalseStops": 0,
+      "echoFalseStopRate": 0,
+      "selfEchoTurns": 0,
+      "gate": {
+        "echoFrames": 0,
+        "echoFalsePasses": 0,
+        "callerFrames": 10,
+        "callerFalseBlocks": 0,
+        "falsePassRate": 0,
+        "falseBlockRate": 0
+      }
+    },
+    {
+      "name": "echo-return-d60-a-12",
+      "utterances": 1,
+      "falseCuts": 0,
+      "falseCutRate": 0,
+      "replyLatenciesMs": [
+        980
+      ],
+      "replyLatencyMs": {
+        "samples": 1,
+        "p50": 980,
+        "p95": 980
+      },
+      "stopLatenciesMs": [],
+      "stopLatencyMs": {
+        "samples": 0,
+        "p50": 0,
+        "p95": 0,
+        "missed": 0
+      },
+      "backchannels": 0,
+      "backchannelFalseStops": 0,
+      "backchannelFalseStopRate": 0,
+      "echoSpans": 1,
+      "echoFalseStops": 0,
+      "echoFalseStopRate": 0,
+      "selfEchoTurns": 0,
+      "gate": {
+        "echoFrames": 38,
+        "echoFalsePasses": 0,
+        "callerFrames": 0,
+        "callerFalseBlocks": 0,
+        "falsePassRate": 0,
+        "falseBlockRate": 0
+      }
+    },
+    {
+      "name": "echo-return-d120-a-18",
+      "utterances": 1,
+      "falseCuts": 0,
+      "falseCutRate": 0,
+      "replyLatenciesMs": [
+        980
+      ],
+      "replyLatencyMs": {
+        "samples": 1,
+        "p50": 980,
+        "p95": 980
+      },
+      "stopLatenciesMs": [],
+      "stopLatencyMs": {
+        "samples": 0,
+        "p50": 0,
+        "p95": 0,
+        "missed": 0
+      },
+      "backchannels": 0,
+      "backchannelFalseStops": 0,
+      "backchannelFalseStopRate": 0,
+      "echoSpans": 1,
+      "echoFalseStops": 0,
+      "echoFalseStopRate": 0,
+      "selfEchoTurns": 0,
+      "gate": {
+        "echoFrames": 35,
+        "echoFalsePasses": 0,
+        "callerFrames": 0,
+        "callerFalseBlocks": 0,
+        "falsePassRate": 0,
+        "falseBlockRate": 0
+      }
+    },
+    {
+      "name": "echo-return-d240-a-24",
+      "utterances": 1,
+      "falseCuts": 0,
+      "falseCutRate": 0,
+      "replyLatenciesMs": [
+        980
+      ],
+      "replyLatencyMs": {
+        "samples": 1,
+        "p50": 980,
+        "p95": 980
+      },
+      "stopLatenciesMs": [],
+      "stopLatencyMs": {
+        "samples": 0,
+        "p50": 0,
+        "p95": 0,
+        "missed": 0
+      },
+      "backchannels": 0,
+      "backchannelFalseStops": 0,
+      "backchannelFalseStopRate": 0,
+      "echoSpans": 1,
+      "echoFalseStops": 0,
+      "echoFalseStopRate": 0,
+      "selfEchoTurns": 0,
+      "gate": {
+        "echoFrames": 29,
+        "echoFalsePasses": 0,
+        "callerFrames": 0,
+        "callerFalseBlocks": 0,
+        "falsePassRate": 0,
+        "falseBlockRate": 0
+      }
+    },
+    {
+      "name": "double-talk-d120-a-18",
+      "utterances": 1,
+      "falseCuts": 0,
+      "falseCutRate": 0,
+      "replyLatenciesMs": [
+        980
+      ],
+      "replyLatencyMs": {
+        "samples": 1,
+        "p50": 980,
+        "p95": 980
+      },
+      "stopLatenciesMs": [
+        180
+      ],
+      "stopLatencyMs": {
+        "samples": 1,
+        "p50": 180,
+        "p95": 180,
+        "missed": 0
+      },
+      "backchannels": 0,
+      "backchannelFalseStops": 0,
+      "backchannelFalseStopRate": 0,
+      "echoSpans": 0,
+      "echoFalseStops": 0,
+      "echoFalseStopRate": 0,
+      "selfEchoTurns": 0,
+      "gate": {
+        "echoFrames": 0,
+        "echoFalsePasses": 0,
+        "callerFrames": 10,
+        "callerFalseBlocks": 2,
+        "falsePassRate": 0,
+        "falseBlockRate": 0.2
+      }
+    }
+  ],
+  "aggregate": {
+    "scenarios": 10,
+    "utterances": 9,
+    "falseCuts": 1,
+    "falseCutRate": 0.1111111111111111,
+    "replyLatencyMs": {
+      "samples": 8,
+      "p50": 980,
+      "p95": 980
+    },
+    "stopLatencyMs": {
+      "samples": 3,
+      "p50": 180,
+      "p95": 180,
+      "missed": 0
+    },
+    "backchannels": 1,
+    "backchannelFalseStops": 1,
+    "backchannelFalseStopRate": 1,
+    "echoSpans": 3,
+    "echoFalseStops": 0,
+    "echoFalseStopRate": 0,
+    "selfEchoTurns": 0,
+    "gateEchoFrames": 102,
+    "gateEchoFalsePasses": 0,
+    "gateCallerFrames": 40,
+    "gateCallerFalseBlocks": 2,
+    "gate": {
+      "echoFrames": 102,
+      "echoFalsePasses": 0,
+      "callerFrames": 40,
+      "callerFalseBlocks": 2,
+      "falsePassRate": 0,
+      "falseBlockRate": 0.05
+    }
+  }
+}
