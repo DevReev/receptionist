@@ -398,6 +398,7 @@ export async function main(): Promise<void> {
             bargeInDipToleranceMs: config.bargeInDipToleranceMs,
             bargeInConfirmMs: config.bargeInConfirmMs,
             turnDetection: config.turnDetection,
+            stallGraceMs: config.stallGraceMs,
             echoGate: {
               correlationThreshold: config.echoGateCorrelation,
               levelMarginDb: config.echoGateLevelMarginDb,

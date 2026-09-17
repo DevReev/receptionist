@@ -1,5 +1,6 @@
 import type { AppointmentsEnv } from './appointments.ts';
 import { BARGE_IN_DEFAULTS } from './endpoint.ts';
+import { STALL_DEFAULTS } from './hybridDetector.ts';
 import type { TurnDetection } from './turnTaking.ts';
 import type { SttConfig } from './whisper.ts';
 
@@ -69,6 +70,8 @@ export interface Config {
   streamWsUrl: string;
   /** Boundary authority: `sarvam` (provider VAD, default) or `hybrid` (local detector). */
   turnDetection: TurnDetection;
+  /** Local trailing silence that takes a stalled provider boundary. */
+  stallGraceMs: number;
   vadThreshold: number;
   /** Echo gate: correlation needed to classify an inbound frame as Echo. */
   echoGateCorrelation: number;
@@ -219,6 +222,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     voiceLoop,
     streamWsUrl,
     turnDetection,
+    stallGraceMs: int(env, 'STALL_GRACE_MS', STALL_DEFAULTS.graceMs),
     vadThreshold: float(env, 'VAD_SPEECH_THRESHOLD', 0.1),
     echoGateCorrelation: float(env, 'ECHO_GATE_CORRELATION', 0.7),
     echoGateLevelMarginDb: float(env, 'ECHO_GATE_LEVEL_MARGIN_DB', 6),

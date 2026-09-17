@@ -457,6 +457,57 @@ describe('SarvamRealtimeStt provider VAD mode', () => {
     h.stt.close();
   });
 
+  it('abandons a stalled provider utterance and adopts the pending manual mode', async () => {
+    const h = vadHarness();
+    h.socket.peerOpen();
+    h.socket.peerMessage({ event: 'vad.speech_start', utterance_idx: 0 });
+    h.stt.setEndpointing!('manual');
+    assert.equal(h.stt.abandonUtterance!(), undefined, 'no final had landed');
+    h.stt.speechStart();
+    assert.equal(h.socket.sentJson().at(-1)!['event'], 'speech_start', 'manual owns the next utterance');
+    const pending = h.stt.finalize();
+    assert.equal(h.socket.sentJson().at(-1)!['event'], 'speech_end');
+    h.socket.peerMessage({ event: 'transcript.final', utterance_idx: 1, text: 'local boundary' });
+    assert.equal((await pending).text, 'local boundary');
+    h.stt.close();
+  });
+
+  it('hands back a final that landed without its boundary when abandoning', () => {
+    const h = vadHarness();
+    h.socket.peerOpen();
+    h.socket.peerMessage({ event: 'vad.speech_start', utterance_idx: 0 });
+    h.socket.peerMessage({ event: 'transcript.final', utterance_idx: 0, text: 'already here' });
+    const delivered = h.stt.abandonUtterance!();
+    assert.equal(delivered?.text, 'already here');
+    assert.equal(h.stt.abandonUtterance!(), undefined, 'the utterance is released only once');
+    h.stt.close();
+  });
+
+  it('closes the utterance from a final when no provider end arrives', async () => {
+    const events: string[] = [];
+    const h = vadHarness();
+    h.stt.onVadEvent((event) => events.push(event));
+    h.socket.peerOpen();
+    h.socket.peerMessage({ event: 'vad.speech_start', utterance_idx: 0 });
+    h.socket.peerMessage({ event: 'transcript.final', utterance_idx: 0, text: 'no end event' });
+    assert.deepEqual(events, ['speech_start', 'speech_end'], 'the final stands in for the missing boundary');
+    const tx = await h.stt.finalize();
+    assert.equal(tx.text, 'no end event');
+    h.stt.close();
+  });
+
+  it('keeps one boundary when the provider end arrives after the final', () => {
+    const events: string[] = [];
+    const h = vadHarness();
+    h.stt.onVadEvent((event) => events.push(event));
+    h.socket.peerOpen();
+    h.socket.peerMessage({ event: 'vad.speech_start', utterance_idx: 0 });
+    h.socket.peerMessage({ event: 'transcript.final', utterance_idx: 0, text: 'early' });
+    h.socket.peerMessage({ event: 'vad.speech_end', utterance_idx: 0 });
+    assert.deepEqual(events, ['speech_start', 'speech_end']);
+    h.stt.close();
+  });
+
   it('switches endpointing immediately when no utterance is open', () => {
     const h = vadHarness();
     h.socket.peerOpen();

@@ -196,6 +196,18 @@ describe('config', () => {
     assert.throws(() => loadConfig({ ...base, TURN_DETECTION: 'local' }), /TURN_DETECTION/);
   });
 
+  it('defaults the stall grace to 1200 ms and lets the operator tune it', () => {
+    const base = {
+      OPENROUTER_API_KEY: 'o',
+      TWILIO_ACCOUNT_SID: 'ACx',
+      TWILIO_AUTH_TOKEN: 't',
+      STREAM_WS_URL: 'wss://example.com/stream',
+      SARVAM_API_KEY: 'sk-sarvam',
+    };
+    assert.equal(loadConfig(base).stallGraceMs, 1200);
+    assert.equal(loadConfig({ ...base, STALL_GRACE_MS: '900' }).stallGraceMs, 900);
+  });
+
   it('no longer carries the fixed silence and max-utterance knobs', () => {
     const cfg = loadConfig({
       OPENROUTER_API_KEY: 'o',

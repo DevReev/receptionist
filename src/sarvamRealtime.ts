@@ -33,6 +33,13 @@ export interface RealtimeStt {
   readonly endpointing?: RealtimeEndpointing;
   /** Switch boundary ownership; applied at the next utterance boundary. */
   setEndpointing?(mode: RealtimeEndpointing): void;
+  /**
+   * The local detector took the boundary for an utterance the provider still
+   * holds open (it stalled): release it and adopt any pending switch, so the
+   * next client-owned utterance can open cleanly. Returns the utterance's
+   * final when one already landed, so delivered text is not discarded.
+   */
+  abandonUtterance?(): Transcription | undefined;
   /** Session over: release the socket. */
   close(): void;
 }
@@ -239,6 +246,8 @@ export class SarvamRealtimeStt implements RealtimeStt {
     }
     if (event === 'vad.speech_end') {
       this.onTrace?.({ component: 'stt', event: 'vad-speech-end', utteranceIdx: this.speechUtteranceIdx });
+      // A final may already have synthesized this boundary; surface it once.
+      if (this.vadBoundaryOpen) return;
       this.vadBoundaryOpen = this.speechOpen;
       this.speechOpen = false;
       this.vadEventHandler?.('speech_end');
@@ -274,6 +283,7 @@ export class SarvamRealtimeStt implements RealtimeStt {
             this.earlyFinals.delete(oldest);
           }
           this.earlyFinals.set(utteranceIdx, { text, noSpeech: text.trim().length === 0 });
+          this.synthesizeBoundary(utteranceIdx);
         }
         return;
       }
@@ -351,6 +361,50 @@ export class SarvamRealtimeStt implements RealtimeStt {
     if (this.pendingEndpointing === null) return;
     this.endpointingMode = this.pendingEndpointing;
     this.pendingEndpointing = null;
+  }
+
+  /** Forget the open utterance; the caller decides what boundary to send. */
+  private clearOpenUtterance(): void {
+    this.speechOpen = false;
+    this.vadBoundaryOpen = false;
+    this.speechUtteranceIdx = null;
+  }
+
+  /**
+   * A final is the provider's own end-of-turn evidence: when its boundary
+   * event never came, close the utterance here so the Turn is not stranded
+   * waiting for a `vad.speech_end` the provider has already given up on.
+   */
+  private synthesizeBoundary(utteranceIdx: number): void {
+    if (this.vadBoundaryOpen || !this.speechOpen || utteranceIdx !== this.speechUtteranceIdx) return;
+    this.onTrace?.({ component: 'stt', event: 'final-boundary', utteranceIdx });
+    this.vadBoundaryOpen = true;
+    this.speechOpen = false;
+    this.vadEventHandler?.('speech_end');
+    this.adoptPendingEndpointing();
+  }
+
+  /**
+   * The local detector ended the utterance the provider still holds open: a
+   * stalled provider never emits its own boundary, so waiting would strand the
+   * request. Release the utterance, adopt any pending mode switch, and hand
+   * back a final that already landed.
+   */
+  abandonUtterance(): Transcription | undefined {
+    if (this.closed || this.failed) return undefined;
+    const utteranceIdx = this.speechUtteranceIdx;
+    if (!this.speechOpen && !this.vadBoundaryOpen) return undefined;
+    const early = utteranceIdx !== null ? this.earlyFinals.get(utteranceIdx) : undefined;
+    if (early && utteranceIdx !== null) this.earlyFinals.delete(utteranceIdx);
+    this.onTrace?.({
+      component: 'stt',
+      event: 'utterance-abandoned',
+      utteranceIdx,
+      deliveredFinal: early !== undefined,
+    });
+    this.clearOpenUtterance();
+    this.adoptPendingEndpointing();
+    return early;
   }
 
   private fail(err: Error): void {
@@ -436,9 +490,7 @@ export class SarvamRealtimeStt implements RealtimeStt {
     if (this.waiting) return Promise.reject(new Error('sarvam-realtime-finalize-in-flight'));
     const utteranceIdx = this.speechUtteranceIdx;
     if (this.endpointingMode === 'manual' && this.speechOpen) this.send({ event: 'speech_end' });
-    this.speechOpen = false;
-    this.vadBoundaryOpen = false;
-    this.speechUtteranceIdx = null;
+    this.clearOpenUtterance();
     const early = this.earlyFinals.get(utteranceIdx);
     if (early) {
       this.earlyFinals.delete(utteranceIdx);

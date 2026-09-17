@@ -42,6 +42,18 @@ export interface EndpointPolicy {
 export interface Utterance {
   audio: Int16Array;
   durationMs: number;
+  /** True when the local detector took this boundary because the provider stalled. */
+  stalled?: boolean;
+}
+
+/** Local evidence that the provider stopped emitting a Turn's boundary. */
+export interface StallEvent {
+  /** Local trailing silence that triggered the takeover. */
+  trailingSilenceMs: number;
+  /** Locally-heard speech before that silence. */
+  speechMs: number;
+  /** Grace the provider was given to emit its own boundary. */
+  graceMs: number;
 }
 
 export interface BargeInEvent {

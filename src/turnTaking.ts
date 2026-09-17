@@ -1,12 +1,13 @@
 import { decodeMulaw } from './mulaw.ts';
 import { classifyPartial, type PartialClass } from './backchannel.ts';
 import { EchoGate, type EchoDecision, type EchoGateOptions } from './echoGate.ts';
-import { AdaptivePause, HYBRID_DEFAULTS, isSemanticallyComplete } from './hybridDetector.ts';
+import { AdaptivePause, HYBRID_DEFAULTS, STALL_DEFAULTS, isSemanticallyComplete } from './hybridDetector.ts';
 import {
   BARGE_IN_DEFAULTS,
   type BackchannelEvent,
   type BargeInEvent,
   type EndpointPolicy,
+  type StallEvent,
   type Utterance,
   type Vad,
 } from './endpoint.ts';
@@ -44,6 +45,8 @@ export interface TurnTakingObserver {
   onEchoDecision?(decision: EchoDecision): void;
   /** Raw VAD score + latch state per scored frame, for operator diagnostics. */
   onScore?(score: number, latched: boolean): void;
+  /** The provider stalled: the local detector took the held boundary. */
+  onStall?(event: StallEvent): void;
 }
 
 /**
@@ -75,6 +78,8 @@ export interface TurnTakingOptions {
   detection: TurnDetection;
   /** Echo-gate tuning; defaults ship the bench-tuned values. */
   echoGate?: EchoGateOptions;
+  /** Local trailing silence that takes a stalled provider boundary. */
+  stallGraceMs?: number;
 }
 
 type Floor = 'listening' | 'watching-barge-in' | 'idle';
@@ -100,11 +105,11 @@ function silenceMulaw(length: number): Buffer {
 
 /**
  * Owns one call's turn-taking surface: the upstream audio diet, the Echo
- * gate, the local VAD gate, utterance segmentation, and Barge-in candidate
- * state. The session above it sees only Turns and Barge-ins. Durations derive
- * from sample counts, never wall-clock time, so behavior is deterministic in
- * tests. Calls serialize internally; callers may fire receiveAudio without
- * awaiting.
+ * gate, the local VAD gate, utterance segmentation, Barge-in candidate state,
+ * and the guard that takes a stalled provider's boundary. The session above it
+ * sees only Turns and Barge-ins. Durations derive from sample counts, never
+ * wall-clock time, so behavior is deterministic in tests. Calls serialize
+ * internally; callers may fire receiveAudio without awaiting.
  */
 export class TurnTaking {
   private readonly vad: Vad;
@@ -114,10 +119,12 @@ export class TurnTaking {
   private readonly bargeInDipToleranceMs: number;
   private readonly partialSemantics: boolean;
   private readonly bargeInConfirmMs: number;
-  private readonly detection: TurnDetection;
+  private detection: TurnDetection;
   private readonly echoGate: EchoGate;
   /** The Caller's own intra-utterance pause rhythm, for the hybrid boundary. */
   private readonly adaptivePause = new AdaptivePause();
+  private readonly stallGraceMs: number;
+  private readonly minStallSpeechSamples: number;
   private mode: Floor = 'listening';
   private bargeInPending = false;
   private speaking = false;
@@ -131,6 +138,10 @@ export class TurnTaking {
   /** Provider speech_open state; the utterance under capture in sarvam mode. */
   private providerOpen = false;
   private providerCorroborated = false;
+  /** Provider-boundary mode: local speech presence, tracked for the stall guard. */
+  private stallSpeechSeen = false;
+  private stallSpeechSamples = 0;
+  private stallTrailingSamples = 0;
   private speechAnnounced = false;
   private candidateSamples = 0;
   private dipSamples = 0;
@@ -151,6 +162,10 @@ export class TurnTaking {
     this.partialSemantics = opts.partialSemantics ?? false;
     this.bargeInConfirmMs = opts.bargeInConfirmMs ?? BARGE_IN_DEFAULTS.confirmMs;
     this.detection = opts.detection;
+    this.stallGraceMs = opts.stallGraceMs ?? STALL_DEFAULTS.graceMs;
+    // A blip is not a Turn: local speech must reach the detector's own
+    // minimum-speech floor before the guard trusts it.
+    this.minStallSpeechSamples = Math.round((this.policy.minSpeechMs / 1000) * SAMPLE_RATE);
     this.echoGate = new EchoGate(opts.echoGate);
   }
 
@@ -201,6 +216,10 @@ export class TurnTaking {
       // The provider heard the candidate while the floor was watched, so its
       // boundary closes the utterance; the candidate is its captured start.
       this.providerOpen = true;
+      // The candidate is locally-heard speech, so the stall guard can take
+      // this utterance's boundary if the provider stops emitting.
+      this.stallSpeechSeen = true;
+      this.stallSpeechSamples = event.audio.length;
     } else {
       this.speaking = true;
     }
@@ -218,8 +237,8 @@ export class TurnTaking {
   /**
    * The provider opened an utterance (`vad.speech_start`). While the
    * Receptionist holds the floor it never triggers a Barge-in; it only
-   * corroborates a local candidate, which the fire event carries. In
-   * listening it opens the utterance capture.
+   * corroborates a local candidate, which the fire event carries. In listening
+   * it claims the utterance capture the local VAD may already have opened.
    */
   providerSpeechStart(): void {
     if (this.detection !== 'sarvam') return;
@@ -229,7 +248,9 @@ export class TurnTaking {
     }
     if (this.mode !== 'listening' || this.providerOpen) return;
     this.providerOpen = true;
-    this.adoptPreRoll();
+    // Locally-heard speech already owns the capture; only adopt the pre-roll
+    // when the provider is the first to open the utterance.
+    if (!this.stallSpeechSeen) this.adoptPreRoll();
     this.announceSpeechStart();
   }
 
@@ -238,6 +259,15 @@ export class TurnTaking {
     if (this.detection !== 'sarvam' || this.mode !== 'listening' || !this.providerOpen) return;
     this.providerOpen = false;
     this.emit();
+  }
+
+  /**
+   * Boundary authority changes at a boundary. The session escalates to the
+   * local detector when the provider stalls repeatedly; already-open
+   * utterances stay with their current owner.
+   */
+  setDetection(mode: TurnDetection): void {
+    this.detection = mode;
   }
 
   /**
@@ -284,10 +314,11 @@ export class TurnTaking {
       // full window instead of one noisy 20 ms slice.
       this.observer.onUpstreamFrame?.(mulaw);
       this.echoGate.observe(pcm);
-      // The provider owns boundaries in this mode: keep the fallback capture
-      // and leave the local VAD to Barge-in watching only.
+      // The provider owns boundaries in this mode, but the local VAD keeps
+      // hearing the Caller so a provider that stops emitting boundaries cannot
+      // strand the Turn (see `watchProviderUtterance`).
       if (this.detection === 'sarvam') {
-        this.captureProviderFrame(pcm);
+        await this.watchProviderUtterance(pcm);
         return;
       }
     } else {
@@ -312,11 +343,7 @@ export class TurnTaking {
     const frame = isEcho ? new Int16Array(pcm.length) : pcm;
     if (this.speaking) {
       this.announceSpeechStart();
-      if (isSpeech) {
-        this.stats.frames += 1;
-        if (score > this.stats.max) this.stats.max = score;
-        this.stats.sum += score;
-      }
+      if (isSpeech) this.scoreFrame(score);
     }
     if (!this.speaking) {
       if (!isSpeech) {
@@ -413,6 +440,13 @@ export class TurnTaking {
     this.observer.onSpeechStart?.();
   }
 
+  /** Fold one speech-scored frame into the utterance's evidence stats. */
+  private scoreFrame(score: number): void {
+    this.stats.frames += 1;
+    if (score > this.stats.max) this.stats.max = score;
+    this.stats.sum += score;
+  }
+
   private takeStats(): UtteranceSpeechStats {
     const { frames, max, sum } = this.stats;
     this.stats = { frames: 0, max: 0, sum: 0 };
@@ -423,14 +457,63 @@ export class TurnTaking {
     };
   }
 
-  /** Buffer provider-boundary audio for the REST fallback and fixture capture. */
-  private captureProviderFrame(pcm: Int16Array): void {
-    if (!this.providerOpen) {
+  /**
+   * Provider-boundary mode: the local VAD still hears the Caller so a provider
+   * that stops emitting boundaries cannot strand the Turn. Locally-heard
+   * speech opens the fallback capture (a later provider `vad.speech_start`
+   * only claims it), and trailing silence past the stall grace with no
+   * provider end signal takes the boundary through the local rule — the
+   * captured audio then goes to the REST fallback.
+   */
+  private async watchProviderUtterance(pcm: Int16Array): Promise<void> {
+    if (this.providerOpen || this.stallSpeechSeen) {
+      this.chunks.push(pcm);
+      this.bufferedSamples += pcm.length;
+    } else {
       this.pushPreRoll(pcm);
+    }
+    const score = await this.vad.score(pcm);
+    // The provider or the session may have taken over while scoring.
+    if (this.detection !== 'sarvam' || this.mode !== 'listening') return;
+    const isSpeech = score >= this.policy.threshold;
+    if (isSpeech) {
+      if (!this.stallSpeechSeen) {
+        this.stallSpeechSeen = true;
+        // The first locally-heard speech makes the pre-roll (including this
+        // frame) the start of the fallback capture.
+        if (!this.providerOpen) this.adoptPreRoll();
+      } else if (this.stallTrailingSamples > 0) {
+        // A completed intra-utterance pause; after an escalation the adaptive
+        // floor already knows this Caller's rhythm.
+        this.adaptivePause.observe(toMs(this.stallTrailingSamples));
+      }
+      this.stallSpeechSamples += pcm.length;
+      this.stallTrailingSamples = 0;
+      this.scoreFrame(score);
+      const armed = this.stallSpeechSamples >= this.minStallSpeechSamples;
+      this.observer.onScore?.(score, armed);
+      if (armed) this.announceSpeechStart();
       return;
     }
-    this.chunks.push(pcm);
-    this.bufferedSamples += pcm.length;
+    this.observer.onScore?.(score, this.stallSpeechSamples >= this.minStallSpeechSamples);
+    if (!this.stallSpeechSeen) return;
+    this.stallTrailingSamples += pcm.length;
+    if (this.stallSpeechSamples < this.minStallSpeechSamples) return;
+    if (toMs(this.stallTrailingSamples) < this.stallGraceMs) return;
+    this.emitStalled();
+  }
+
+  private emitStalled(): void {
+    const evidence: StallEvent = {
+      trailingSilenceMs: Math.round(toMs(this.stallTrailingSamples)),
+      speechMs: Math.round(toMs(this.stallSpeechSamples)),
+      graceMs: this.stallGraceMs,
+    };
+    // The emitted utterance ends at the last locally-heard speech.
+    this.trailingSilenceSamples = this.stallTrailingSamples;
+    this.providerOpen = false;
+    this.observer.onStall?.(evidence);
+    this.emit({ stalled: true });
   }
 
   /** Seed the utterance buffer with the recent pre-roll so its first word survives. */
@@ -473,9 +556,10 @@ export class TurnTaking {
     return { audio, durationMs: Math.round(toMs(speechSamples)) };
   }
 
-  private emit(): void {
+  private emit(opts: { stalled?: boolean } = {}): void {
     this.mode = 'idle';
     const utterance = this.speechAudio();
+    if (opts.stalled) utterance.stalled = true;
     const stats = this.takeStats();
     this.reset();
     this.observer.onUtterance(utterance, stats);
@@ -560,6 +644,9 @@ export class TurnTaking {
     this.speaking = false;
     this.providerOpen = false;
     this.providerCorroborated = false;
+    this.stallSpeechSeen = false;
+    this.stallSpeechSamples = 0;
+    this.stallTrailingSamples = 0;
     this.speechAnnounced = false;
     this.preRollChunks = [];
     this.preRollSamples = 0;

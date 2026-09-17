@@ -33,6 +33,19 @@ export const HYBRID_DEFAULTS = {
 } as const;
 
 /**
+ * Stall guard: the provider owns boundaries in `sarvam` mode, but when local
+ * speech presence hears a Turn and the provider emits neither an end signal nor
+ * a final within this grace, the hybrid detector takes the boundary. Two
+ * consecutive stalled Turns escalate the session to the local detector.
+ */
+export const STALL_DEFAULTS = {
+  /** Local trailing silence that takes a provider-held boundary. */
+  graceMs: 1200,
+  /** Consecutive stalled Turns that switch the session's detector. */
+  escalateAfter: 2,
+} as const;
+
+/**
  * 1.25 x p90 of the pauses, clamped. The percentile is nearest-rank (the
  * benchmark harness convention), so with at most eight samples it is the
  * longest pause seen; one outlier eases out of the window within eight more

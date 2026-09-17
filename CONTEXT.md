@@ -16,6 +16,8 @@ _Avoid_: test booking
 - **Picktime page**: the single configured booking page from env for v1; it currently exposes one service, one doctor, and two Locations.
 - **Endpointing**: deciding the caller has stopped speaking; the Receptionist replies only after it. It may be delegated to the speech provider.
 _Avoid_: silence timeout
+- **Stall guard**: local speech presence taking a Turn's boundary when the provider emits neither an end signal nor a final within the grace (1.2 s); the stalled Turn is transcribed through the REST fallback. Two consecutive stalls switch the session to the local detector.
+_Avoid_: fallback timer
 - **Stream session**: one call's bidirectional audio websocket; it replaces the per-turn webhook chain while live streaming is enabled.
 - **Turn**: one caller utterance → transcription → reply cycle, inside a Stream session while streaming is enabled. A Turn may begin while the previous reply is still being spoken (Barge-in).
 - **Speculative reply**: a reply started from a partial transcription, before the Turn's final transcription arrives; discarded and regenerated if the final disagrees with the partial.
