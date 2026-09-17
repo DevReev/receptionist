@@ -17,8 +17,12 @@ export const LOCAL_ENDPOINT_FALLBACKS = {
   latchDipMs: 200,
 } as const;
 
-/** Shipped Barge-in candidate defaults: sustained non-Echo speech and dip tolerance. */
-export const BARGE_IN_DEFAULTS = { minSpeechMs: 200, dipToleranceMs: 200 } as const;
+/**
+ * Shipped Barge-in candidate defaults: sustained non-Echo speech, dip
+ * tolerance, and the wait for partial semantics that confirms a Backchannel
+ * rather than a content-bearing interruption.
+ */
+export const BARGE_IN_DEFAULTS = { minSpeechMs: 200, dipToleranceMs: 200, confirmMs: 300 } as const;
 
 export interface EndpointPolicy {
   silenceMs: number;
@@ -44,4 +48,11 @@ export interface BargeInEvent {
   durationMs: number;
   /** True when a provider `vad.speech_start` corroborated the local candidate. */
   corroborated: boolean;
+}
+
+/** A short acknowledgement absorbed while the Receptionist held the floor. */
+export interface BackchannelEvent {
+  durationMs: number;
+  /** Partial transcript that identified it as a Backchannel. */
+  text: string;
 }

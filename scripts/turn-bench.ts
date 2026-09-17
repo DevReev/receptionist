@@ -85,6 +85,7 @@ export async function main(): Promise<void> {
     },
     bargeInMinSpeechMs: intEnv('BARGE_IN_MIN_SPEECH_MS', BARGE_IN_DEFAULTS.minSpeechMs),
     bargeInDipToleranceMs: intEnv('BARGE_IN_DIP_TOLERANCE_MS', BARGE_IN_DEFAULTS.dipToleranceMs),
+    bargeInConfirmMs: intEnv('BARGE_IN_CONFIRM_MS', BARGE_IN_DEFAULTS.confirmMs),
     ...(process.env.TURN_BENCH_DEBUG === 'true' ? { debug: true } : {}),
   };
   const runs = [];
@@ -99,6 +100,7 @@ export async function main(): Promise<void> {
     fixtures: fixtures.length,
     bargeInMinSpeechMs: options.bargeInMinSpeechMs!,
     bargeInDipToleranceMs: options.bargeInDipToleranceMs!,
+    bargeInConfirmMs: options.bargeInConfirmMs!,
   };
   console.log(formatTurnBenchReport(meta, metrics, aggregate));
   const jsonPath = process.env.TURN_BENCH_JSON;

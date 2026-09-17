@@ -17,6 +17,7 @@ function observations(partial: Partial<ScenarioObservations> = {}): ScenarioObse
     interruptions: [],
     backchannels: [],
     echos: [],
+    backchannelAbsorptions: [],
     gateDecisions: [],
     replyStarts: [],
     clears: [],
@@ -320,7 +321,7 @@ describe('turn bench behavior scenarios', () => {
     assert.equal(run.metrics.stopLatencyMs.missed, 0);
   });
 
-  it('records a Backchannel false-stop until absorption lands (ticket 06)', async () => {
+  it('absorbs a short Backchannel while the Receptionist speaks (ticket 06)', async () => {
     const run = await runScenario(
       {
         name: 'backchannel',
@@ -334,8 +335,29 @@ describe('turn bench behavior scenarios', () => {
       { policy: POLICY },
     );
     assert.equal(run.observations.backchannels.length, 1);
-    assert.equal(run.metrics.backchannelFalseStops, 1, 'short callers still take the floor');
+    assert.equal(run.observations.clears.length, 0, 'the Receptionist is not stopped');
+    assert.equal(run.metrics.backchannelFalseStops, 0);
+    assert.equal(run.metrics.backchannelAbsorptions, 1, 'the Backchannel is absorbed');
+    assert.equal(run.observations.backchannelAbsorptions[0]!.text, 'mm-hmm');
     assert.equal(run.metrics.selfEchoTurns, 0);
+  });
+
+  it('still stops on a short content-bearing interruption while speaking', async () => {
+    const run = await runScenario(
+      {
+        name: 'short-interruption',
+        run: async (ctx) => {
+          await ctx.call('what are your hours', 60);
+          await ctx.awaitReply();
+          await ctx.interrupt('wait', 15);
+          await ctx.silence(100);
+        },
+      },
+      { policy: POLICY, bargeInMinSpeechMs: 200 },
+    );
+    assert.equal(run.observations.backchannelAbsorptions.length, 0, 'content is never absorbed');
+    assert.equal(run.metrics.stopLatencyMs.samples, 1, 'the short interruption stops the reply');
+    assert.equal(run.metrics.stopLatencyMs.missed, 0);
   });
 
   it('never stops on returned Echo while the Receptionist speaks', async () => {
@@ -437,13 +459,14 @@ describe('turn bench report', () => {
         fixtures: 3,
         bargeInMinSpeechMs: 200,
         bargeInDipToleranceMs: 200,
+        bargeInConfirmMs: 300,
       },
       [scenario],
       aggregateMetrics([scenario]),
     );
     assert.match(report, /build abc1234/);
     assert.match(report, /silence 1000ms/);
-    assert.match(report, /barge-in: min-speech 200ms  dip-tolerance 200ms/);
+    assert.match(report, /barge-in: min-speech 200ms  dip-tolerance 200ms  confirm 300ms/);
     assert.match(report, /steady-turn/);
     assert.match(report, /false-cut 0\.0% \(0\/1\)/);
     assert.match(report, /reply p50 1000ms p95 1000ms \(n=1\)/);

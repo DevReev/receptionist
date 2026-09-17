@@ -87,6 +87,8 @@ export interface Config {
   bargeInMinSpeechMs: number;
   /** Sub-threshold dip a Barge-in candidate tolerates before resetting. */
   bargeInDipToleranceMs: number;
+  /** Wait past the pre-trigger for a partial to classify a Backchannel. */
+  bargeInConfirmMs: number;
   /** Whole-Turn deadline for the LLM response; <=0 disables. */
   turnDeadlineMs: number;
   /** Shared fixed-phrase cache directory; unset means in-memory only. */
@@ -227,6 +229,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     appointmentsWaitMs: int(env, 'APPOINTMENTS_WAIT_MS', 10000),
     bargeInMinSpeechMs: int(env, 'BARGE_IN_MIN_SPEECH_MS', BARGE_IN_DEFAULTS.minSpeechMs),
     bargeInDipToleranceMs: int(env, 'BARGE_IN_DIP_TOLERANCE_MS', BARGE_IN_DEFAULTS.dipToleranceMs),
+    bargeInConfirmMs: int(env, 'BARGE_IN_CONFIRM_MS', BARGE_IN_DEFAULTS.confirmMs),
     turnDeadlineMs: int(env, 'TURN_DEADLINE_MS', 6000),
     fixedAudioCacheDir: env.FIXED_AUDIO_CACHE_DIR,
     fixedPrewarmMs: int(env, 'FIXED_AUDIO_PREWARM_MS', 8000),

@@ -7,6 +7,7 @@ import { CallStore } from './calls.ts';
 import type { Assistant, Transcriber } from './app.ts';
 import type { EndpointPolicy, Vad } from './endpoint.ts';
 import { LiveCallSession } from './live.ts';
+import type { PartialTranscript, RealtimeStt } from './sarvamRealtime.ts';
 import type { PlaybackResult } from './transport.ts';
 import type { Tts } from './tts.ts';
 
@@ -46,6 +47,8 @@ export interface ScenarioObservations {
   interruptions: DeclaredSpan[];
   backchannels: DeclaredSpan[];
   echos: DeclaredEcho[];
+  /** Every Backchannel the session absorbed, traced back to its frame. */
+  backchannelAbsorptions: { frame: number; text: string }[];
   /** Every Echo-gate classification, in inbound order. */
   gateDecisions: GateDecisionObservation[];
   /** Frame of each reply's first outbound audio, in run order, greeting excluded. */
@@ -81,6 +84,8 @@ export interface TurnBenchMetrics {
   backchannels: number;
   backchannelFalseStops: number;
   backchannelFalseStopRate: number;
+  /** Backchannels the session absorbed instead of stopping on. */
+  backchannelAbsorptions: number;
   echoSpans: number;
   echoFalseStops: number;
   echoFalseStopRate: number;
@@ -100,6 +105,7 @@ interface AggregateCounts {
   falseCuts: number;
   backchannels: number;
   backchannelFalseStops: number;
+  backchannelAbsorptions: number;
   echoSpans: number;
   echoFalseStops: number;
   selfEchoTurns: number;
@@ -236,6 +242,7 @@ export function scenarioMetrics(name: string, obs: ScenarioObservations): TurnBe
     backchannels: obs.backchannels.length,
     backchannelFalseStops: stoppedBackchannels.size,
     backchannelFalseStopRate: rate(stoppedBackchannels.size, obs.backchannels.length),
+    backchannelAbsorptions: obs.backchannelAbsorptions.length,
     echoSpans: obs.echos.length,
     echoFalseStops: stoppedEchos.size,
     echoFalseStopRate: rate(stoppedEchos.size, obs.echos.length),
@@ -250,6 +257,7 @@ export function aggregateMetrics(runs: TurnBenchMetrics[]): AggregateMetrics {
   const falseCuts = runs.reduce((sum, run) => sum + run.falseCuts, 0);
   const backchannels = runs.reduce((sum, run) => sum + run.backchannels, 0);
   const backchannelFalseStops = runs.reduce((sum, run) => sum + run.backchannelFalseStops, 0);
+  const backchannelAbsorptions = runs.reduce((sum, run) => sum + run.backchannelAbsorptions, 0);
   const echoSpans = runs.reduce((sum, run) => sum + run.echoSpans, 0);
   const echoFalseStops = runs.reduce((sum, run) => sum + run.echoFalseStops, 0);
   const replyLatenciesMs = runs.flatMap((run) => run.replyLatenciesMs);
@@ -269,6 +277,7 @@ export function aggregateMetrics(runs: TurnBenchMetrics[]): AggregateMetrics {
     backchannels,
     backchannelFalseStops,
     backchannelFalseStopRate: rate(backchannelFalseStops, backchannels),
+    backchannelAbsorptions,
     echoSpans,
     echoFalseStops,
     echoFalseStopRate: rate(echoFalseStops, echoSpans),
@@ -349,6 +358,8 @@ export interface TurnBenchOptions {
   bargeInMinSpeechMs?: number;
   /** Sub-threshold dip a Barge-in candidate tolerates before resetting. */
   bargeInDipToleranceMs?: number;
+  /** Wait past the pre-trigger for a partial to classify a Backchannel. */
+  bargeInConfirmMs?: number;
   /** Print session phase/trace lines while a scenario runs. */
   debug?: boolean;
 }
@@ -470,6 +481,7 @@ class ScenarioRunner implements TurnBenchContext {
     interruptions: [],
     backchannels: [],
     echos: [],
+    backchannelAbsorptions: [],
     gateDecisions: [],
     replyStarts: [],
     clears: [],
@@ -481,6 +493,7 @@ class ScenarioRunner implements TurnBenchContext {
   private readonly session: LiveCallSession;
   private readonly policy: EndpointPolicy;
   private readonly callerBank: Buffer;
+  private partialHandler: ((partial: PartialTranscript) => void) | null = null;
   private speechOffset = 0;
   private currentTag: TurnBenchTag = 'silence';
   private frameCallerActive = false;
@@ -520,18 +533,34 @@ class ScenarioRunner implements TurnBenchContext {
         yield 'Certainly, let me look into that and share what I find. ';
       },
     };
+    // The production carrier of Backchannel semantics is the realtime STT
+    // channel's partials; this scripted stand-in supplies one per declared
+    // speech frame while the bench keeps local boundaries.
+    const realtime: RealtimeStt = {
+      endpointing: 'manual',
+      pushAudio: () => {},
+      speechStart: () => {},
+      finalize: () => Promise.reject(new Error('bench-realtime-not-streaming')),
+      onPartial: (handler) => {
+        this.partialHandler = handler;
+      },
+      close: () => {},
+    };
     this.session = new LiveCallSession({
       identity: { callSid: `CAbench-${scenario.name}`, streamSid: `MZbench-${scenario.name}` },
       sendAudio: (chunk) => this.outbound.send(chunk, this.frame),
       vad,
       policy: options.policy,
       transcriber,
+      realtime,
+      partialSemantics: true,
       tts,
       guide: { raw: '# Clinic Guide — Bench Clinic\n', name: 'Bench Clinic' },
       assistant,
       calls: new CallStore(),
       bargeInMinSpeechMs: options.bargeInMinSpeechMs,
       bargeInDipToleranceMs: options.bargeInDipToleranceMs,
+      bargeInConfirmMs: options.bargeInConfirmMs,
       noResponseMs: 0,
       holdAfterMs: 0,
       turnDeadlineMs: 0,
@@ -552,6 +581,9 @@ class ScenarioRunner implements TurnBenchContext {
             caller: this.frameCallerActive,
             echoMixed: this.frameEchoMixed,
           });
+        }
+        if (event.component === 'call' && event.event === 'backchannel') {
+          this.observations.backchannelAbsorptions.push({ frame: this.frame, text: String(event.text ?? '') });
         }
         if (options.debug) console.error('[trace]', JSON.stringify(event));
       },
@@ -699,6 +731,11 @@ class ScenarioRunner implements TurnBenchContext {
     // retained now, in playout order, before this frame is classified.
     this.retainPlayedReference();
     await this.session.receiveAudio(bytes);
+    // The provider's partial for the words just heard; cumulative in reality,
+    // the declared span text stands in for it here.
+    if (tag === 'speech' || tag === 'backchannel') {
+      this.partialHandler?.({ text: this.latestDeclarationText(this.frame) });
+    }
     await settle();
     this.frameCallerActive = false;
     this.frameEchoMixed = false;
@@ -747,6 +784,8 @@ export interface TurnBenchReportMeta {
   bargeInMinSpeechMs: number;
   /** Dip tolerance a Barge-in candidate ran with. */
   bargeInDipToleranceMs: number;
+  /** How long the candidate waited for partial semantics in this run. */
+  bargeInConfirmMs: number;
 }
 
 /**
@@ -781,6 +820,7 @@ type MetricLineInput = Pick<
   | 'backchannels'
   | 'backchannelFalseStops'
   | 'backchannelFalseStopRate'
+  | 'backchannelAbsorptions'
   | 'echoSpans'
   | 'echoFalseStops'
   | 'echoFalseStopRate'
@@ -795,7 +835,7 @@ function metricLine(metrics: MetricLineInput): string {
     metrics.stopLatencyMs.samples > 0
       ? `stop p50 ${metrics.stopLatencyMs.p50}ms p95 ${metrics.stopLatencyMs.p95}ms (missed ${metrics.stopLatencyMs.missed})`
       : `stop none (missed ${metrics.stopLatencyMs.missed})`,
-    `backchannel false-stop ${percent(metrics.backchannelFalseStopRate)} (${metrics.backchannelFalseStops}/${metrics.backchannels})`,
+    `backchannel false-stop ${percent(metrics.backchannelFalseStopRate)} (${metrics.backchannelFalseStops}/${metrics.backchannels})  absorbed ${metrics.backchannelAbsorptions}`,
     `echo false-stop ${percent(metrics.echoFalseStopRate)} (${metrics.echoFalseStops}/${metrics.echoSpans})`,
     `self-echo ${metrics.selfEchoTurns}`,
     `gate pass ${percent(metrics.gate.falsePassRate)} (${metrics.gate.echoFalsePasses}/${metrics.gate.echoFrames})`,
@@ -813,7 +853,7 @@ export function formatTurnBenchReport(
   const lines = [
     `turn-taking bench  build ${meta.build}  fixtures ${meta.fixtures}`,
     `policy: silence ${meta.policy.silenceMs}ms  min-speech ${meta.policy.minSpeechMs}ms  max-utterance ${meta.policy.maxUtteranceMs}ms  threshold ${meta.policy.threshold}  dip ${meta.policy.latchDipMs}ms`,
-    `barge-in: min-speech ${meta.bargeInMinSpeechMs}ms  dip-tolerance ${meta.bargeInDipToleranceMs}ms`,
+    `barge-in: min-speech ${meta.bargeInMinSpeechMs}ms  dip-tolerance ${meta.bargeInDipToleranceMs}ms  confirm ${meta.bargeInConfirmMs}ms`,
   ];
   const gatePass =
     aggregate.gate.falsePassRate <= ECHO_GATE_BARS.falsePassRate &&

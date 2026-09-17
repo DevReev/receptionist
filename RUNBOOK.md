@@ -32,6 +32,7 @@ The live streaming loop is the default (`VOICE_LOOP=stream`), and transcription 
 | `ECHO_GATE_MAX_DELAY_MS` | Optional, default `600`: longest Echo return delay the adaptive-delay correlation search considers |
 | `BARGE_IN_MIN_SPEECH_MS` | Optional, default `200`: non-Echo Caller speech needed before the Receptionist stops mid-reply and the Caller takes the floor |
 | `BARGE_IN_DIP_TOLERANCE_MS` | Optional, default `200`: brief sub-threshold dip inside a Barge-in candidate that does not reset it |
+| `BARGE_IN_CONFIRM_MS` | Optional, default `300`: how long past `BARGE_IN_MIN_SPEECH_MS` the candidate waits for a partial transcript to confirm a Backchannel before unknown speech takes the floor. Only applies while partials arrive (provider VAD mode); a Backchannel is absorbed, content-bearing speech stops the Receptionist at once |
 | `SARVAM_TTS_STREAM` | Optional, default `true`: stream replies over Sarvam's text-to-speech WebSocket (`bulbul:v3`, `mulaw` @ 8 kHz) so audio reaches the Caller while it is still being generated. A failed or stalled utterance falls back to the REST TTS call; set `false` to force REST |
 | `SARVAM_TTS_STREAM_IDLE_TIMEOUT_MS` | Optional, default `5000`: silence on the TTS socket before the sentence falls back to REST |
 | `GROQ_API_KEY` or `OPENAI_API_KEY` | Whisper STT only when `STT_PROVIDER=openai` or `groq` |
@@ -153,11 +154,13 @@ Component traces (`kind:"trace"`):
   evidence used (`correlation`, `delayMs`, `inboundRms`, `referenceRms`,
   `residualRms`, `returnLossDb`, `threshold`, `marginDb`). High-volume by
   design: one line per 20 ms frame, `grep <callSid>` scoped.
-- `component:"call"` — `phase` transitions, `playback-cleared`, and `barge-in`
-  (`generation`, `candidateMs`, `corroborated`): `corroborated` is true when a
-  provider `vad.speech_start` arrived while the local candidate was building.
-  The provider never triggers Barge-in; the local Silero candidate plus
-  Echo-gate clearance does.
+- `component:"call"` — `phase` transitions, `playback-cleared`, `barge-in`
+  (`generation`, `candidateMs`, `corroborated`), and `backchannel` (`durationMs`,
+  `text`). `barge-in`'s `corroborated` is true when a provider
+  `vad.speech_start` arrived while the local candidate was building; the
+  provider never triggers Barge-in, the local Silero candidate plus Echo-gate
+  clearance does. `backchannel` is one line per absorbed acknowledgement: the
+  Receptionist kept speaking, no Turn opened, no history was written.
 - `component:"stream"` — `open` and `close` with `framesIn`/`bytesIn`/
   `framesOut`/`bytesOut`/`durationMs` for the Twilio media socket.
 

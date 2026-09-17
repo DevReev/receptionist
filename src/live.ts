@@ -93,6 +93,14 @@ export interface LiveCallOptions {
   /** Sub-threshold dip a Barge-in candidate tolerates before resetting. */
   bargeInDipToleranceMs?: number;
   /**
+   * Partial transcripts arrive while the Receptionist speaks, so a Barge-in
+   * candidate holds briefly for Backchannel classification. Defaults to the
+   * realtime channel streaming the whole audio diet (provider VAD mode).
+   */
+  partialSemantics?: boolean;
+  /** How long the energy pre-trigger waits for partial semantics before taking the floor. */
+  bargeInConfirmMs?: number;
+  /**
    * `sarvam` (default): the provider owns Turn boundaries when the realtime
    * channel is in VAD mode. `hybrid`: the local detector owns them. Without a
    * boundary-capable realtime channel the local detector is used either way.
@@ -375,6 +383,10 @@ export class LiveCallSession {
       policy: opts.policy,
       bargeInMinSpeechMs: opts.bargeInMinSpeechMs,
       bargeInDipToleranceMs: opts.bargeInDipToleranceMs,
+      partialSemantics:
+        opts.partialSemantics ??
+        (opts.realtime?.endpointing === 'vad' && typeof opts.realtime.onPartial === 'function'),
+      bargeInConfirmMs: opts.bargeInConfirmMs,
       detection: this.providerBoundaries ? 'sarvam' : 'hybrid',
       echoGate: opts.echoGate,
       observer: {
@@ -382,6 +394,15 @@ export class LiveCallSession {
           this.pending = this.pending.then(() => this.handleUtterance(utterance, stats)).catch(() => {});
         },
         onBargeIn: (event) => this.handleBargeIn(event),
+        onBackchannel: (event) => {
+          // Absorbed and traced only: no Turn, no history, no reply.
+          this.trace?.({
+            component: 'call',
+            event: 'backchannel',
+            durationMs: event.durationMs,
+            text: event.text,
+          });
+        },
         onSpeechStart: () => {
           this.cancelNoResponse();
           // In provider VAD mode the boundary came from the channel itself.
@@ -426,8 +447,12 @@ export class LiveCallSession {
     }, 2000);
     this.scoreTimer.unref?.();
     // A stable booking partial may start a read-only availability prefetch
-    // before the Caller finishes; it can never write a Booking.
-    opts.realtime?.onPartial?.((partial) => this.handlePartial(partial.text));
+    // before the Caller finishes; it can never write a Booking. The same
+    // partials feed Backchannel classification while the floor is watched.
+    opts.realtime?.onPartial?.((partial) => {
+      this.turnTaking.observePartial(partial.text);
+      this.handlePartial(partial.text);
+    });
     // Provider VAD mode: the provider's boundary opens and closes the
     // utterance; the Turn's final is read from the same channel.
     if (this.providerBoundaries) {
@@ -588,7 +613,7 @@ export class LiveCallSession {
     if (this.closed) return Promise.resolve();
     // Suspend listening immediately: the response may be queued behind another
     // one, and inbound audio must never endpoint into a new Turn meanwhile.
-    if (this.activeSpeech === null && this.phase !== 'SPEAKING') this.prepareSpeaking();
+    if (this.activeSpeech === null && this.phase !== 'SPEAKING') this.prepareSpeaking(opts.kind);
     const generation = opts.generation ?? this.nextGeneration();
     const run = this.speechTail.then(() => this.runResponse(generation, text, opts));
     this.speechTail = run.catch(() => {});
@@ -618,7 +643,7 @@ export class LiveCallSession {
       cancelled: false,
     };
     this.setPhase('SPEAKING');
-    this.prepareSpeaking();
+    this.prepareSpeaking(opts.kind);
     this.activeSpeech = speech;
     this.logPhase('tts', 'start', { generation, chars: text?.length ?? 0 });
     try {
@@ -690,9 +715,13 @@ export class LiveCallSession {
     }
   }
 
-  /** While speaking: always watch for Barge-in candidates over echo-gated audio. */
-  private prepareSpeaking(): void {
-    this.turnTaking.startSpeaking();
+  /**
+   * While speaking: always watch for Barge-in candidates over echo-gated
+   * audio. Absorption is suspended during a readback, where any answer must
+   * take the floor instead of being mistaken for an acknowledgement.
+   */
+  private prepareSpeaking(kind: 'response' | 'readback' = 'response'): void {
+    this.turnTaking.startSpeaking({ absorbBackchannels: kind !== 'readback' });
     this.cancelNoResponse();
   }
 

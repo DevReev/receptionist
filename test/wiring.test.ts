@@ -229,9 +229,16 @@ describe('config', () => {
     assert.equal(Object.hasOwn(cfg, 'endpointLatchDipMs'), false);
     assert.equal(cfg.bargeInMinSpeechMs, 200);
     assert.equal(cfg.bargeInDipToleranceMs, 200);
-    const tuned = loadConfig({ ...base, BARGE_IN_MIN_SPEECH_MS: '150', BARGE_IN_DIP_TOLERANCE_MS: '120' });
+    assert.equal(cfg.bargeInConfirmMs, 300);
+    const tuned = loadConfig({
+      ...base,
+      BARGE_IN_MIN_SPEECH_MS: '150',
+      BARGE_IN_DIP_TOLERANCE_MS: '120',
+      BARGE_IN_CONFIRM_MS: '250',
+    });
     assert.equal(tuned.bargeInMinSpeechMs, 150);
     assert.equal(tuned.bargeInDipToleranceMs, 120);
+    assert.equal(tuned.bargeInConfirmMs, 250);
   });
 
   it('keeps the Whisper/OpenAI providers selectable', () => {

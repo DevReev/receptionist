@@ -1,7 +1,9 @@
 import { decodeMulaw } from './mulaw.ts';
+import { classifyPartial, type PartialClass } from './backchannel.ts';
 import { EchoGate, type EchoDecision, type EchoGateOptions } from './echoGate.ts';
 import {
   BARGE_IN_DEFAULTS,
+  type BackchannelEvent,
   type BargeInEvent,
   type EndpointPolicy,
   type Utterance,
@@ -33,6 +35,8 @@ export interface TurnTakingObserver {
   onSpeechStart?(): void;
   /** Sustained Caller speech while the Receptionist holds the floor. */
   onBargeIn?(event: BargeInEvent): void;
+  /** A short acknowledgement absorbed while the Receptionist held the floor. */
+  onBackchannel?(event: BackchannelEvent): void;
   /** A frame the live STT channel should hear; Echo is replaced with silence, never dropped. */
   onUpstreamFrame?(frame: Buffer): void;
   /** Every frame heard while the Receptionist holds the floor, Echo or Caller. */
@@ -57,6 +61,14 @@ export interface TurnTakingOptions {
   bargeInMinSpeechMs?: number;
   /** Sub-threshold dip a Barge-in candidate tolerates before resetting. */
   bargeInDipToleranceMs?: number;
+  /**
+   * Partial transcripts arrive while the floor is watched, so a Barge-in
+   * candidate holds briefly for Backchannel classification instead of firing
+   * on energy alone. Off when the channel only transcribes open utterances.
+   */
+  partialSemantics?: boolean;
+  /** How long the energy pre-trigger waits for partial semantics before taking the floor. */
+  bargeInConfirmMs?: number;
   /** Boundary authority for this call. */
   detection: TurnDetection;
   /** Echo-gate tuning; defaults ship the bench-tuned values. */
@@ -64,6 +76,20 @@ export interface TurnTakingOptions {
 }
 
 type Floor = 'listening' | 'watching-barge-in' | 'idle';
+
+/** Partial-transcript evidence for the speech burst under the current candidate. */
+interface PartialEvidence {
+  cls: PartialClass;
+  text: string;
+  /** The energy pre-trigger crossed and awaits partial semantics. */
+  confirmPending: boolean;
+  /** This burst is identified as a Backchannel; its tail is absorbed silently. */
+  absorbing: boolean;
+}
+
+function emptyPartial(): PartialEvidence {
+  return { cls: 'unknown', text: '', confirmPending: false, absorbing: false };
+}
 
 /** A frame of mu-law silence (0xFF decodes to zero). */
 function silenceMulaw(length: number): Buffer {
@@ -84,11 +110,16 @@ export class TurnTaking {
   private readonly observer: TurnTakingObserver;
   private readonly bargeInMinSpeechMs: number;
   private readonly bargeInDipToleranceMs: number;
+  private readonly partialSemantics: boolean;
+  private readonly bargeInConfirmMs: number;
   private readonly detection: TurnDetection;
   private readonly echoGate: EchoGate;
   private mode: Floor = 'listening';
   private bargeInPending = false;
   private speaking = false;
+  /** Absorption is suspended while a confirmation readback plays. */
+  private absorptionEnabled = true;
+  private partial: PartialEvidence = emptyPartial();
   /** Provider speech_open state; the utterance under capture in sarvam mode. */
   private providerOpen = false;
   private providerCorroborated = false;
@@ -109,6 +140,8 @@ export class TurnTaking {
     this.observer = opts.observer;
     this.bargeInMinSpeechMs = opts.bargeInMinSpeechMs ?? BARGE_IN_DEFAULTS.minSpeechMs;
     this.bargeInDipToleranceMs = opts.bargeInDipToleranceMs ?? BARGE_IN_DEFAULTS.dipToleranceMs;
+    this.partialSemantics = opts.partialSemantics ?? false;
+    this.bargeInConfirmMs = opts.bargeInConfirmMs ?? BARGE_IN_DEFAULTS.confirmMs;
     this.detection = opts.detection;
     this.echoGate = new EchoGate(opts.echoGate);
   }
@@ -136,16 +169,19 @@ export class TurnTaking {
   /**
    * The Receptionist takes the floor. Inbound audio keeps streaming upstream
    * (Echo replaced with silence) and sustained non-Echo Caller speech fires
-   * `onBargeIn`; Barge-in is always on.
+   * `onBargeIn`. `absorbBackchannels: false` suspends absorption while a
+   * confirmation readback plays, so any answer to it takes the floor instead.
    */
-  startSpeaking(): void {
+  startSpeaking(opts: { absorbBackchannels?: boolean } = {}): void {
     this.mode = 'watching-barge-in';
+    this.absorptionEnabled = opts.absorbBackchannels ?? true;
     this.reset();
   }
 
   /** The Receptionist yields the floor; listening restarts clean. */
   startListening(): void {
     this.mode = 'listening';
+    this.absorptionEnabled = true;
     this.reset();
   }
 
@@ -193,6 +229,25 @@ export class TurnTaking {
     if (this.detection !== 'sarvam' || this.mode !== 'listening' || !this.providerOpen) return;
     this.providerOpen = false;
     this.emit();
+  }
+
+  /**
+   * One partial transcript heard while the Receptionist holds the floor.
+   * Semantics are evidence, not a trigger: they classify the energy candidate
+   * as a Backchannel to absorb or content-bearing speech to take the floor.
+   */
+  observePartial(text: string): void {
+    if (this.mode !== 'watching-barge-in' || this.bargeInPending) return;
+    const cls = classifyPartial(text);
+    if (cls === 'unknown') return;
+    this.partial.cls = cls;
+    this.partial.text = text.trim();
+    if (!this.partial.confirmPending) return;
+    if (cls === 'backchannel' && this.absorptionEnabled) {
+      this.absorbBackchannel();
+      return;
+    }
+    this.fireBargeIn();
   }
 
   private async process(mulaw: Buffer): Promise<void> {
@@ -247,6 +302,12 @@ export class TurnTaking {
       if (!isSpeech) {
         if (this.candidateSamples === 0) {
           this.pushPreRoll(frame);
+          // An absorbed Backchannel ends after a real silence gap, not on the
+          // next content-bearing burst the Caller begins.
+          if (this.partial.absorbing) {
+            this.dipSamples += frame.length;
+            if (toMs(this.dipSamples) >= this.bargeInDipToleranceMs) this.clearCandidate();
+          }
           return;
         }
         this.candidateSamples += frame.length;
@@ -258,22 +319,23 @@ export class TurnTaking {
         const dipToleranceMs =
           this.mode === 'watching-barge-in' ? this.bargeInDipToleranceMs : this.policy.latchDipMs;
         if (toMs(this.dipSamples) >= dipToleranceMs) {
-          this.candidateSamples = 0;
-          this.chunks = [];
-          this.bufferedSamples = 0;
-          this.dipSamples = 0;
+          this.clearCandidate();
         }
         return;
       }
-      if (this.candidateSamples === 0) this.adoptPreRoll();
+      if (this.candidateSamples === 0) {
+        // A fresh speech burst: partials from the previous one are not evidence.
+        if (!this.partial.absorbing) {
+          this.partial.cls = 'unknown';
+          this.partial.text = '';
+        }
+        this.adoptPreRoll();
+      }
       this.candidateSamples += frame.length;
       this.dipSamples = 0;
       this.chunks.push(frame);
       this.bufferedSamples += frame.length;
-      if (this.mode === 'watching-barge-in' && toMs(this.candidateSamples) >= this.bargeInMinSpeechMs) {
-        this.fireBargeIn();
-        return;
-      }
+      if (this.mode === 'watching-barge-in' && this.evaluateCandidate(toMs(this.candidateSamples))) return;
       if (toMs(this.candidateSamples) >= this.policy.minSpeechMs) {
         this.speaking = true;
       }
@@ -285,7 +347,7 @@ export class TurnTaking {
     if (this.mode === 'watching-barge-in') {
       const speechMs = toMs(this.bufferedSamples - this.trailingSilenceSamples);
       if (speechMs >= this.bargeInMinSpeechMs) {
-        this.fireBargeIn();
+        if (this.evaluateCandidate(speechMs)) return;
       } else if (toMs(this.trailingSilenceSamples) >= this.policy.silenceMs) {
         this.reset();
       }
@@ -383,18 +445,81 @@ export class TurnTaking {
     this.observer.onBargeIn?.({ ...audio, corroborated });
   }
 
+  /**
+   * Decide a watching floor's candidate at `speechMs`. Before the energy
+   * pre-trigger nothing happens; past it, partial semantics decide (Backchannel
+   * absorbed, content takes the floor), and unknown text holds until the
+   * confirm window ends and then takes the floor. Returns true when handled.
+   */
+  private evaluateCandidate(speechMs: number): boolean {
+    if (speechMs < this.bargeInMinSpeechMs) return false;
+    if (this.resolveBargeInCandidate()) return true;
+    if (speechMs < this.bargeInMinSpeechMs + this.bargeInConfirmMs) return false;
+    this.fireBargeIn();
+    return true;
+  }
+
+  /**
+   * The energy pre-trigger fired. Partial semantics decide: a Backchannel is
+   * absorbed, content-bearing speech (or no semantics channel at all) takes
+   * the floor, and unknown text holds briefly for a partial to arrive.
+   * Returns true when the candidate has been handled.
+   */
+  private resolveBargeInCandidate(): boolean {
+    if (this.partial.cls === 'backchannel' && this.absorptionEnabled) {
+      this.absorbBackchannel();
+      return true;
+    }
+    if (this.partial.cls !== 'unknown' || !this.partialSemantics || !this.absorptionEnabled) {
+      this.fireBargeIn();
+      return true;
+    }
+    this.partial.confirmPending = true;
+    return false;
+  }
+
+  /**
+   * Absorb the speech burst as a Backchannel: drop its candidate audio, keep
+   * the classification for the burst's tail, and trace only the first
+   * absorption. The burst ends on a dip past tolerance or a floor change.
+   */
+  private absorbBackchannel(): void {
+    const first = !this.partial.absorbing;
+    const evidence = this.partial;
+    const event: BackchannelEvent = {
+      durationMs: Math.round(this.watchingSpeechMs()),
+      text: evidence.text,
+    };
+    this.reset();
+    this.partial = { ...evidence, confirmPending: false, absorbing: true };
+    if (first) this.observer.onBackchannel?.(event);
+  }
+
+  /** Speech accumulated under the current candidate, in ms. */
+  private watchingSpeechMs(): number {
+    return this.speaking
+      ? toMs(this.bufferedSamples - this.trailingSilenceSamples)
+      : toMs(this.candidateSamples);
+  }
+
+  /** Drop a candidate that fizzled out, and any partial evidence for it. */
+  private clearCandidate(): void {
+    this.candidateSamples = 0;
+    this.dipSamples = 0;
+    this.chunks = [];
+    this.bufferedSamples = 0;
+    this.partial = emptyPartial();
+  }
+
   private reset(): void {
     this.bargeInPending = false;
     this.speaking = false;
     this.providerOpen = false;
     this.providerCorroborated = false;
     this.speechAnnounced = false;
-    this.candidateSamples = 0;
-    this.dipSamples = 0;
     this.preRollChunks = [];
     this.preRollSamples = 0;
-    this.chunks = [];
-    this.bufferedSamples = 0;
     this.trailingSilenceSamples = 0;
+    this.clearCandidate();
   }
 }

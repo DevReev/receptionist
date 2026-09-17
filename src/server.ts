@@ -396,6 +396,7 @@ export async function main(): Promise<void> {
             availabilityTimeoutMs: config.appointmentsWaitMs,
             bargeInMinSpeechMs: config.bargeInMinSpeechMs,
             bargeInDipToleranceMs: config.bargeInDipToleranceMs,
+            bargeInConfirmMs: config.bargeInConfirmMs,
             turnDetection: config.turnDetection,
             echoGate: {
               correlationThreshold: config.echoGateCorrelation,
