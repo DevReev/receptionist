@@ -1,0 +1,4437 @@
+{
+  "delays": [
+    60,
+    120,
+    240
+  ],
+  "attenuations": [
+    -12,
+    -18,
+    -24
+  ],
+  "summary": {
+    "cases": 315,
+    "pureEchoFrames": 47649,
+    "echoFalsePasses": 1577,
+    "callerFrames": 12318,
+    "callerFalseBlocks": 41,
+    "doubleTalkFrames": 4935,
+    "silenceFrames": 2589,
+    "decisions": 67491,
+    "falsePassRate": 0.03309618250120674,
+    "falseBlockRate": 0.0033284624127293393,
+    "pass": true
+  },
+  "cases": [
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn1-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 0,
+        "callerFrames": 39,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 12,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn1-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 2,
+        "callerFrames": 39,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 12,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn1-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 12,
+        "callerFrames": 39,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 12,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn1-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 1,
+        "callerFrames": 39,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 12,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn1-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 4,
+        "callerFrames": 39,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 12,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn1-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 8,
+        "callerFrames": 39,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 12,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn1-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 150,
+        "echoFalsePasses": 2,
+        "callerFrames": 34,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 16,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn1-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 150,
+        "echoFalsePasses": 3,
+        "callerFrames": 34,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 16,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn1-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 150,
+        "echoFalsePasses": 11,
+        "callerFrames": 34,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 16,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn2-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 140,
+        "echoFalsePasses": 2,
+        "callerFrames": 46,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 14,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn2-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 140,
+        "echoFalsePasses": 2,
+        "callerFrames": 46,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 14,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn2-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 140,
+        "echoFalsePasses": 4,
+        "callerFrames": 46,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 14,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn2-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 138,
+        "echoFalsePasses": 0,
+        "callerFrames": 35,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 27,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn2-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 138,
+        "echoFalsePasses": 1,
+        "callerFrames": 35,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 27,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn2-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 138,
+        "echoFalsePasses": 5,
+        "callerFrames": 35,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 27,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn2-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 139,
+        "echoFalsePasses": 1,
+        "callerFrames": 32,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 30,
+        "silenceFrames": 11,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn2-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 139,
+        "echoFalsePasses": 2,
+        "callerFrames": 32,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 30,
+        "silenceFrames": 11,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn2-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 139,
+        "echoFalsePasses": 3,
+        "callerFrames": 32,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 30,
+        "silenceFrames": 11,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn3-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 168,
+        "echoFalsePasses": 3,
+        "callerFrames": 24,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn3-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 168,
+        "echoFalsePasses": 8,
+        "callerFrames": 24,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn3-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 168,
+        "echoFalsePasses": 16,
+        "callerFrames": 24,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn3-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 170,
+        "echoFalsePasses": 1,
+        "callerFrames": 23,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn3-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 170,
+        "echoFalsePasses": 5,
+        "callerFrames": 23,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn3-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 170,
+        "echoFalsePasses": 13,
+        "callerFrames": 23,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn3-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 183,
+        "echoFalsePasses": 1,
+        "callerFrames": 24,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 5,
+        "silenceFrames": 0,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn3-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 183,
+        "echoFalsePasses": 12,
+        "callerFrames": 24,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 5,
+        "silenceFrames": 0,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn3-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 183,
+        "echoFalsePasses": 21,
+        "callerFrames": 24,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 5,
+        "silenceFrames": 0,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn4-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 169,
+        "echoFalsePasses": 2,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 9,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn4-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 169,
+        "echoFalsePasses": 6,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 9,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn4-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 169,
+        "echoFalsePasses": 9,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 9,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn4-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 170,
+        "echoFalsePasses": 3,
+        "callerFrames": 30,
+        "callerFalseBlocks": 1,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn4-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 170,
+        "echoFalsePasses": 5,
+        "callerFrames": 30,
+        "callerFalseBlocks": 1,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn4-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 170,
+        "echoFalsePasses": 9,
+        "callerFrames": 30,
+        "callerFalseBlocks": 1,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn4-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 170,
+        "echoFalsePasses": 0,
+        "callerFrames": 30,
+        "callerFalseBlocks": 1,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 1,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn4-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 170,
+        "echoFalsePasses": 1,
+        "callerFrames": 30,
+        "callerFalseBlocks": 1,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 1,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn4-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 170,
+        "echoFalsePasses": 2,
+        "callerFrames": 30,
+        "callerFalseBlocks": 1,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 1,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn5-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 156,
+        "echoFalsePasses": 2,
+        "callerFrames": 27,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 17,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn5-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 156,
+        "echoFalsePasses": 7,
+        "callerFrames": 27,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 17,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn5-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 156,
+        "echoFalsePasses": 14,
+        "callerFrames": 27,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 17,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn5-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 153,
+        "echoFalsePasses": 1,
+        "callerFrames": 24,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 23,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn5-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 153,
+        "echoFalsePasses": 6,
+        "callerFrames": 24,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 23,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn5-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 153,
+        "echoFalsePasses": 10,
+        "callerFrames": 24,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 23,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn5-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 164,
+        "echoFalsePasses": 1,
+        "callerFrames": 23,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn5-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 164,
+        "echoFalsePasses": 14,
+        "callerFrames": 23,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn5-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 164,
+        "echoFalsePasses": 18,
+        "callerFrames": 23,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn6-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 160,
+        "echoFalsePasses": 2,
+        "callerFrames": 30,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn6-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 160,
+        "echoFalsePasses": 4,
+        "callerFrames": 30,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn6-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 160,
+        "echoFalsePasses": 9,
+        "callerFrames": 30,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn6-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 159,
+        "echoFalsePasses": 1,
+        "callerFrames": 30,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn6-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 159,
+        "echoFalsePasses": 4,
+        "callerFrames": 30,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn6-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 159,
+        "echoFalsePasses": 11,
+        "callerFrames": 30,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn6-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 161,
+        "echoFalsePasses": 4,
+        "callerFrames": 31,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 9,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn6-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 161,
+        "echoFalsePasses": 8,
+        "callerFrames": 31,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 9,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn6-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 161,
+        "echoFalsePasses": 12,
+        "callerFrames": 31,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 9,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn7-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 185,
+        "echoFalsePasses": 1,
+        "callerFrames": 11,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 7,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn7-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 185,
+        "echoFalsePasses": 1,
+        "callerFrames": 11,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 7,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn7-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 185,
+        "echoFalsePasses": 4,
+        "callerFrames": 11,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 7,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn7-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 187,
+        "echoFalsePasses": 0,
+        "callerFrames": 13,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn7-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 187,
+        "echoFalsePasses": 1,
+        "callerFrames": 13,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn7-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 187,
+        "echoFalsePasses": 3,
+        "callerFrames": 13,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn7-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 192,
+        "echoFalsePasses": 1,
+        "callerFrames": 16,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 4,
+        "silenceFrames": 0,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn7-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 192,
+        "echoFalsePasses": 1,
+        "callerFrames": 16,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 4,
+        "silenceFrames": 0,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn7-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 192,
+        "echoFalsePasses": 1,
+        "callerFrames": 16,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 4,
+        "silenceFrames": 0,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn8-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 147,
+        "echoFalsePasses": 1,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 28,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn8-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 147,
+        "echoFalsePasses": 3,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 28,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn8-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 147,
+        "echoFalsePasses": 9,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 28,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn8-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 150,
+        "echoFalsePasses": 3,
+        "callerFrames": 27,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 23,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn8-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 150,
+        "echoFalsePasses": 6,
+        "callerFrames": 27,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 23,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn8-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 150,
+        "echoFalsePasses": 13,
+        "callerFrames": 27,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 23,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn8-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 151,
+        "echoFalsePasses": 2,
+        "callerFrames": 33,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 19,
+        "silenceFrames": 9,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn8-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 151,
+        "echoFalsePasses": 5,
+        "callerFrames": 33,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 19,
+        "silenceFrames": 9,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn8-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 151,
+        "echoFalsePasses": 10,
+        "callerFrames": 33,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 19,
+        "silenceFrames": 9,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn9-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 186,
+        "echoFalsePasses": 0,
+        "callerFrames": 12,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 4,
+        "silenceFrames": 1,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn9-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 186,
+        "echoFalsePasses": 1,
+        "callerFrames": 12,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 4,
+        "silenceFrames": 1,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn9-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 186,
+        "echoFalsePasses": 2,
+        "callerFrames": 12,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 4,
+        "silenceFrames": 1,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn9-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 186,
+        "echoFalsePasses": 0,
+        "callerFrames": 14,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 4,
+        "silenceFrames": 2,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn9-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 186,
+        "echoFalsePasses": 1,
+        "callerFrames": 14,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 4,
+        "silenceFrames": 2,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn9-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 186,
+        "echoFalsePasses": 1,
+        "callerFrames": 14,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 4,
+        "silenceFrames": 2,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn9-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 185,
+        "echoFalsePasses": 0,
+        "callerFrames": 16,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 4,
+        "silenceFrames": 7,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn9-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 185,
+        "echoFalsePasses": 0,
+        "callerFrames": 16,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 4,
+        "silenceFrames": 7,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA35bffed3e7fc98a2ee408ffe67a2e7e3-turn9-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 185,
+        "echoFalsePasses": 1,
+        "callerFrames": 16,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 4,
+        "silenceFrames": 7,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn1-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 147,
+        "echoFalsePasses": 2,
+        "callerFrames": 38,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 18,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn1-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 147,
+        "echoFalsePasses": 4,
+        "callerFrames": 38,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 18,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn1-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 147,
+        "echoFalsePasses": 7,
+        "callerFrames": 38,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 18,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn1-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 1,
+        "callerFrames": 43,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 14,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn1-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 3,
+        "callerFrames": 43,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 14,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn1-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 6,
+        "callerFrames": 43,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 14,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn1-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 154,
+        "echoFalsePasses": 1,
+        "callerFrames": 46,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 1,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn1-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 154,
+        "echoFalsePasses": 6,
+        "callerFrames": 46,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 1,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn1-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 154,
+        "echoFalsePasses": 8,
+        "callerFrames": 46,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 1,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn2-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 140,
+        "echoFalsePasses": 0,
+        "callerFrames": 48,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 12,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn2-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 140,
+        "echoFalsePasses": 6,
+        "callerFrames": 48,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 12,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn2-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 140,
+        "echoFalsePasses": 6,
+        "callerFrames": 48,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 12,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn2-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 141,
+        "echoFalsePasses": 2,
+        "callerFrames": 45,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 14,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn2-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 141,
+        "echoFalsePasses": 3,
+        "callerFrames": 45,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 14,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn2-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 141,
+        "echoFalsePasses": 7,
+        "callerFrames": 45,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 14,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn2-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 141,
+        "echoFalsePasses": 1,
+        "callerFrames": 45,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 14,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn2-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 141,
+        "echoFalsePasses": 3,
+        "callerFrames": 45,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 14,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn2-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 141,
+        "echoFalsePasses": 6,
+        "callerFrames": 45,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 14,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn3-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 102,
+        "echoFalsePasses": 5,
+        "callerFrames": 82,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 16,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn3-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 102,
+        "echoFalsePasses": 11,
+        "callerFrames": 82,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 16,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn3-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 102,
+        "echoFalsePasses": 15,
+        "callerFrames": 82,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 16,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn3-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 102,
+        "echoFalsePasses": 2,
+        "callerFrames": 81,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 17,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn3-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 102,
+        "echoFalsePasses": 10,
+        "callerFrames": 81,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 17,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn3-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 102,
+        "echoFalsePasses": 14,
+        "callerFrames": 81,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 17,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn3-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 101,
+        "echoFalsePasses": 1,
+        "callerFrames": 83,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 17,
+        "silenceFrames": 11,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn3-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 101,
+        "echoFalsePasses": 4,
+        "callerFrames": 83,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 17,
+        "silenceFrames": 11,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn3-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 101,
+        "echoFalsePasses": 9,
+        "callerFrames": 83,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 17,
+        "silenceFrames": 11,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn4-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 72,
+        "echoFalsePasses": 2,
+        "callerFrames": 229,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 31,
+        "silenceFrames": 123,
+        "decisions": 455
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn4-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 72,
+        "echoFalsePasses": 7,
+        "callerFrames": 229,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 31,
+        "silenceFrames": 123,
+        "decisions": 455
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn4-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 72,
+        "echoFalsePasses": 17,
+        "callerFrames": 229,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 31,
+        "silenceFrames": 123,
+        "decisions": 455
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn4-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 66,
+        "echoFalsePasses": 1,
+        "callerFrames": 231,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 32,
+        "silenceFrames": 126,
+        "decisions": 455
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn4-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 66,
+        "echoFalsePasses": 7,
+        "callerFrames": 231,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 32,
+        "silenceFrames": 126,
+        "decisions": 455
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn4-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 66,
+        "echoFalsePasses": 14,
+        "callerFrames": 231,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 32,
+        "silenceFrames": 126,
+        "decisions": 455
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn4-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 59,
+        "echoFalsePasses": 2,
+        "callerFrames": 219,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 45,
+        "silenceFrames": 132,
+        "decisions": 455
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn4-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 59,
+        "echoFalsePasses": 6,
+        "callerFrames": 219,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 45,
+        "silenceFrames": 132,
+        "decisions": 455
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn4-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 59,
+        "echoFalsePasses": 11,
+        "callerFrames": 219,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 45,
+        "silenceFrames": 132,
+        "decisions": 455
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn5-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 172,
+        "echoFalsePasses": 1,
+        "callerFrames": 17,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn5-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 172,
+        "echoFalsePasses": 4,
+        "callerFrames": 17,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn5-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 172,
+        "echoFalsePasses": 7,
+        "callerFrames": 17,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 11,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn5-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 174,
+        "echoFalsePasses": 2,
+        "callerFrames": 16,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn5-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 174,
+        "echoFalsePasses": 7,
+        "callerFrames": 16,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn5-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 174,
+        "echoFalsePasses": 8,
+        "callerFrames": 16,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn5-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 176,
+        "echoFalsePasses": 1,
+        "callerFrames": 18,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn5-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 176,
+        "echoFalsePasses": 7,
+        "callerFrames": 18,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA4fc9464ac5d9bd5803ad33eb2f650392-turn5-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 176,
+        "echoFalsePasses": 11,
+        "callerFrames": 18,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn1-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 128,
+        "echoFalsePasses": 3,
+        "callerFrames": 60,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 12,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn1-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 128,
+        "echoFalsePasses": 5,
+        "callerFrames": 60,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 12,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn1-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 128,
+        "echoFalsePasses": 11,
+        "callerFrames": 60,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 12,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn1-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 129,
+        "echoFalsePasses": 1,
+        "callerFrames": 61,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn1-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 129,
+        "echoFalsePasses": 5,
+        "callerFrames": 61,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn1-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 129,
+        "echoFalsePasses": 11,
+        "callerFrames": 61,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn1-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 129,
+        "echoFalsePasses": 3,
+        "callerFrames": 62,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 9,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn1-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 129,
+        "echoFalsePasses": 10,
+        "callerFrames": 62,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 9,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn1-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 129,
+        "echoFalsePasses": 16,
+        "callerFrames": 62,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 9,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn2-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 160,
+        "echoFalsePasses": 0,
+        "callerFrames": 32,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 8,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn2-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 160,
+        "echoFalsePasses": 2,
+        "callerFrames": 32,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 8,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn2-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 160,
+        "echoFalsePasses": 12,
+        "callerFrames": 32,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 8,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn2-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 161,
+        "echoFalsePasses": 1,
+        "callerFrames": 32,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 7,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn2-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 161,
+        "echoFalsePasses": 6,
+        "callerFrames": 32,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 7,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn2-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 161,
+        "echoFalsePasses": 10,
+        "callerFrames": 32,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 7,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn2-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 158,
+        "echoFalsePasses": 1,
+        "callerFrames": 35,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 8,
+        "silenceFrames": 11,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn2-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 158,
+        "echoFalsePasses": 4,
+        "callerFrames": 35,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 8,
+        "silenceFrames": 11,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn2-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 158,
+        "echoFalsePasses": 10,
+        "callerFrames": 35,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 8,
+        "silenceFrames": 11,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn3-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 162,
+        "echoFalsePasses": 1,
+        "callerFrames": 31,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 9,
+        "silenceFrames": 1,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn3-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 162,
+        "echoFalsePasses": 4,
+        "callerFrames": 31,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 9,
+        "silenceFrames": 1,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn3-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 162,
+        "echoFalsePasses": 9,
+        "callerFrames": 31,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 9,
+        "silenceFrames": 1,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn3-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 162,
+        "echoFalsePasses": 1,
+        "callerFrames": 30,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 1,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn3-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 162,
+        "echoFalsePasses": 6,
+        "callerFrames": 30,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 1,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn3-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 162,
+        "echoFalsePasses": 8,
+        "callerFrames": 30,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 1,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn3-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 165,
+        "echoFalsePasses": 1,
+        "callerFrames": 32,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 9,
+        "silenceFrames": 6,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn3-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 165,
+        "echoFalsePasses": 3,
+        "callerFrames": 32,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 9,
+        "silenceFrames": 6,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA894c48a761def143bc1f0b5e0bc08fb1-turn3-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 165,
+        "echoFalsePasses": 9,
+        "callerFrames": 32,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 9,
+        "silenceFrames": 6,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn1-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 2,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 26,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn1-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 5,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 26,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn1-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 10,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 26,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn1-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 151,
+        "echoFalsePasses": 2,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 24,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn1-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 151,
+        "echoFalsePasses": 4,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 24,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn1-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 151,
+        "echoFalsePasses": 11,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 24,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn1-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 152,
+        "echoFalsePasses": 2,
+        "callerFrames": 26,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 22,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn1-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 152,
+        "echoFalsePasses": 4,
+        "callerFrames": 26,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 22,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn1-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 152,
+        "echoFalsePasses": 10,
+        "callerFrames": 26,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 22,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn2-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 156,
+        "echoFalsePasses": 1,
+        "callerFrames": 22,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 22,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn2-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 156,
+        "echoFalsePasses": 8,
+        "callerFrames": 22,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 22,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn2-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 156,
+        "echoFalsePasses": 12,
+        "callerFrames": 22,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 22,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn2-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 157,
+        "echoFalsePasses": 4,
+        "callerFrames": 20,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 23,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn2-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 157,
+        "echoFalsePasses": 8,
+        "callerFrames": 20,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 23,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn2-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 157,
+        "echoFalsePasses": 13,
+        "callerFrames": 20,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 23,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn2-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 155,
+        "echoFalsePasses": 0,
+        "callerFrames": 23,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 25,
+        "silenceFrames": 9,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn2-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 155,
+        "echoFalsePasses": 5,
+        "callerFrames": 23,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 25,
+        "silenceFrames": 9,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn2-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 155,
+        "echoFalsePasses": 7,
+        "callerFrames": 23,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 25,
+        "silenceFrames": 9,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn3-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 119,
+        "echoFalsePasses": 1,
+        "callerFrames": 50,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 31,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn3-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 119,
+        "echoFalsePasses": 9,
+        "callerFrames": 50,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 31,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn3-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 119,
+        "echoFalsePasses": 12,
+        "callerFrames": 50,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 31,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn3-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 118,
+        "echoFalsePasses": 1,
+        "callerFrames": 56,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 26,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn3-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 118,
+        "echoFalsePasses": 6,
+        "callerFrames": 56,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 26,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn3-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 118,
+        "echoFalsePasses": 10,
+        "callerFrames": 56,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 26,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn3-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 115,
+        "echoFalsePasses": 1,
+        "callerFrames": 42,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 43,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn3-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 115,
+        "echoFalsePasses": 6,
+        "callerFrames": 42,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 43,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn3-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 115,
+        "echoFalsePasses": 11,
+        "callerFrames": 42,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 43,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn4-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 140,
+        "echoFalsePasses": 2,
+        "callerFrames": 44,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 16,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn4-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 140,
+        "echoFalsePasses": 2,
+        "callerFrames": 44,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 16,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn4-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 140,
+        "echoFalsePasses": 4,
+        "callerFrames": 44,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 16,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn4-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 142,
+        "echoFalsePasses": 2,
+        "callerFrames": 40,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 18,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn4-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 142,
+        "echoFalsePasses": 4,
+        "callerFrames": 40,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 18,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn4-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 142,
+        "echoFalsePasses": 4,
+        "callerFrames": 40,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 18,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn4-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 144,
+        "echoFalsePasses": 0,
+        "callerFrames": 43,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn4-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 144,
+        "echoFalsePasses": 3,
+        "callerFrames": 43,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn4-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 144,
+        "echoFalsePasses": 6,
+        "callerFrames": 43,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn5-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 154,
+        "echoFalsePasses": 0,
+        "callerFrames": 34,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 12,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn5-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 154,
+        "echoFalsePasses": 1,
+        "callerFrames": 34,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 12,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn5-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 154,
+        "echoFalsePasses": 4,
+        "callerFrames": 34,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 12,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn5-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 157,
+        "echoFalsePasses": 2,
+        "callerFrames": 36,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 7,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn5-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 157,
+        "echoFalsePasses": 3,
+        "callerFrames": 36,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 7,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn5-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 157,
+        "echoFalsePasses": 6,
+        "callerFrames": 36,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 7,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn5-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 158,
+        "echoFalsePasses": 1,
+        "callerFrames": 37,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 11,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn5-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 158,
+        "echoFalsePasses": 4,
+        "callerFrames": 37,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 11,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn5-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 158,
+        "echoFalsePasses": 5,
+        "callerFrames": 37,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 11,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn6-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 197,
+        "echoFalsePasses": 1,
+        "callerFrames": 3,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 3,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn6-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 197,
+        "echoFalsePasses": 3,
+        "callerFrames": 3,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 3,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn6-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 197,
+        "echoFalsePasses": 7,
+        "callerFrames": 3,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 3,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn6-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 197,
+        "echoFalsePasses": 0,
+        "callerFrames": 4,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 3,
+        "silenceFrames": 2,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn6-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 197,
+        "echoFalsePasses": 1,
+        "callerFrames": 4,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 3,
+        "silenceFrames": 2,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn6-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 197,
+        "echoFalsePasses": 6,
+        "callerFrames": 4,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 3,
+        "silenceFrames": 2,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn6-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 200,
+        "echoFalsePasses": 0,
+        "callerFrames": 10,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 0,
+        "silenceFrames": 2,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn6-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 200,
+        "echoFalsePasses": 1,
+        "callerFrames": 10,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 0,
+        "silenceFrames": 2,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA8acc93f57023b7a946a7f3526f81bf07-turn6-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 200,
+        "echoFalsePasses": 3,
+        "callerFrames": 10,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 0,
+        "silenceFrames": 2,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn1-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 128,
+        "echoFalsePasses": 2,
+        "callerFrames": 59,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn1-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 128,
+        "echoFalsePasses": 7,
+        "callerFrames": 59,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn1-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 128,
+        "echoFalsePasses": 13,
+        "callerFrames": 59,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn1-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 127,
+        "echoFalsePasses": 0,
+        "callerFrames": 60,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn1-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 127,
+        "echoFalsePasses": 7,
+        "callerFrames": 60,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn1-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 127,
+        "echoFalsePasses": 10,
+        "callerFrames": 60,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn1-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 127,
+        "echoFalsePasses": 0,
+        "callerFrames": 63,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn1-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 127,
+        "echoFalsePasses": 5,
+        "callerFrames": 63,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn1-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 127,
+        "echoFalsePasses": 10,
+        "callerFrames": 63,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn2-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 158,
+        "echoFalsePasses": 0,
+        "callerFrames": 37,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 8,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn2-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 158,
+        "echoFalsePasses": 1,
+        "callerFrames": 37,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 8,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn2-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 158,
+        "echoFalsePasses": 3,
+        "callerFrames": 37,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 8,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn2-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 163,
+        "echoFalsePasses": 1,
+        "callerFrames": 35,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 8,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn2-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 163,
+        "echoFalsePasses": 2,
+        "callerFrames": 35,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 8,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn2-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 163,
+        "echoFalsePasses": 6,
+        "callerFrames": 35,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 8,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn2-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 168,
+        "echoFalsePasses": 1,
+        "callerFrames": 38,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 0,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn2-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 168,
+        "echoFalsePasses": 2,
+        "callerFrames": 38,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 0,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn2-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 168,
+        "echoFalsePasses": 4,
+        "callerFrames": 38,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 0,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn3-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 156,
+        "echoFalsePasses": 1,
+        "callerFrames": 15,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 29,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn3-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 156,
+        "echoFalsePasses": 10,
+        "callerFrames": 15,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 29,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn3-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 156,
+        "echoFalsePasses": 16,
+        "callerFrames": 15,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 29,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn3-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 156,
+        "echoFalsePasses": 1,
+        "callerFrames": 13,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 31,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn3-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 156,
+        "echoFalsePasses": 10,
+        "callerFrames": 13,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 31,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn3-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 156,
+        "echoFalsePasses": 11,
+        "callerFrames": 13,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 31,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn3-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 154,
+        "echoFalsePasses": 1,
+        "callerFrames": 7,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 39,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn3-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 154,
+        "echoFalsePasses": 7,
+        "callerFrames": 7,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 39,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CA9c22a37fc0c4ccb5f473fd08efa8d316-turn3-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 154,
+        "echoFalsePasses": 10,
+        "callerFrames": 7,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 39,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn1-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 154,
+        "echoFalsePasses": 1,
+        "callerFrames": 31,
+        "callerFalseBlocks": 1,
+        "doubleTalkFrames": 18,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn1-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 154,
+        "echoFalsePasses": 5,
+        "callerFrames": 31,
+        "callerFalseBlocks": 1,
+        "doubleTalkFrames": 18,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn1-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 154,
+        "echoFalsePasses": 11,
+        "callerFrames": 31,
+        "callerFalseBlocks": 1,
+        "doubleTalkFrames": 18,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn1-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 156,
+        "echoFalsePasses": 1,
+        "callerFrames": 30,
+        "callerFalseBlocks": 2,
+        "doubleTalkFrames": 20,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn1-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 156,
+        "echoFalsePasses": 3,
+        "callerFrames": 30,
+        "callerFalseBlocks": 1,
+        "doubleTalkFrames": 20,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn1-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 156,
+        "echoFalsePasses": 10,
+        "callerFrames": 30,
+        "callerFalseBlocks": 1,
+        "doubleTalkFrames": 20,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn1-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 161,
+        "echoFalsePasses": 1,
+        "callerFrames": 27,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 24,
+        "silenceFrames": 0,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn1-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 161,
+        "echoFalsePasses": 5,
+        "callerFrames": 27,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 24,
+        "silenceFrames": 0,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn1-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 161,
+        "echoFalsePasses": 10,
+        "callerFrames": 27,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 24,
+        "silenceFrames": 0,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn2-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 150,
+        "echoFalsePasses": 0,
+        "callerFrames": 46,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 4,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn2-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 150,
+        "echoFalsePasses": 2,
+        "callerFrames": 46,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 4,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn2-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 150,
+        "echoFalsePasses": 2,
+        "callerFrames": 46,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 4,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn2-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 0,
+        "callerFrames": 45,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn2-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 1,
+        "callerFrames": 45,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn2-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 1,
+        "callerFrames": 45,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn2-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 148,
+        "echoFalsePasses": 0,
+        "callerFrames": 42,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn2-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 148,
+        "echoFalsePasses": 0,
+        "callerFrames": 42,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn2-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 148,
+        "echoFalsePasses": 1,
+        "callerFrames": 42,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn3-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 165,
+        "echoFalsePasses": 1,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn3-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 165,
+        "echoFalsePasses": 6,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn3-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 165,
+        "echoFalsePasses": 11,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn3-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 162,
+        "echoFalsePasses": 0,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn3-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 162,
+        "echoFalsePasses": 6,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn3-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 162,
+        "echoFalsePasses": 8,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 13,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn3-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 164,
+        "echoFalsePasses": 0,
+        "callerFrames": 18,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 18,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn3-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 164,
+        "echoFalsePasses": 7,
+        "callerFrames": 18,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 18,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn3-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 164,
+        "echoFalsePasses": 10,
+        "callerFrames": 18,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 18,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn4-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 159,
+        "echoFalsePasses": 2,
+        "callerFrames": 31,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn4-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 159,
+        "echoFalsePasses": 3,
+        "callerFrames": 31,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn4-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 159,
+        "echoFalsePasses": 7,
+        "callerFrames": 31,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn4-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 160,
+        "echoFalsePasses": 1,
+        "callerFrames": 34,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn4-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 160,
+        "echoFalsePasses": 4,
+        "callerFrames": 34,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn4-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 160,
+        "echoFalsePasses": 7,
+        "callerFrames": 34,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn4-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 160,
+        "echoFalsePasses": 1,
+        "callerFrames": 24,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 16,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn4-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 160,
+        "echoFalsePasses": 5,
+        "callerFrames": 24,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 16,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAa150ab4bb3c4df364715b4fcbede5bbc-turn4-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 160,
+        "echoFalsePasses": 8,
+        "callerFrames": 24,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 16,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAad2b501cd1fbaa077d7d8c2f6bb37c63-turn1-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 0,
+        "callerFrames": 29,
+        "callerFalseBlocks": 3,
+        "doubleTalkFrames": 25,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAad2b501cd1fbaa077d7d8c2f6bb37c63-turn1-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 0,
+        "callerFrames": 29,
+        "callerFalseBlocks": 3,
+        "doubleTalkFrames": 25,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAad2b501cd1fbaa077d7d8c2f6bb37c63-turn1-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 149,
+        "echoFalsePasses": 1,
+        "callerFrames": 29,
+        "callerFalseBlocks": 4,
+        "doubleTalkFrames": 25,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAad2b501cd1fbaa077d7d8c2f6bb37c63-turn1-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 153,
+        "echoFalsePasses": 1,
+        "callerFrames": 28,
+        "callerFalseBlocks": 3,
+        "doubleTalkFrames": 25,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAad2b501cd1fbaa077d7d8c2f6bb37c63-turn1-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 153,
+        "echoFalsePasses": 2,
+        "callerFrames": 28,
+        "callerFalseBlocks": 3,
+        "doubleTalkFrames": 25,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAad2b501cd1fbaa077d7d8c2f6bb37c63-turn1-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 153,
+        "echoFalsePasses": 2,
+        "callerFrames": 28,
+        "callerFalseBlocks": 3,
+        "doubleTalkFrames": 25,
+        "silenceFrames": 0,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAad2b501cd1fbaa077d7d8c2f6bb37c63-turn1-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 159,
+        "echoFalsePasses": 0,
+        "callerFrames": 33,
+        "callerFalseBlocks": 3,
+        "doubleTalkFrames": 20,
+        "silenceFrames": 0,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAad2b501cd1fbaa077d7d8c2f6bb37c63-turn1-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 159,
+        "echoFalsePasses": 1,
+        "callerFrames": 33,
+        "callerFalseBlocks": 3,
+        "doubleTalkFrames": 20,
+        "silenceFrames": 0,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAad2b501cd1fbaa077d7d8c2f6bb37c63-turn1-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 159,
+        "echoFalsePasses": 2,
+        "callerFrames": 33,
+        "callerFalseBlocks": 3,
+        "doubleTalkFrames": 20,
+        "silenceFrames": 0,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn1-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 152,
+        "echoFalsePasses": 3,
+        "callerFrames": 30,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 21,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn1-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 152,
+        "echoFalsePasses": 6,
+        "callerFrames": 30,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 21,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn1-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 152,
+        "echoFalsePasses": 10,
+        "callerFrames": 30,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 21,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn1-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 150,
+        "echoFalsePasses": 0,
+        "callerFrames": 32,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 22,
+        "silenceFrames": 2,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn1-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 150,
+        "echoFalsePasses": 4,
+        "callerFrames": 32,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 22,
+        "silenceFrames": 2,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn1-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 150,
+        "echoFalsePasses": 4,
+        "callerFrames": 32,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 22,
+        "silenceFrames": 2,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn1-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 155,
+        "echoFalsePasses": 1,
+        "callerFrames": 40,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 15,
+        "silenceFrames": 2,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn1-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 155,
+        "echoFalsePasses": 2,
+        "callerFrames": 40,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 15,
+        "silenceFrames": 2,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn1-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 155,
+        "echoFalsePasses": 3,
+        "callerFrames": 40,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 15,
+        "silenceFrames": 2,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn2-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 126,
+        "echoFalsePasses": 1,
+        "callerFrames": 60,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 17,
+        "silenceFrames": 10,
+        "decisions": 213
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn2-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 126,
+        "echoFalsePasses": 13,
+        "callerFrames": 60,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 17,
+        "silenceFrames": 10,
+        "decisions": 213
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn2-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 126,
+        "echoFalsePasses": 32,
+        "callerFrames": 60,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 17,
+        "silenceFrames": 10,
+        "decisions": 213
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn2-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 125,
+        "echoFalsePasses": 1,
+        "callerFrames": 59,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 21,
+        "silenceFrames": 8,
+        "decisions": 213
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn2-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 125,
+        "echoFalsePasses": 4,
+        "callerFrames": 59,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 21,
+        "silenceFrames": 8,
+        "decisions": 213
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn2-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 125,
+        "echoFalsePasses": 28,
+        "callerFrames": 59,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 21,
+        "silenceFrames": 8,
+        "decisions": 213
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn2-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 123,
+        "echoFalsePasses": 1,
+        "callerFrames": 59,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 29,
+        "silenceFrames": 2,
+        "decisions": 213
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn2-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 123,
+        "echoFalsePasses": 11,
+        "callerFrames": 59,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 29,
+        "silenceFrames": 2,
+        "decisions": 213
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn2-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 123,
+        "echoFalsePasses": 23,
+        "callerFrames": 59,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 29,
+        "silenceFrames": 2,
+        "decisions": 213
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn3-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 168,
+        "echoFalsePasses": 0,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn3-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 168,
+        "echoFalsePasses": 5,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn3-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 168,
+        "echoFalsePasses": 10,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 10,
+        "silenceFrames": 0,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn3-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 170,
+        "echoFalsePasses": 3,
+        "callerFrames": 24,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 9,
+        "silenceFrames": 3,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn3-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 170,
+        "echoFalsePasses": 6,
+        "callerFrames": 24,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 9,
+        "silenceFrames": 3,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn3-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 170,
+        "echoFalsePasses": 10,
+        "callerFrames": 24,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 9,
+        "silenceFrames": 3,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn3-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 175,
+        "echoFalsePasses": 3,
+        "callerFrames": 28,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 3,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn3-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 175,
+        "echoFalsePasses": 7,
+        "callerFrames": 28,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 3,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn3-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 175,
+        "echoFalsePasses": 9,
+        "callerFrames": 28,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 6,
+        "silenceFrames": 3,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn4-d60-a-12",
+      "delayMs": 60,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 142,
+        "echoFalsePasses": 4,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 33,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn4-d60-a-18",
+      "delayMs": 60,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 142,
+        "echoFalsePasses": 7,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 33,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn4-d60-a-24",
+      "delayMs": 60,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 142,
+        "echoFalsePasses": 8,
+        "callerFrames": 25,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 33,
+        "silenceFrames": 3,
+        "decisions": 203
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn4-d120-a-12",
+      "delayMs": 120,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 142,
+        "echoFalsePasses": 3,
+        "callerFrames": 29,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 29,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn4-d120-a-18",
+      "delayMs": 120,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 142,
+        "echoFalsePasses": 6,
+        "callerFrames": 29,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 29,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn4-d120-a-24",
+      "delayMs": 120,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 142,
+        "echoFalsePasses": 9,
+        "callerFrames": 29,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 29,
+        "silenceFrames": 6,
+        "decisions": 206
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn4-d240-a-12",
+      "delayMs": 240,
+      "attenuationDb": -12,
+      "counts": {
+        "pureEchoFrames": 141,
+        "echoFalsePasses": 1,
+        "callerFrames": 31,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 28,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn4-d240-a-18",
+      "delayMs": 240,
+      "attenuationDb": -18,
+      "counts": {
+        "pureEchoFrames": 141,
+        "echoFalsePasses": 7,
+        "callerFrames": 31,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 28,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    },
+    {
+      "name": "CAd31b5b8e5534a778f513efa6ab606edb-turn4-d240-a-24",
+      "delayMs": 240,
+      "attenuationDb": -24,
+      "counts": {
+        "pureEchoFrames": 141,
+        "echoFalsePasses": 11,
+        "callerFrames": 31,
+        "callerFalseBlocks": 0,
+        "doubleTalkFrames": 28,
+        "silenceFrames": 12,
+        "decisions": 212
+      }
+    }
+  ]
+}
