@@ -29,6 +29,7 @@ import {
   type SlotOption,
 } from './dialogue.ts';
 import { type BargeInEvent, type EndpointPolicy, type Utterance, type Vad } from './endpoint.ts';
+import type { EchoGateOptions } from './echoGate.ts';
 import type { FixedAudioCache } from './fixedAudio.ts';
 import type { RealtimeStt } from './sarvamRealtime.ts';
 import type { PlaybackResult } from './transport.ts';
@@ -97,6 +98,8 @@ export interface LiveCallOptions {
    * boundary-capable realtime channel the local detector is used either way.
    */
   turnDetection?: TurnDetection;
+  /** Echo-gate tuning; defaults ship the bench-tuned values. */
+  echoGate?: EchoGateOptions;
   /** Whole-Turn deadline for the LLM response. <=0 disables. */
   turnDeadlineMs?: number;
   /** Shared fixed-phrase audio cache; hits skip the provider. */
@@ -370,6 +373,7 @@ export class LiveCallSession {
       policy: opts.policy,
       bargeInMs: opts.interruptionMs,
       detection: this.providerBoundaries ? 'sarvam' : 'hybrid',
+      echoGate: opts.echoGate,
       observer: {
         onUtterance: (utterance, stats) => {
           this.pending = this.pending.then(() => this.handleUtterance(utterance, stats)).catch(() => {});
@@ -381,6 +385,24 @@ export class LiveCallSession {
           if (!this.providerBoundaries) this.realtime?.speechStart();
         },
         onUpstreamFrame: (frame) => this.realtime?.pushAudio(frame),
+        onEchoDecision: (decision) => {
+          // One line per inbound frame while the Receptionist speaks, carrying
+          // exactly the evidence the classification used.
+          this.trace?.({
+            component: 'echo-gate',
+            event: 'decision',
+            echo: decision.echo,
+            reason: decision.reason,
+            correlation: decision.evidence.correlation,
+            delayMs: decision.evidence.delayMs,
+            inboundRms: decision.evidence.inboundRms,
+            referenceRms: decision.evidence.referenceRms,
+            residualRms: decision.evidence.residualRms,
+            returnLossDb: decision.evidence.returnLossDb,
+            threshold: decision.evidence.threshold,
+            marginDb: decision.evidence.marginDb,
+          });
+        },
         onScore: (score, latched) => {
           this.scoreStats.n += 1;
           if (score > this.scoreStats.max) this.scoreStats.max = score;
@@ -446,6 +468,16 @@ export class LiveCallSession {
   receiveAudio(mulaw: Buffer): Promise<void> {
     if (this.closed) return Promise.resolve();
     return this.turnTaking.receiveAudio(mulaw);
+  }
+
+  /**
+   * One frame of outbound audio that actually played, retained as the Echo
+   * reference. The transport calls this as it sends, so the reference is what
+   * the Caller heard, not what was generated.
+   */
+  retainReference(mulaw: Buffer): void {
+    if (this.closed) return;
+    this.turnTaking.retainReference(mulaw);
   }
 
   /** Test seam: wait for queued utterance handlers. */

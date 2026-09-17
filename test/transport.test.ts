@@ -96,6 +96,7 @@ function harness(overrides: {
   lowWaterBytes?: number;
   onOverflow?: (reason: string) => void;
   onFatal?: (reason: string) => void;
+  onFrameSent?: (frame: Buffer) => void;
   events?: TraceEvent[];
 } = {}) {
   const clock = new FakeClock();
@@ -111,6 +112,7 @@ function harness(overrides: {
     lowWaterBytes: overrides.lowWaterBytes,
     onOverflow: overrides.onOverflow,
     onFatal: overrides.onFatal,
+    onFrameSent: overrides.onFrameSent,
     onTrace: (event) => events.push(event),
   });
   return { clock, socket, transport, events };
@@ -134,6 +136,18 @@ describe('TwilioMediaTransport pacing', () => {
     assert.equal(h.socket.media().length, 2);
     h.clock.advance(20);
     assert.equal(h.socket.media().length, 3);
+    h.transport.close('test');
+  });
+
+  it('reports each frame as it plays, in order, as the outbound reference', () => {
+    const played: Buffer[] = [];
+    const h = harness({ onFrameSent: (frame) => played.push(Buffer.from(frame)) });
+    h.transport.enqueueMulaw(bytes(480));
+    // The pump sends the first frame immediately; the rest are paced.
+    assert.equal(played.length, 1);
+    h.clock.advance(40);
+    assert.equal(played.length, 3);
+    assert.deepEqual(played, h.socket.media().map((frame) => Buffer.from(frame)));
     h.transport.close('test');
   });
 

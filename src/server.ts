@@ -399,6 +399,11 @@ export async function main(): Promise<void> {
             bargeIn: config.bargeIn,
             interruptionMs: config.bargeInSpeechMs,
             turnDetection: config.turnDetection,
+            echoGate: {
+              correlationThreshold: config.echoGateCorrelation,
+              levelMarginDb: config.echoGateLevelMarginDb,
+              maxDelayMs: config.echoGateMaxDelayMs,
+            },
             turnDeadlineMs: config.turnDeadlineMs,
             fixedCache,
             onProposeBooking: proposeBooking,
@@ -432,6 +437,11 @@ export async function main(): Promise<void> {
           const live = lives.get(identity.streamSid);
           if (!live) return;
           void live.receiveAudio(audio);
+        },
+        onOutboundFrame: (identity, frame) => {
+          // Feed the Echo gate what actually played; retainReference is cheap
+          // and ignores frames after close.
+          lives.get(identity.streamSid)?.retainReference(frame);
         },
         onClose: (identity, reason, session) => {
           lives.get(identity.streamSid)?.close('socket-closed');

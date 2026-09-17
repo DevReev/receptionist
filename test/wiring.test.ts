@@ -121,6 +121,29 @@ describe('config', () => {
     assert.equal(tuned.sarvam.ttsStreamIdleTimeoutMs, 1500);
   });
 
+  it('defaults the Echo-gate margins, overridable', () => {
+    const base = {
+      OPENROUTER_API_KEY: 'o',
+      TWILIO_ACCOUNT_SID: 'ACx',
+      TWILIO_AUTH_TOKEN: 't',
+      STREAM_WS_URL: 'wss://example.com/stream',
+      SARVAM_API_KEY: 'sk-sarvam',
+    };
+    const cfg = loadConfig(base);
+    assert.equal(cfg.echoGateCorrelation, 0.7);
+    assert.equal(cfg.echoGateLevelMarginDb, 6);
+    assert.equal(cfg.echoGateMaxDelayMs, 600);
+    const tuned = loadConfig({
+      ...base,
+      ECHO_GATE_CORRELATION: '0.8',
+      ECHO_GATE_LEVEL_MARGIN_DB: '9',
+      ECHO_GATE_MAX_DELAY_MS: '450',
+    });
+    assert.equal(tuned.echoGateCorrelation, 0.8);
+    assert.equal(tuned.echoGateLevelMarginDb, 9);
+    assert.equal(tuned.echoGateMaxDelayMs, 450);
+  });
+
   it('defaults live STT to the Sarvam realtime websocket, overridable', () => {
     const base = {
       OPENROUTER_API_KEY: 'o',

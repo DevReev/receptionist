@@ -23,6 +23,8 @@ export interface StreamObserver {
   onClose(identity: StreamIdentity, reason: string, session?: StreamSession): void;
   /** Fired once when the start frame assigns call identity; greeting hook. */
   onOpen?(identity: StreamIdentity, session?: StreamSession): void;
+  /** Fired for each outbound media frame as it is sent, in playout order. */
+  onOutboundFrame?(identity: StreamIdentity, audio: Buffer, session?: StreamSession): void;
 }
 
 /** Minimal surface a media-stream socket must provide; real and fake sockets both fit. */
@@ -107,6 +109,7 @@ export class StreamSession {
       },
       clock: this.clock,
       onTrace: this.traceFor?.(identity),
+      onFrameSent: (frame) => this.observer.onOutboundFrame?.(identity, frame, this),
       onFatal: (reason) => this.close(`transport-fatal:${reason}`),
     });
     this.observer.onOpen?.(identity, this);
@@ -311,6 +314,7 @@ export function attachStreamEndpoint(
         {
           onAudio: (identity, audio, sess) => observer.onAudio(identity, audio, sess ?? session),
           onOpen: (identity, sess) => observer.onOpen?.(identity, sess ?? session),
+          onOutboundFrame: (identity, audio, sess) => observer.onOutboundFrame?.(identity, audio, sess ?? session),
           onClose: (identity, reason, sess) => {
             sessions.delete(session);
             observer.onClose(identity, reason, sess ?? session);

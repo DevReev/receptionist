@@ -27,6 +27,9 @@ The live streaming loop is the default (`VOICE_LOOP=stream`), and transcription 
 | `SARVAM_VAD_THRESHOLD` | Optional, default `0.3`: provider VAD sensitivity (0.0–1.0), `TURN_DETECTION=sarvam` only |
 | `SARVAM_VAD_SILENCE_MS` | Optional, default `500`: provider-side silence that ends a Turn, `TURN_DETECTION=sarvam` only |
 | `SARVAM_VAD_MIN_SPEECH_MS` | Optional, default `250`: minimum provider-heard speech to count as an utterance, `TURN_DETECTION=sarvam` only |
+| `ECHO_GATE_CORRELATION` | Optional, default `0.7`: normalized cross-correlation against the played-audio reference needed to classify an inbound frame as the Receptionist's own Echo |
+| `ECHO_GATE_LEVEL_MARGIN_DB` | Optional, default `6`: how far above the learned echo-return level an inbound frame may sit before it counts as the Caller talking over the Echo (double-talk) |
+| `ECHO_GATE_MAX_DELAY_MS` | Optional, default `600`: longest Echo return delay the adaptive-delay correlation search considers |
 | `SARVAM_TTS_STREAM` | Optional, default `true`: stream replies over Sarvam's text-to-speech WebSocket (`bulbul:v3`, `mulaw` @ 8 kHz) so audio reaches the Caller while it is still being generated. A failed or stalled utterance falls back to the REST TTS call; set `false` to force REST |
 | `SARVAM_TTS_STREAM_IDLE_TIMEOUT_MS` | Optional, default `5000`: silence on the TTS socket before the sentence falls back to REST |
 | `GROQ_API_KEY` or `OPENAI_API_KEY` | Whisper STT only when `STT_PROVIDER=openai` or `groq` |
@@ -142,6 +145,12 @@ Component traces (`kind:"trace"`):
   provider VAD owned the boundary, `local` in hybrid mode), `speechMs`, and the
   local-detector `frames`, `maxScore`, `meanScore` (all zero when the provider
   owned the boundary).
+- `component:"echo-gate"` — `decision` per inbound frame heard while the
+  Receptionist speaks: `echo` (true = own voice returning), `reason`
+  (`echo` | `silence` | `no-reference` | `uncorrelated` | `double-talk`), and the
+  evidence used (`correlation`, `delayMs`, `inboundRms`, `referenceRms`,
+  `residualRms`, `returnLossDb`, `threshold`, `marginDb`). High-volume by
+  design: one line per 20 ms frame, `grep <callSid>` scoped.
 - `component:"stream"` — `open` and `close` with `framesIn`/`bytesIn`/
   `framesOut`/`bytesOut`/`durationMs` for the Twilio media socket.
 

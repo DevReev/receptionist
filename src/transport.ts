@@ -52,6 +52,8 @@ export interface TwilioMediaTransportOptions {
   maxBurstFrames?: number;
   clock?: TransportClock;
   onTrace?: TraceFn;
+  /** Fires for each media frame as it is sent, in playout order (the Echo reference). */
+  onFrameSent?: (frame: Buffer) => void;
   /** The active response exceeded the bounded queue; the producer must cancel. */
   onOverflow?: (reason: string) => void;
   /** Playback state can no longer be reconciled; the session should close the call. */
@@ -105,6 +107,7 @@ export class TwilioMediaTransport {
   private readonly socket: TransportSocket;
   private readonly clock: TransportClock;
   private readonly trace: TraceFn;
+  private readonly onFrameSent?: (frame: Buffer) => void;
   private readonly frameBytes: number;
   private readonly bytesPerMs: number;
   private readonly highWaterBytes: number;
@@ -145,6 +148,7 @@ export class TwilioMediaTransport {
     this.socket = opts.socket;
     this.clock = opts.clock ?? realClock;
     this.trace = opts.onTrace ?? defaultTrace;
+    this.onFrameSent = opts.onFrameSent;
     this.frameBytes = opts.frameBytes ?? DEFAULT_FRAME_BYTES;
     this.bytesPerMs = opts.bytesPerMs ?? DEFAULT_BYTES_PER_MS;
     this.highWaterBytes = opts.highWaterBytes ?? DEFAULT_HIGH_WATER_BYTES;
@@ -455,6 +459,7 @@ export class TwilioMediaTransport {
     this.framesSent += 1;
     this.bytesSent += frame.data.length;
     this.framesSentTotal += 1;
+    this.onFrameSent?.(frame.data);
     if (this.framesSent === 1) this.log('first-outbound-sent', { bytes: frame.data.length });
   }
 }

@@ -2,9 +2,12 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   aggregateMetrics,
+  ECHO_GATE_BARS,
   formatTurnBenchReport,
+  gateMetrics,
   runScenario,
   scenarioMetrics,
+  type GateDecisionObservation,
   type ScenarioObservations,
 } from '../src/turnBench.ts';
 
@@ -14,6 +17,7 @@ function observations(partial: Partial<ScenarioObservations> = {}): ScenarioObse
     interruptions: [],
     backchannels: [],
     echos: [],
+    gateDecisions: [],
     replyStarts: [],
     clears: [],
     selfEchoTurns: 0,
@@ -176,6 +180,62 @@ describe('turn bench metrics', () => {
     assert.equal(metrics.backchannelFalseStopRate, 0);
     assert.equal(metrics.echoFalseStopRate, 0);
     assert.equal(metrics.stopLatencyMs.p50, 0);
+  });
+
+  it('scores Echo-gate decisions against declared Echo and Caller spans', () => {
+    const decisions: GateDecisionObservation[] = [
+      { frame: 10, echo: true, reason: 'echo', correlation: 0.99, caller: false, echoMixed: true },
+      { frame: 11, echo: false, reason: 'uncorrelated', correlation: 0.2, caller: false, echoMixed: true },
+      { frame: 12, echo: true, reason: 'echo', correlation: 0.97, caller: false, echoMixed: true },
+      { frame: 30, echo: true, reason: 'echo', correlation: 0.95, caller: true, echoMixed: true },
+      { frame: 31, echo: false, reason: 'uncorrelated', correlation: 0.1, caller: true, echoMixed: true },
+      { frame: 90, echo: true, reason: 'echo', correlation: 0.99, caller: false, echoMixed: true },
+    ];
+    const gate = gateMetrics(
+      observations({
+        echos: [{ span: { startFrame: 10, endFrame: 13 } }],
+        interruptions: [{ span: { startFrame: 30, endFrame: 32 }, text: 'no wait' }],
+        gateDecisions: decisions,
+      }),
+    );
+    assert.equal(gate.echoFrames, 3);
+    assert.equal(gate.echoFalsePasses, 1);
+    assert.equal(gate.falsePassRate, 1 / 3);
+    assert.equal(gate.callerFrames, 2);
+    assert.equal(gate.callerFalseBlocks, 1);
+    assert.equal(gate.falseBlockRate, 0.5);
+  });
+
+  it('scores a silent Caller frame inside a Barge-in span as an Echo frame', () => {
+    // Captured fixtures carry trailing silence; a Barge-in span over
+    // that silence is really Echo, so a blocked frame is not a false block.
+    const gate = gateMetrics(
+      observations({
+        interruptions: [{ span: { startFrame: 50, endFrame: 52 }, text: 'no wait' }],
+        gateDecisions: [
+          { frame: 50, echo: true, reason: 'echo', correlation: 0.99, caller: false, echoMixed: true },
+        ],
+      }),
+    );
+    assert.equal(gate.callerFrames, 0);
+    assert.equal(gate.callerFalseBlocks, 0);
+    assert.equal(gate.echoFrames, 1);
+    assert.equal(gate.echoFalsePasses, 0);
+  });
+
+  it('ignores frames with no Echo mixed into them', () => {
+    const gate = gateMetrics(
+      observations({
+        interruptions: [{ span: { startFrame: 50, endFrame: 53 }, text: 'no wait' }],
+        gateDecisions: [
+          { frame: 50, echo: false, reason: 'uncorrelated', correlation: 0.1, caller: false, echoMixed: false },
+          { frame: 51, echo: true, reason: 'echo', correlation: 0.9, caller: false, echoMixed: false },
+        ],
+      }),
+    );
+    assert.equal(gate.echoFrames, 0);
+    assert.equal(gate.echoFalsePasses, 0);
+    assert.equal(gate.callerFrames, 0);
   });
 });
 
@@ -347,6 +407,32 @@ describe('turn bench behavior scenarios', () => {
     assert.equal(run.metrics.stopLatencyMs.samples, 1);
     assert.equal(run.metrics.echoFalseStops, 0);
   });
+
+  it('classifies returned Echo and clean Caller speech through the real session', async () => {
+    const run = await runScenario(
+      {
+        name: 'gate',
+        run: async (ctx) => {
+          await ctx.call('what are your hours', 60);
+          await ctx.awaitReply();
+          await ctx.echo(30, { delayMs: 120, attenuationDb: -18 });
+          await ctx.interrupt('no wait', 20);
+          await ctx.silence(80);
+        },
+      },
+      { policy: POLICY, bargeIn: false },
+    );
+    // Ticket 04 is classification only: half-duplex stays.
+    assert.equal(run.observations.clears.length, 0);
+    assert.ok(run.observations.gateDecisions.length > 0);
+    // The echo span starts as the reply begins; its first frames carry no
+    // reference yet, so only frames with Echo energy are scored.
+    assert.ok(run.metrics.gate.echoFrames >= 24, `echo frames ${run.metrics.gate.echoFrames}`);
+    assert.equal(run.metrics.gate.echoFalsePasses, 0);
+    assert.ok(run.metrics.gate.falsePassRate <= ECHO_GATE_BARS.falsePassRate);
+    assert.equal(run.metrics.gate.callerFrames, 20);
+    assert.equal(run.metrics.gate.callerFalseBlocks, 0);
+  });
 });
 
 describe('turn bench report', () => {
@@ -372,6 +458,8 @@ describe('turn bench report', () => {
     assert.match(report, /stop none \(missed 0\)/);
     assert.match(report, /backchannel false-stop 0\.0% \(0\/0\)/);
     assert.match(report, /echo false-stop 0\.0% \(0\/0\)/);
+    assert.match(report, /echo-gate bars: false-pass <= 5\.0%  false-block <= 5\.0%  ->  PASS/);
+    assert.match(report, /gate pass 0\.0% \(0\/0\)/);
     assert.match(report, /TOTAL/);
   });
 });

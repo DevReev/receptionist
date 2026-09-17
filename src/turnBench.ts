@@ -1,5 +1,7 @@
 import { encodeMulaw } from './audio.ts';
 import { attenuationGain, mixMulaw } from './echoMix.ts';
+import { rms, type EchoReason } from './echoGate.ts';
+import { decodeMulaw } from './mulaw.ts';
 import { percentile } from './benchmark.ts';
 import { CallStore } from './calls.ts';
 import type { Assistant, Transcriber } from './app.ts';
@@ -26,17 +28,45 @@ export interface DeclaredEcho {
   span: TurnBenchSpan;
 }
 
+/** One Echo-gate classification, attributed to the frame it decided. */
+export interface GateDecisionObservation {
+  frame: number;
+  echo: boolean;
+  reason: EchoReason;
+  correlation: number;
+  /** True when the frame's intended Caller background carried audible speech. */
+  caller: boolean;
+  /** True when the frame's inbound actually carried mixed returning Echo. */
+  echoMixed: boolean;
+}
+
 /** What one scenario run declared and what the live session did in response. */
 export interface ScenarioObservations {
   utterances: DeclaredSpan[];
   interruptions: DeclaredSpan[];
   backchannels: DeclaredSpan[];
   echos: DeclaredEcho[];
+  /** Every Echo-gate classification, in inbound order. */
+  gateDecisions: GateDecisionObservation[];
   /** Frame of each reply's first outbound audio, in run order, greeting excluded. */
   replyStarts: number[];
   clears: { frame: number; reason: string }[];
   /** Turns whose audio came from Echo rather than the Caller. Must stay 0. */
   selfEchoTurns: number;
+}
+
+/** How the Echo gate classified the frames the scenario declared. */
+export interface GateMetrics {
+  /** Decisions inside declared Echo spans. */
+  echoFrames: number;
+  /** Echo-span frames the gate passed as Caller. Lower is better. */
+  echoFalsePasses: number;
+  /** Decisions inside declared Caller-while-speaking spans (Barge-in, Backchannels). */
+  callerFrames: number;
+  /** Caller-while-speaking frames the gate flagged Echo. Lower is better. */
+  callerFalseBlocks: number;
+  falsePassRate: number;
+  falseBlockRate: number;
 }
 
 export interface TurnBenchMetrics {
@@ -55,6 +85,7 @@ export interface TurnBenchMetrics {
   echoFalseStops: number;
   echoFalseStopRate: number;
   selfEchoTurns: number;
+  gate: GateMetrics;
 }
 
 export interface Summary {
@@ -72,6 +103,10 @@ interface AggregateCounts {
   echoSpans: number;
   echoFalseStops: number;
   selfEchoTurns: number;
+  gateEchoFrames: number;
+  gateEchoFalsePasses: number;
+  gateCallerFrames: number;
+  gateCallerFalseBlocks: number;
 }
 
 export interface AggregateMetrics extends AggregateCounts {
@@ -80,6 +115,7 @@ export interface AggregateMetrics extends AggregateCounts {
   stopLatencyMs: Summary & { missed: number };
   backchannelFalseStopRate: number;
   echoFalseStopRate: number;
+  gate: GateMetrics;
 }
 
 /** Frames after a declared span in which a stop still counts as caused by it. */
@@ -103,6 +139,48 @@ function summary(values: number[]): Summary {
 
 function inSpan(frame: number, span: TurnBenchSpan): boolean {
   return frame >= span.startFrame && frame < span.endFrame + STOP_GRACE_FRAMES;
+}
+
+function inDeclaredSpan(frame: number, span: TurnBenchSpan): boolean {
+  return frame >= span.startFrame && frame < span.endFrame;
+}
+
+/**
+ * Score the Echo gate against what the scenario actually fed. A frame whose
+ * intended Caller background was audible counts as Caller when it falls in a
+ * declared Caller-while-speaking span (content-first, like clear
+ * attribution). A frame with mixed returning Echo and no audible Caller
+ * counts as Echo. Silent frames and frames with no Echo mix are not scored.
+ */
+export function gateMetrics(obs: ScenarioObservations): GateMetrics {
+  let echoFrames = 0;
+  let echoFalsePasses = 0;
+  let callerFrames = 0;
+  let callerFalseBlocks = 0;
+  for (const decision of obs.gateDecisions) {
+    if (decision.reason === 'silence') continue;
+    const callerSpan = [...obs.interruptions, ...obs.backchannels].some((entry) =>
+      inDeclaredSpan(decision.frame, entry.span),
+    );
+    if (callerSpan && decision.caller) {
+      callerFrames += 1;
+      if (decision.echo) callerFalseBlocks += 1;
+      continue;
+    }
+    const echoSpan = callerSpan || obs.echos.some((entry) => inDeclaredSpan(decision.frame, entry.span));
+    if (echoSpan && decision.echoMixed) {
+      echoFrames += 1;
+      if (!decision.echo) echoFalsePasses += 1;
+    }
+  }
+  return {
+    echoFrames,
+    echoFalsePasses,
+    callerFrames,
+    callerFalseBlocks,
+    falsePassRate: rate(echoFalsePasses, echoFrames),
+    falseBlockRate: rate(callerFalseBlocks, callerFrames),
+  };
 }
 
 /**
@@ -162,6 +240,7 @@ export function scenarioMetrics(name: string, obs: ScenarioObservations): TurnBe
     echoFalseStops: stoppedEchos.size,
     echoFalseStopRate: rate(stoppedEchos.size, obs.echos.length),
     selfEchoTurns: obs.selfEchoTurns,
+    gate: gateMetrics(obs),
   };
 }
 
@@ -176,6 +255,10 @@ export function aggregateMetrics(runs: TurnBenchMetrics[]): AggregateMetrics {
   const replyLatenciesMs = runs.flatMap((run) => run.replyLatenciesMs);
   const stopLatenciesMs = runs.flatMap((run) => run.stopLatenciesMs);
   const missed = runs.reduce((sum, run) => sum + run.stopLatencyMs.missed, 0);
+  const gateEchoFrames = runs.reduce((sum, run) => sum + run.gate.echoFrames, 0);
+  const gateEchoFalsePasses = runs.reduce((sum, run) => sum + run.gate.echoFalsePasses, 0);
+  const gateCallerFrames = runs.reduce((sum, run) => sum + run.gate.callerFrames, 0);
+  const gateCallerFalseBlocks = runs.reduce((sum, run) => sum + run.gate.callerFalseBlocks, 0);
   return {
     scenarios: runs.length,
     utterances,
@@ -190,6 +273,18 @@ export function aggregateMetrics(runs: TurnBenchMetrics[]): AggregateMetrics {
     echoFalseStops,
     echoFalseStopRate: rate(echoFalseStops, echoSpans),
     selfEchoTurns: runs.reduce((sum, run) => sum + run.selfEchoTurns, 0),
+    gateEchoFrames,
+    gateEchoFalsePasses,
+    gateCallerFrames,
+    gateCallerFalseBlocks,
+    gate: {
+      echoFrames: gateEchoFrames,
+      echoFalsePasses: gateEchoFalsePasses,
+      callerFrames: gateCallerFrames,
+      callerFalseBlocks: gateCallerFalseBlocks,
+      falsePassRate: rate(gateEchoFalsePasses, gateEchoFrames),
+      falseBlockRate: rate(gateCallerFalseBlocks, gateCallerFrames),
+    },
   };
 }
 
@@ -266,6 +361,13 @@ export interface TurnBenchRun {
 const FRAME_BYTES = 160;
 const SILENCE_FRAME = Buffer.alloc(FRAME_BYTES, 0xff);
 const MAX_SETTLE_FRAMES = 900;
+/** RMS above which an intended Caller frame counts as audible speech. */
+const CALLER_ENERGY_RMS = 60;
+
+function hasCallerEnergy(mulaw: Buffer): boolean {
+  const pcm = decodeMulaw(mulaw);
+  return pcm.length > 0 && rms(pcm) >= CALLER_ENERGY_RMS;
+}
 
 /** Deterministic speech-like 8 kHz mu-law, so Echo has something to return. */
 export function syntheticVoice(samples: number, seed = 1): Buffer {
@@ -367,6 +469,7 @@ class ScenarioRunner implements TurnBenchContext {
     interruptions: [],
     backchannels: [],
     echos: [],
+    gateDecisions: [],
     replyStarts: [],
     clears: [],
     selfEchoTurns: 0,
@@ -379,7 +482,10 @@ class ScenarioRunner implements TurnBenchContext {
   private readonly callerBank: Buffer;
   private speechOffset = 0;
   private currentTag: TurnBenchTag = 'silence';
+  private frameCallerActive = false;
+  private frameEchoMixed = false;
   private lastScoredSpeechTag: TurnBenchTag = 'silence';
+  private nextReferenceFrame = 0;
   private readonly declarations: { startFrame: number; text: string }[] = [];
   private readonly echoDefaults: EchoFeedOptions;
 
@@ -435,7 +541,19 @@ class ScenarioRunner implements TurnBenchContext {
         this.gate.clear(reason);
       },
       logSession: options.debug ? (event) => console.error('[session]', JSON.stringify(event)) : undefined,
-      trace: options.debug ? (event) => console.error('[trace]', JSON.stringify(event)) : undefined,
+      trace: (event) => {
+        if (event.component === 'echo-gate' && event.event === 'decision') {
+          this.observations.gateDecisions.push({
+            frame: this.frame,
+            echo: event.echo === true,
+            reason: event.reason as EchoReason,
+            correlation: Number(event.correlation ?? 0),
+            caller: this.frameCallerActive,
+            echoMixed: this.frameEchoMixed,
+          });
+        }
+        if (options.debug) console.error('[trace]', JSON.stringify(event));
+      },
     });
   }
 
@@ -495,7 +613,7 @@ class ScenarioRunner implements TurnBenchContext {
     for (let i = 0; i < frames; i++) {
       const background = caller || opts.caller ? this.speechFrame() : SILENCE_FRAME;
       const reference = this.outbound.referenceFrame(this.frame - delayFrames) ?? SILENCE_FRAME;
-      await this.pushFrame(tag, mixMulaw(background, reference, gain));
+      await this.pushFrame(tag, mixMulaw(background, reference, gain), hasCallerEnergy(background), true);
     }
   }
 
@@ -550,17 +668,42 @@ class ScenarioRunner implements TurnBenchContext {
 
   private async feed(tag: TurnBenchTag, frames: number): Promise<void> {
     for (let i = 0; i < frames; i++) {
-      await this.pushFrame(tag, tag === 'silence' ? SILENCE_FRAME : this.speechFrame());
+      const frame = tag === 'silence' ? SILENCE_FRAME : this.speechFrame();
+      await this.pushFrame(tag, frame, hasCallerEnergy(frame));
     }
   }
 
-  private async pushFrame(tag: TurnBenchTag, bytes: Buffer): Promise<void> {
+  private async pushFrame(tag: TurnBenchTag, bytes: Buffer, callerActive = false, echoMixed = false): Promise<void> {
     this.gate.advanceTo(this.frame);
     await settle();
     this.currentTag = tag;
+    this.frameCallerActive = callerActive;
+    this.frameEchoMixed = echoMixed;
+    // The transport retains played audio frame by frame; the bench plays from
+    // its own timeline, so every frame that has played since the last push is
+    // retained now, in playout order, before this frame is classified.
+    this.retainPlayedReference();
     await this.session.receiveAudio(bytes);
     await settle();
+    this.frameCallerActive = false;
+    this.frameEchoMixed = false;
     this.frame += 1;
+  }
+
+  private retainPlayedReference(): void {
+    while (this.nextReferenceFrame <= this.frame) {
+      const reference = this.outbound.referenceFrame(this.nextReferenceFrame);
+      if (!reference) {
+        // A frame at or past the scheduled horizon may still arrive (the
+        // session schedules audio while this frame is being processed), so
+        // stop rather than skip it; earlier gaps are permanent.
+        if (this.nextReferenceFrame >= this.outbound.endFrame) break;
+        this.nextReferenceFrame += 1;
+        continue;
+      }
+      this.session.retainReference(reference);
+      this.nextReferenceFrame += 1;
+    }
   }
 }
 
@@ -589,6 +732,13 @@ export interface TurnBenchReportMeta {
   bargeIn: boolean;
 }
 
+/**
+ * Agreed classification bars for the Echo gate (ticket 04): at most 5% of
+ * declared Echo frames may pass as Caller, and at most 5% of declared Caller
+ * frames heard while the Receptionist speaks may be blocked as Echo.
+ */
+export const ECHO_GATE_BARS = { falsePassRate: 0.05, falseBlockRate: 0.05 } as const;
+
 function percent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
@@ -612,6 +762,7 @@ type MetricLineInput = Pick<
   | 'echoFalseStops'
   | 'echoFalseStopRate'
   | 'selfEchoTurns'
+  | 'gate'
 >;
 
 function metricLine(metrics: MetricLineInput): string {
@@ -624,6 +775,8 @@ function metricLine(metrics: MetricLineInput): string {
     `backchannel false-stop ${percent(metrics.backchannelFalseStopRate)} (${metrics.backchannelFalseStops}/${metrics.backchannels})`,
     `echo false-stop ${percent(metrics.echoFalseStopRate)} (${metrics.echoFalseStops}/${metrics.echoSpans})`,
     `self-echo ${metrics.selfEchoTurns}`,
+    `gate pass ${percent(metrics.gate.falsePassRate)} (${metrics.gate.echoFalsePasses}/${metrics.gate.echoFrames})`,
+    `gate block ${percent(metrics.gate.falseBlockRate)} (${metrics.gate.callerFalseBlocks}/${metrics.gate.callerFrames})`,
   ];
   return `${metrics.name.padEnd(24)} ${parts.join('  ')}`;
 }
@@ -641,6 +794,12 @@ export function formatTurnBenchReport(
   if (!meta.bargeIn) {
     lines.push('note: Barge-in is off — stop latency and false-stop rates are degenerate (the baseline record).');
   }
+  const gatePass =
+    aggregate.gate.falsePassRate <= ECHO_GATE_BARS.falsePassRate &&
+    aggregate.gate.falseBlockRate <= ECHO_GATE_BARS.falseBlockRate;
+  lines.push(
+    `echo-gate bars: false-pass <= ${percent(ECHO_GATE_BARS.falsePassRate)}  false-block <= ${percent(ECHO_GATE_BARS.falseBlockRate)}  ->  ${gatePass ? 'PASS' : 'FAIL'}`,
+  );
   lines.push('', metricLine({ ...aggregate, name: 'TOTAL' }), ...runs.map(metricLine));
   return lines.join('\n');
 }

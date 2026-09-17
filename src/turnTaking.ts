@@ -1,4 +1,5 @@
 import { decodeMulaw } from './mulaw.ts';
+import { EchoGate, type EchoDecision, type EchoGateOptions } from './echoGate.ts';
 import type { BargeInEvent, EndpointPolicy, Utterance, Vad } from './endpoint.ts';
 
 /** 8 kHz mulaw: one sample per byte, so durations derive from sample counts. */
@@ -28,6 +29,8 @@ export interface TurnTakingObserver {
   onBargeIn?(event: BargeInEvent): void;
   /** A frame the live STT channel should hear; absent while muted. */
   onUpstreamFrame?(frame: Buffer): void;
+  /** Every frame heard while the Receptionist holds the floor, Echo or Caller. */
+  onEchoDecision?(decision: EchoDecision): void;
   /** Raw VAD score + latch state per scored frame, for operator diagnostics. */
   onScore?(score: number, latched: boolean): void;
 }
@@ -48,6 +51,8 @@ export interface TurnTakingOptions {
   bargeInMs?: number;
   /** Boundary authority for this call. */
   detection: TurnDetection;
+  /** Echo-gate tuning; defaults ship the bench-tuned values. */
+  echoGate?: EchoGateOptions;
 }
 
 type Floor = 'listening' | 'muted' | 'watching-barge-in';
@@ -66,6 +71,7 @@ export class TurnTaking {
   private readonly observer: TurnTakingObserver;
   private readonly bargeInMs: number;
   private readonly detection: TurnDetection;
+  private readonly echoGate: EchoGate;
   private mode: Floor = 'listening';
   private bargeInPending = false;
   private speaking = false;
@@ -88,6 +94,7 @@ export class TurnTaking {
     this.observer = opts.observer;
     this.bargeInMs = opts.bargeInMs ?? 200;
     this.detection = opts.detection;
+    this.echoGate = new EchoGate(opts.echoGate);
   }
 
   /** True while a Caller utterance can end a Turn here. */
@@ -99,6 +106,15 @@ export class TurnTaking {
     const run = this.tail.then(() => this.process(mulaw));
     this.tail = run.catch(() => {});
     return run;
+  }
+
+  /**
+   * Retain one played outbound frame as the Echo reference. The session feeds
+   * this from actual playout, so the gate correlates against what the Caller
+   * heard rather than what was generated.
+   */
+  retainReference(mulaw: Buffer): void {
+    this.echoGate.pushReference(mulaw);
   }
 
   /**
@@ -156,10 +172,21 @@ export class TurnTaking {
   }
 
   private async process(mulaw: Buffer): Promise<void> {
-    if (this.mode === 'muted') return;
+    if (this.mode === 'muted') {
+      if (mulaw.length > 0) this.emitEchoDecision(decodeMulaw(mulaw));
+      return;
+    }
     this.observer.onUpstreamFrame?.(mulaw);
-    if (this.bargeInPending || mulaw.length === 0) return;
+    if (mulaw.length === 0) return;
     const pcm = decodeMulaw(mulaw);
+    // While listening, inbound audio only feeds the Echo gate's history; the
+    // first frame of the next Receptionist speech then correlates over a full
+    // window instead of one noisy 20 ms slice.
+    if (this.mode === 'listening') this.echoGate.observe(pcm);
+    // While the Receptionist holds the floor, every frame is classified before
+    // any Barge-in logic looks at it, so traces and benches see the evidence.
+    if (this.mode === 'watching-barge-in') this.emitEchoDecision(pcm);
+    if (this.bargeInPending) return;
     // The provider owns boundaries in this mode: keep the fallback capture
     // and leave the local VAD to Barge-in watching only.
     if (this.detection === 'sarvam' && this.mode === 'listening') {
@@ -227,6 +254,11 @@ export class TurnTaking {
     if (trailingMs >= this.policy.silenceMs || this.bufferedMs() >= this.policy.maxUtteranceMs) {
       this.emit();
     }
+  }
+
+  /** Echo-gate one frame heard while the Receptionist holds the floor. */
+  private emitEchoDecision(pcm: Int16Array): void {
+    this.observer.onEchoDecision?.(this.echoGate.classify(pcm));
   }
 
   private bufferedMs(): number {

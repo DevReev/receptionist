@@ -71,6 +71,12 @@ export interface Config {
   endpointMinSpeechMs: number;
   vadThreshold: number;
   endpointLatchDipMs: number;
+  /** Echo gate: correlation needed to classify an inbound frame as Echo. */
+  echoGateCorrelation: number;
+  /** Echo gate: dB above the learned return level that counts as Caller double-talk. */
+  echoGateLevelMarginDb: number;
+  /** Echo gate: longest Echo return delay the correlation search considers. */
+  echoGateMaxDelayMs: number;
   vadModelPath: string;
   /** Speak a holding line when a Turn phase runs long; <=0 disables holds. */
   speakHoldMs: number;
@@ -215,6 +221,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     endpointMinSpeechMs: int(env, 'ENDPOINT_MIN_SPEECH_MS', 300),
     vadThreshold: float(env, 'VAD_SPEECH_THRESHOLD', 0.1),
     endpointLatchDipMs: int(env, 'ENDPOINT_LATCH_DIP_MS', 200),
+    echoGateCorrelation: float(env, 'ECHO_GATE_CORRELATION', 0.7),
+    echoGateLevelMarginDb: float(env, 'ECHO_GATE_LEVEL_MARGIN_DB', 6),
+    echoGateMaxDelayMs: int(env, 'ECHO_GATE_MAX_DELAY_MS', 600),
     vadModelPath: optional(env, 'VAD_MODEL_PATH', './models/silero_vad.onnx'),
     speakHoldMs: int(env, 'SPEAK_HOLD_MS', 3000),
     noResponseMs: int(env, 'NO_RESPONSE_MS', 8000),
