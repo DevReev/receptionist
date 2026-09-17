@@ -105,9 +105,13 @@ describe('turn taking', () => {
   });
 
   it('does not split on a brief mid-sentence pause', async () => {
-    const h = harness(scriptVad([...speech(30), ...silence(15), ...speech(30), ...silence(50)]));
-    await h.feed([...speech(30), ...silence(15), ...speech(30), ...silence(50)]);
+    // 200 ms is below the hybrid detector's 300 ms default floor, so the
+    // resumed speech stays inside the same utterance.
+    const pattern = [...speech(30), ...silence(10), ...speech(30), ...silence(50)];
+    const h = harness(scriptVad(pattern));
+    await h.feed(pattern);
     assert.equal(h.utterances.length, 1);
+    assert.equal(h.utterances[0]!.durationMs, 1400);
   });
 
   it('ignores sub-minimum noises', async () => {

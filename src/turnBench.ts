@@ -4,6 +4,7 @@ import { rms, type EchoReason } from './echoGate.ts';
 import { decodeMulaw } from './mulaw.ts';
 import { percentile } from './benchmark.ts';
 import { CallStore } from './calls.ts';
+import { HYBRID_DEFAULTS } from './hybridDetector.ts';
 import type { Assistant, Transcriber } from './app.ts';
 import type { EndpointPolicy, Vad } from './endpoint.ts';
 import { LiveCallSession } from './live.ts';
@@ -852,7 +853,8 @@ export function formatTurnBenchReport(
 ): string {
   const lines = [
     `turn-taking bench  build ${meta.build}  fixtures ${meta.fixtures}`,
-    `policy: silence ${meta.policy.silenceMs}ms  min-speech ${meta.policy.minSpeechMs}ms  max-utterance ${meta.policy.maxUtteranceMs}ms  threshold ${meta.policy.threshold}  dip ${meta.policy.latchDipMs}ms`,
+    `policy: silence ${meta.policy.silenceMs}ms (Barge-in candidate reset)  min-speech ${meta.policy.minSpeechMs}ms  max-utterance ${meta.policy.maxUtteranceMs}ms  threshold ${meta.policy.threshold}  dip ${meta.policy.latchDipMs}ms`,
+    `detector: hybrid local  adaptive pause ${HYBRID_DEFAULTS.minPauseMs}-${HYBRID_DEFAULTS.maxPauseMs}ms (default ${HYBRID_DEFAULTS.defaultPauseMs}ms, emergency ${HYBRID_DEFAULTS.emergencyMs}ms)  field floor ${HYBRID_DEFAULTS.dialogueFloorMs}ms`,
     `barge-in: min-speech ${meta.bargeInMinSpeechMs}ms  dip-tolerance ${meta.bargeInDipToleranceMs}ms  confirm ${meta.bargeInConfirmMs}ms`,
   ];
   const gatePass =

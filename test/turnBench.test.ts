@@ -265,12 +265,14 @@ describe('turn bench scenario runner', () => {
     assert.equal(run.metrics.falseCuts, 0);
     assert.equal(run.metrics.replyLatencyMs.samples, 1);
     const latencyMs = run.metrics.replyLatenciesMs[0]!;
-    assert.ok(latencyMs >= 940 && latencyMs <= 1060, `reply latency ${latencyMs}ms`);
+    // The local detector's adaptive default floor is 300 ms, far below the
+    // retired fixed Endpointing window this bench used to wait out.
+    assert.ok(latencyMs >= 240 && latencyMs <= 400, `reply latency ${latencyMs}ms`);
   });
 });
 
 describe('turn bench behavior scenarios', () => {
-  it('flags a mid-thought pause longer than the fixed Endpointing window as a false cut', async () => {
+  it('holds a mid-thought pause open and emits at the emergency cap, not a false cut', async () => {
     const run = await runScenario(
       {
         name: 'long-pause',
@@ -281,9 +283,12 @@ describe('turn bench behavior scenarios', () => {
       },
       { policy: POLICY },
     );
-    assert.equal(run.metrics.falseCuts, 1);
-    assert.equal(run.metrics.falseCutRate, 1);
-    assert.equal(run.metrics.replyLatencyMs.samples, 0);
+    // "my number is" ends on a continuation cue, so the 1200 ms pause cannot
+    // false-cut; the trailing-silence emergency cap ends the Turn.
+    assert.equal(run.metrics.falseCuts, 0);
+    assert.equal(run.metrics.replyLatencyMs.samples, 1);
+    const latencyMs = run.metrics.replyLatenciesMs[0]!;
+    assert.ok(latencyMs >= 1400 && latencyMs <= 1600, `reply latency ${latencyMs}ms`);
   });
 
   it('keeps a pause inside the silence window in one Turn', async () => {

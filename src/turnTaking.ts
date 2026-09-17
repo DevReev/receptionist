@@ -1,6 +1,7 @@
 import { decodeMulaw } from './mulaw.ts';
 import { classifyPartial, type PartialClass } from './backchannel.ts';
 import { EchoGate, type EchoDecision, type EchoGateOptions } from './echoGate.ts';
+import { AdaptivePause, HYBRID_DEFAULTS, isSemanticallyComplete } from './hybridDetector.ts';
 import {
   BARGE_IN_DEFAULTS,
   type BackchannelEvent,
@@ -49,7 +50,8 @@ export interface TurnTakingObserver {
  * Who owns utterance boundaries. `sarvam` delegates them to the speech
  * provider: the local VAD no longer ends Turns and the module only captures
  * the utterance audio between provider boundaries for fallback and fixtures.
- * `hybrid` runs the local detector.
+ * `hybrid` runs the local detector: the Caller-adaptive pause plus semantic
+ * completeness, with the dialogue-aware field floor.
  */
 export type TurnDetection = 'sarvam' | 'hybrid';
 
@@ -114,12 +116,18 @@ export class TurnTaking {
   private readonly bargeInConfirmMs: number;
   private readonly detection: TurnDetection;
   private readonly echoGate: EchoGate;
+  /** The Caller's own intra-utterance pause rhythm, for the hybrid boundary. */
+  private readonly adaptivePause = new AdaptivePause();
   private mode: Floor = 'listening';
   private bargeInPending = false;
   private speaking = false;
   /** Absorption is suspended while a confirmation readback plays. */
   private absorptionEnabled = true;
   private partial: PartialEvidence = emptyPartial();
+  /** Latest partial of the utterance under capture, for semantic completeness. */
+  private lastPartialText = '';
+  /** Raised floor from dialogue field state; 0 unless collecting name or phone. */
+  private dialogueFloorMs = 0;
   /** Provider speech_open state; the utterance under capture in sarvam mode. */
   private providerOpen = false;
   private providerCorroborated = false;
@@ -203,6 +211,7 @@ export class TurnTaking {
   /** Drops any partial utterance and releases the VAD. */
   close(): void {
     this.reset();
+    this.adaptivePause.reset();
     this.vad.reset();
   }
 
@@ -232,11 +241,22 @@ export class TurnTaking {
   }
 
   /**
+   * Dialogue field state the local detector keys off: while the assistant
+   * collects the Patient's name or phone the boundary floor rises so dictated
+   * names and grouped digits are not split across Turns.
+   */
+  observeDialogueState(collecting: boolean): void {
+    this.dialogueFloorMs = collecting ? HYBRID_DEFAULTS.dialogueFloorMs : 0;
+  }
+
+  /**
    * One partial transcript heard while the Receptionist holds the floor.
    * Semantics are evidence, not a trigger: they classify the energy candidate
-   * as a Backchannel to absorb or content-bearing speech to take the floor.
+   * as a Backchannel to absorb or content-bearing speech to take the floor. In
+   * hybrid listening they are also the completeness evidence for the boundary.
    */
   observePartial(text: string): void {
+    if (this.mode === 'listening' && this.detection === 'hybrid') this.lastPartialText = text;
     if (this.mode !== 'watching-barge-in' || this.bargeInPending) return;
     const cls = classifyPartial(text);
     if (cls === 'unknown') return;
@@ -343,7 +363,16 @@ export class TurnTaking {
     }
     this.chunks.push(frame);
     this.bufferedSamples += frame.length;
-    this.trailingSilenceSamples = isSpeech ? 0 : this.trailingSilenceSamples + frame.length;
+    if (isSpeech) {
+      // A silence run that speech resumed is a completed intra-utterance
+      // pause; the hybrid floor tracks the Caller's own rhythm from these.
+      if (this.detection === 'hybrid' && this.trailingSilenceSamples > 0) {
+        this.adaptivePause.observe(toMs(this.trailingSilenceSamples));
+      }
+      this.trailingSilenceSamples = 0;
+    } else {
+      this.trailingSilenceSamples += frame.length;
+    }
     if (this.mode === 'watching-barge-in') {
       const speechMs = toMs(this.bufferedSamples - this.trailingSilenceSamples);
       if (speechMs >= this.bargeInMinSpeechMs) {
@@ -353,10 +382,25 @@ export class TurnTaking {
       }
       return;
     }
-    const trailingMs = toMs(this.trailingSilenceSamples);
-    if (trailingMs >= this.policy.silenceMs || this.bufferedMs() >= this.policy.maxUtteranceMs) {
+    if (this.bufferedMs() >= this.policy.maxUtteranceMs || this.listeningBoundaryDue()) {
       this.emit();
     }
+  }
+
+  /**
+   * Whether the utterance under capture should end here. The local detector
+   * (hybrid) waits out the Caller-adaptive pause plus the dialogue floor, with
+   * the partial's semantic evidence holding it open only until the emergency
+   * cap. Provider VAD mode never reaches this: its boundaries come in as
+   * events, and the local fallback keeps the retired fixed silence.
+   */
+  private listeningBoundaryDue(): boolean {
+    const trailingMs = toMs(this.trailingSilenceSamples);
+    if (this.detection !== 'hybrid') return trailingMs >= this.policy.silenceMs;
+    const floorMs = Math.max(this.adaptivePause.floorMs, this.dialogueFloorMs);
+    if (trailingMs < floorMs) return false;
+    if (trailingMs >= HYBRID_DEFAULTS.emergencyMs) return true;
+    return isSemanticallyComplete(this.lastPartialText);
   }
 
   private bufferedMs(): number {
@@ -520,6 +564,7 @@ export class TurnTaking {
     this.preRollChunks = [];
     this.preRollSamples = 0;
     this.trailingSilenceSamples = 0;
+    this.lastPartialText = '';
     this.clearCandidate();
   }
 }

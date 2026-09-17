@@ -79,17 +79,22 @@ function isBackchannelToken(token: string, standalone: boolean): boolean {
   return standalone && forms.some((form) => BACKCHANNEL_PARTICLES.has(form));
 }
 
-/**
- * Classify one partial transcript heard while the Receptionist speaks.
- * `unknown` means the partial carried no usable words yet.
- */
-export function classifyPartial(text: string): PartialClass {
-  const tokens = text
+/** Word tokens of a transcript: lowercased, punctuation stripped to spaces. */
+export function tokenize(text: string): string[] {
+  return text
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, ' ')
     .trim()
     .split(/\s+/)
     .filter((token) => token.length > 0);
+}
+
+/**
+ * Classify one partial transcript heard while the Receptionist speaks.
+ * `unknown` means the partial carried no usable words yet.
+ */
+export function classifyPartial(text: string): PartialClass {
+  const tokens = tokenize(text);
   if (tokens.length === 0) return 'unknown';
   if (tokens.length > MAX_BACKCHANNEL_TOKENS) return 'content';
   if (tokens.some((token) => /\d/.test(token))) return 'content';

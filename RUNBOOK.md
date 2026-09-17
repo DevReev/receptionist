@@ -23,7 +23,7 @@ The live streaming loop is the default (`VOICE_LOOP=stream`), and transcription 
 | `SARVAM_API_KEY` | STT by default; TTS when `TTS_PROVIDER=sarvam` |
 | `SARVAM_STT_REALTIME` | Optional, default `true`: stream caller audio to Sarvam's realtime WebSocket (`saaras:v3-realtime`, `mulaw` @ 8 kHz) so each Turn does not wait on a REST transcription. A failed socket falls back to REST per Turn; set `false` to force REST |
 | `SARVAM_STT_STREAM_TYPE` | Optional, default `fast` (`fast` \| `balanced` \| `simulated`): realtime partial-latency vs accuracy tradeoff |
-| `TURN_DETECTION` | Optional, default `sarvam` (`sarvam` \| `hybrid`): who ends a Turn. `sarvam` = the provider's VAD (`vad.speech_start`/`vad.speech_end`, no local fixed wait); `hybrid` = the local detector with the socket in manual mode |
+| `TURN_DETECTION` | Optional, default `sarvam` (`sarvam` \| `hybrid`): who ends a Turn. `sarvam` = the provider's VAD (`vad.speech_start`/`vad.speech_end`, no local fixed wait); `hybrid` = the local detector with the socket in manual mode: a Caller-adaptive pause (1.25 × p90 of the Caller's last 8 intra-utterance pauses, 150–600 ms, 300 ms until three are seen, 1.5 s emergency cap) plus partial-transcript completeness, with a 600 ms floor while collecting the Patient's name or phone |
 | `SARVAM_VAD_THRESHOLD` | Optional, default `0.3`: provider VAD sensitivity (0.0–1.0), `TURN_DETECTION=sarvam` only |
 | `SARVAM_VAD_SILENCE_MS` | Optional, default `500`: provider-side silence that ends a Turn, `TURN_DETECTION=sarvam` only |
 | `SARVAM_VAD_MIN_SPEECH_MS` | Optional, default `250`: minimum provider-heard speech to count as an utterance, `TURN_DETECTION=sarvam` only |

@@ -7,8 +7,9 @@ export interface Vad {
 /**
  * Local (hybrid) detector fallbacks for the knobs that left the env surface:
  * the provider owns primary boundaries, and the Barge-in candidate knobs are
- * separate. Silence keeps the last shipped value (`.env`, 1000 ms) until the
- * adaptive pause lands (ticket 07).
+ * separate. `silenceMs` backs the non-hybrid fallback boundary and the
+ * Barge-in candidate reset; the hybrid detector's adaptive pause owns the
+ * local Turn boundary.
  */
 export const LOCAL_ENDPOINT_FALLBACKS = {
   silenceMs: 1000,

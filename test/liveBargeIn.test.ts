@@ -251,7 +251,9 @@ describe('live barge-in', () => {
     const live = new LiveCallSession({
       identity: { callSid: 'CAhold', streamSid: 'MZhold' },
       sendAudio: () => {},
-      vad: scriptVad([...speech(50), ...silence(35), ...speech(60), ...silence(100)]),
+      // The local detector takes the adaptive 300 ms floor (15 frames), so the
+      // scripted interruption starts where the session's own boundary lands.
+      vad: scriptVad([...speech(50), ...silence(15), ...speech(60), ...silence(100)]),
       policy: POLICY,
       transcriber: queueTranscriber(['what are your hours', 'never mind']),
       tts,

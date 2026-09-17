@@ -102,8 +102,9 @@ export interface LiveCallOptions {
   bargeInConfirmMs?: number;
   /**
    * `sarvam` (default): the provider owns Turn boundaries when the realtime
-   * channel is in VAD mode. `hybrid`: the local detector owns them. Without a
-   * boundary-capable realtime channel the local detector is used either way.
+   * channel is in VAD mode. `hybrid`: the local detector owns them and the
+   * socket is switched to manual mode. Without a boundary-capable realtime
+   * channel the local detector is used either way.
    */
   turnDetection?: TurnDetection;
   /** Echo-gate tuning; defaults ship the bench-tuned values. */
@@ -356,8 +357,11 @@ export class LiveCallSession {
     this.holdAfterMs = opts.holdAfterMs ?? 3000;
     this.noResponseMs = opts.noResponseMs ?? 0;
     this.availabilityTimeoutMs = opts.availabilityTimeoutMs ?? 0;
-    this.providerBoundaries =
-      (opts.turnDetection ?? 'sarvam') === 'sarvam' && opts.realtime?.endpointing === 'vad';
+    const turnDetection = opts.turnDetection ?? 'sarvam';
+    // Hybrid delegates boundaries to the local detector, so the provider must
+    // not own them: the socket runs in manual mode for the whole call.
+    if (turnDetection === 'hybrid') opts.realtime?.setEndpointing?.('manual');
+    this.providerBoundaries = turnDetection === 'sarvam' && opts.realtime?.endpointing === 'vad';
     this.turnDeadlineMs = opts.turnDeadlineMs ?? DEFAULT_TURN_DEADLINE_MS;
     this.fixedCache = opts.fixedCache;
     this.reducer = opts.dialogue ?? new DialogueReducer();
@@ -605,6 +609,16 @@ export class LiveCallSession {
     this.trace?.({ component: 'call', event: 'phase', phase });
   }
 
+  /**
+   * Single write path for dialogue state. The turn-taking module keys its
+   * field-collection floor off the phase, so the local detector knows when the
+   * Caller is dictating a name or phone number.
+   */
+  private setDialogue(state: DialogueState): void {
+    this.dialogue = state;
+    this.turnTaking.observeDialogueState(state.phase === 'collecting-patient');
+  }
+
   /** Queue a whole logical response behind whatever is already playing. */
   private enqueueResponse(
     text: string | null,
@@ -687,7 +701,7 @@ export class LiveCallSession {
       }
       if (this.activeTurn && speech.text) this.activeTurn.replySoFar = speech.text;
       if (opts.kind === 'readback') {
-        this.dialogue = this.reducer.markReadbackPlayed(this.dialogue, generation);
+        this.setDialogue(this.reducer.markReadbackPlayed(this.dialogue, generation));
       }
     } finally {
       this.activeSpeech = null;
@@ -711,7 +725,7 @@ export class LiveCallSession {
   private onCleared(speech: ActiveSpeech, reason: string): void {
     this.trace?.({ component: 'call', event: 'playback-cleared', reason, generation: speech.generation });
     if (speech.kind === 'readback') {
-      this.dialogue = this.reducer.clearReadback(this.dialogue);
+      this.setDialogue(this.reducer.clearReadback(this.dialogue));
     }
   }
 
@@ -744,7 +758,7 @@ export class LiveCallSession {
       speech.abort.abort('caller-barge-in');
       speech.response.cancel('caller-barge-in');
       this.cancelledThrough = speech.generation;
-      if (speech.kind === 'readback') this.dialogue = this.reducer.clearReadback(this.dialogue);
+      if (speech.kind === 'readback') this.setDialogue(this.reducer.clearReadback(this.dialogue));
     }
     // A reply still waiting on its first token (e.g. behind a hold line) is
     // aborted too, so the interrupted Turn never speaks after the Caller has
@@ -990,7 +1004,7 @@ export class LiveCallSession {
       state: this.dialogue,
       callerPhone: this.identity.callerPhone,
     });
-    this.dialogue = state;
+    this.setDialogue(state);
     const patientChanged =
       state.patient.name !== before.patient.name || state.patient.phone !== before.patient.phone;
     this.trace?.({ component: 'dialogue', event: 'reduced', turn, phase: state.phase, decision: decision.kind });
@@ -1005,7 +1019,7 @@ export class LiveCallSession {
           callerPhone: this.identity.callerPhone,
           slots,
         }));
-        this.dialogue = state;
+        this.setDialogue(state);
         this.trace?.({
           component: 'dialogue',
           event: 'reduced',
@@ -1152,7 +1166,7 @@ export class LiveCallSession {
       ? `Booked. ${patient.name} is confirmed for ${slot.service} at ${slot.location} on ${spokenDate(slot.date)} at ${spokenTime(slot.time)}.`
       : BOOKING_FAILURE_LINE;
     this.logPhase('booking', 'outcome', { turn, ok: outcome.ok, reason: outcome.ok ? undefined : outcome.reason });
-    this.dialogue = { ...this.dialogue, phase: outcome.ok ? 'idle' : 'choosing-slot', readback: undefined, confirmation: undefined };
+    this.setDialogue({ ...this.dialogue, phase: outcome.ok ? 'idle' : 'choosing-slot', readback: undefined, confirmation: undefined });
     this.logTurn?.({
       callSid: this.identity.callSid,
       turn,
