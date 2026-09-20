@@ -16,7 +16,7 @@ _Avoid_: test booking
 - **Picktime page**: the single configured booking page from env for v1; it currently exposes one service, one doctor, and two Locations.
 - **Endpointing**: deciding the caller has stopped speaking; the Receptionist replies only after it. The local detector always owns it: the Caller-adaptive pause plus partial-transcript completeness.
 _Avoid_: silence timeout
-- **Hedge**: starting the REST transcription alongside a slow realtime final instead of waiting out the adapter timeout; the first non-empty result wins, and the provider final is preferred while the REST request is in flight.
+- **Hedge**: starting the REST transcription at Turn commit, before the realtime final lands, so an empty final resolves in `max(final, REST)`; the realtime final wins whenever it lands non-empty.
 _Avoid_: timeout fallback, race
 - **Stream session**: one call's bidirectional audio websocket; it replaces the per-turn webhook chain while live streaming is enabled.
 - **Turn**: one caller utterance → transcription → reply cycle, inside a Stream session while streaming is enabled. A Turn may begin while the previous reply is still being spoken (Barge-in).

@@ -12,7 +12,7 @@ sh scripts/fetch-vad-model.sh
 
 ## 2. Required env vars
 
-The live streaming loop is the default (`VOICE_LOOP=stream`), and transcription defaults to OpenAI's realtime channel (`STT_PROVIDER=openai-realtime`, `gpt-live-transcribe`) with `whisper-1` REST as the per-Turn fallback. Set `STT_PROVIDER=openai` or `groq` to transcribe through Whisper REST instead, or `STT_PROVIDER=openrouter` for the OpenRouter transcriptions endpoint (`OPENROUTER_STT_MODEL`, default `openai/gpt-transcribe`). OpenRouter transcription is a completed-utterance request with no realtime channel: per-Turn partials (speculation, Backchannel semantics) are absent, and each Turn uploads its WAV before the reply can start. The OpenAI Realtime channel streams 8 kHz mu-law to a persistent socket, gated to the local detector's speech windows (the model rejects server turn detection), so `finalize` commits and reads the final ~550 ms later; it is billed on the audio appended, which the `stt close` trace reports as `bytes`/`audioMs`. Turn boundaries are always local: a Caller-adaptive pause (1.25 × p90 of the Caller's last 8 intra-utterance pauses, 150–600 ms, 300 ms until three are seen, 1.5 s emergency cap) plus partial-transcript completeness, with a 600 ms floor while collecting the Patient's name or phone. With the realtime channel, raise `STT_HEDGE_MS` (e.g. `1200`) so the REST fallback only fires on genuine stalls.
+The live streaming loop is the default (`VOICE_LOOP=stream`), and transcription defaults to OpenAI's realtime channel (`STT_PROVIDER=openai-realtime`, `gpt-live-transcribe`) with `whisper-1` REST as the per-Turn fallback. Set `STT_PROVIDER=openai` or `groq` to transcribe through Whisper REST instead, or `STT_PROVIDER=openrouter` for the OpenRouter transcriptions endpoint (`OPENROUTER_STT_MODEL`, default `openai/gpt-transcribe`). OpenRouter transcription is a completed-utterance request with no realtime channel: per-Turn partials (speculation, Backchannel semantics) are absent, and each Turn uploads its WAV before the reply can start. The OpenAI Realtime channel streams 8 kHz mu-law to a persistent socket, gated to the local detector's speech windows (the model rejects server turn detection), so `finalize` commits and reads the final ~550 ms later; it is billed on the audio appended, which the `stt close` trace reports as `bytes`/`audioMs`. Turn boundaries are always local: a Caller-adaptive pause (1.25 × p90 of the Caller's last 8 intra-utterance pauses, 150–600 ms, 300 ms until three are seen, 1.5 s emergency cap) plus partial-transcript completeness, with a 600 ms floor while collecting the Patient's name or phone. Every realtime Turn starts its REST fallback decode at commit, so an empty final resolves in about `max(final, REST)` instead of `final + REST`; a non-empty realtime final is preferred whenever it lands.
 
 | Var | Purpose |
 | --- | --- |
@@ -24,7 +24,6 @@ The live streaming loop is the default (`VOICE_LOOP=stream`), and transcription 
 | `OPENROUTER_MODEL` | Optional, default `deepseek/deepseek-v4.1-flash`: the OpenRouter assistant model, used as the fallback whenever `ASSISTANT_PROVIDER=groq`. `reasoning: effort` is sent as `OPENROUTER_REASONING_EFFORT` (default `minimal`); reasoning-mandatory endpoints refuse `none` |
 | `STREAM_WS_URL` | Public `wss://<public-host>/stream` — must be `wss://`, cannot be `ws://` |
 | `SARVAM_API_KEY` | TTS only, required when `TTS_PROVIDER=sarvam`. Sarvam is never an STT provider |
-| `STT_HEDGE_MS` | Optional, default `400`: how long a Turn waits for the realtime final before starting the REST decode alongside it. Whichever non-empty result lands first wins; the provider final is still preferred while the REST request is in flight, and REST is called at most once per Turn. `0` disables hedging and waits out the adapter's final timeout |
 | `STT_WARMUP` | Optional, default `true`: on call open, one throwaway transcription heats the REST STT route while the greeting plays, so the first Turn does not pay the provider cold start (traced `stt/warmup-start/done/error`). `false` disables |
 | `SARVAM_TTS_MIN_BUFFER_SIZE` | Optional, default `30` (the provider's floor; values below 30 are clamped up): provider-side text buffering before speech synthesis starts. Keep it near the floor so the first phrase the voice chunker pushes starts synthesizing as soon as the provider allows; raise it only if the provider's phrasing suffers |
 | `ECHO_GATE_CORRELATION` | Optional, default `0.7`: normalized cross-correlation against the played-audio reference needed to classify an inbound frame as the Receptionist's own Echo |
@@ -150,11 +149,13 @@ Component traces (`kind:"trace"`):
 - `component:"stt"` — socket `open`/`close`/`error`, `speech-start`
   (`bufferedBytes`), `final` (`ms`, `chars`, `partials`, `noSpeech`),
   `final-timeout`, `stale-final`, and REST `rest-start/rest-done/rest-error`.
-  Hedging: `hedge-start` (REST began alongside a late final), `hedge-win` (the
-  REST result answered the Turn) and `hedge-lost` (the provider final still
-  won). `second-opinion-start` marks a critical-field second decode started
-  before the primary final landed; `second-opinion-disagree` reprompts without
-  committing the field. `warmup-start/done/error` is the on-open route warm-up.
+  Hedging: `hedge-start` (REST began at commit, alongside the realtime
+  final), `hedge-win` (the REST result answered the Turn) and `hedge-lost`
+  (the realtime final still won); `hedge-error` marks a failed REST decode
+  whose realtime result is preserved. `second-opinion-start` marks a
+  critical-field second decode started before the primary final landed;
+  `second-opinion-disagree` reprompts without committing the field.
+  `warmup-start/done/error` is the on-open route warm-up.
   The OpenAI Realtime channel traces `open` (model, delay, keywords),
   `speech-start` (`bufferedBytes`), `commit` (`bytes`), `committed`, `final`
   (`ms`, `chars`, `partials`, `noSpeech`), `final-timeout`, and `close`

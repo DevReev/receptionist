@@ -778,7 +778,7 @@ describe('live full Turn (ticket 11)', () => {
       calls,
     });
     await feed(live, 100);
-    assert.equal(restCalls, 0, 'live transcript wins over the REST fallback');
+    assert.equal(restCalls, 1, 'the commit-time hedge decodes REST, but the final wins');
     assert.equal(calls.get('CArt').history[0]!.text, 'what are your hours');
     assert.ok(events.includes('finalize'));
     assert.ok(events.filter((e) => e === 'push').length > 0);
@@ -867,7 +867,7 @@ describe('live full Turn (ticket 11)', () => {
       calls,
     });
     await feed(live, 75);
-    assert.equal(restCalls, 0, 'the live channel carried the short utterance');
+    assert.equal(restCalls, 1, 'the hedge decodes REST, but the short utterance still came from the channel');
     assert.ok(events.includes('start'));
     assert.equal(calls.get('CAshort').history[0]!.text, 'yes');
     live.close('test');

@@ -414,7 +414,6 @@ export async function main(): Promise<void> {
             bargeInMinSpeechMs: config.bargeInMinSpeechMs,
             bargeInDipToleranceMs: config.bargeInDipToleranceMs,
             bargeInConfirmMs: config.bargeInConfirmMs,
-            sttHedgeMs: config.sttHedgeMs,
             warmTranscriber: config.sttWarmup,
             echoGate: {
               correlationThreshold: config.echoGateCorrelation,

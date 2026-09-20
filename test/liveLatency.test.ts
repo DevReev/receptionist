@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { CallStore } from '../src/calls.ts';
 import { LiveCallSession } from '../src/live.ts';
-import type { Assistant, Transcriber, Transcription } from '../src/app.ts';
+import type { Assistant, Transcriber, Transcription, TurnEvent } from '../src/app.ts';
 import type { Vad } from '../src/endpoint.ts';
 import type { RealtimeStt } from '../src/realtimeStt.ts';
 import type { TraceEvent } from '../src/trace.ts';
@@ -106,15 +106,24 @@ function hedgedSession(
   opts: {
     realtime: RealtimeStt;
     transcriber?: Transcriber;
-    hedgeMs?: number;
     traces?: TraceEvent[];
     calls?: CallStore;
   },
-): { live: LiveCallSession; calls: CallStore; traces: TraceEvent[]; transcriptions: string[] } {
+): {
+  live: LiveCallSession;
+  calls: CallStore;
+  traces: TraceEvent[];
+  transcriptions: string[];
+  phases: Record<string, unknown>[];
+  texts: string[];
+  turns: TurnEvent[];
+} {
   const calls = opts.calls ?? new CallStore();
   const traces = opts.traces ?? [];
+  const phases: Record<string, unknown>[] = [];
   const transcriptions: string[] = [];
-  const { tts } = stubTts();
+  const turns: TurnEvent[] = [];
+  const { tts, synthesized } = stubTts();
   const transcriber: Transcriber =
     opts.transcriber ??
     {
@@ -130,124 +139,172 @@ function hedgedSession(
     policy: POLICY,
     transcriber,
     realtime: opts.realtime,
-    sttHedgeMs: opts.hedgeMs ?? 0,
     tts,
     guide: GUIDE,
     calls,
     trace: (e) => traces.push(e),
+    logSession: (e) => phases.push(e),
+    logTurn: (e) => turns.push(e),
   });
-  return { live, calls, traces, transcriptions };
+  return { live, calls, traces, transcriptions, phases, texts: synthesized, turns };
 }
 
 function callerHistory(calls: CallStore, callSid: string): string[] {
   return calls.get(callSid).history.filter((entry) => entry.role === 'caller').map((entry) => entry.text);
 }
 
-describe('STT route warm-up', () => {
-  it('transcribes a throwaway clip on open and leaves no Turn behind', async () => {
-    const calls = new CallStore();
-    const seen: number[] = [];
-    const traces: TraceEvent[] = [];
-    const { tts } = stubTts();
-    const live = new LiveCallSession({
-      identity: { callSid: 'CAwarm', streamSid: 'MZwarm' },
-      sendAudio: () => {},
-      vad: scriptVad(silence(10)),
-      policy: POLICY,
+function transcribeDone(phases: Record<string, unknown>[]): Record<string, unknown> | undefined {
+  return phases.find((entry) => entry.phase === 'transcribe' && entry.event === 'done');
+}
+
+describe('live commit-time STT hedge', () => {
+  it('starts the REST decode at commit and uses it when the realtime final is empty', async () => {
+    const order: string[] = [];
+    let releaseRest!: (tx: Transcription) => void;
+    const restGate = new Promise<Transcription>((resolve) => {
+      releaseRest = resolve;
+    });
+    const h = hedgedSession('CAhedge1', {
+      realtime: new FakeRealtime(async () => {
+        order.push('final');
+        return { text: '', noSpeech: true };
+      }),
       transcriber: {
-        transcribe: async (wav) => {
-          seen.push(wav.length);
+        transcribe: async () => {
+          order.push('rest');
+          h.transcriptions.push('rest');
+          return restGate;
+        },
+      },
+    });
+    for (let i = 0; i < 100; i++) await h.live.receiveAudio(Buffer.alloc(FRAME_BYTES, 0xff));
+    await waitFor(() => h.transcriptions.length === 1, 'the hedge decode starts at commit');
+    assert.deepEqual(order, ['rest', 'final'], 'REST starts no later than the commit');
+    assert.equal(callerHistory(h.calls, 'CAhedge1').length, 0, 'the empty final waits for its hedge');
+    releaseRest({ text: 'rest words', noSpeech: false });
+    await waitFor(() => callerHistory(h.calls, 'CAhedge1').length === 1, 'the hedged turn');
+    assert.deepEqual(callerHistory(h.calls, 'CAhedge1'), ['rest words']);
+    assert.equal(traced(h.traces, 'stt', 'hedge-start').length, 1);
+    assert.equal(traced(h.traces, 'stt', 'hedge-win').length, 1);
+    assert.equal(transcribeDone(h.phases)?.['source'], 'realtime-empty-rest');
+  });
+
+  it('never lets the REST hedge replace a non-empty realtime final', async () => {
+    const h = hedgedSession('CAhedge2', {
+      realtime: new FakeRealtime(async () => ({ text: 'direct words', noSpeech: false })),
+      transcriber: {
+        transcribe: async () => {
+          h.transcriptions.push('rest');
+          return { text: 'rest words', noSpeech: false };
+        },
+      },
+    });
+    await feed(h.live, 100);
+    await waitFor(() => callerHistory(h.calls, 'CAhedge2').length === 1, 'the realtime turn');
+    assert.deepEqual(callerHistory(h.calls, 'CAhedge2'), ['direct words']);
+    assert.equal(h.transcriptions.length, 1, 'the hedge decode still started at commit');
+    assert.equal(traced(h.traces, 'stt', 'hedge-start').length, 1);
+    assert.equal(traced(h.traces, 'stt', 'hedge-lost').length, 1);
+    assert.equal(traced(h.traces, 'stt', 'hedge-win').length, 0);
+    assert.equal(transcribeDone(h.phases)?.['source'], 'realtime');
+  });
+
+  it('does not let an empty REST hedge result preempt a non-empty final still in flight', async () => {
+    let releaseFinal!: (tx: Transcription) => void;
+    const final = new Promise<Transcription>((resolve) => {
+      releaseFinal = resolve;
+    });
+    const h = hedgedSession('CAhedge3', {
+      realtime: new FakeRealtime(() => final),
+      transcriber: {
+        transcribe: async () => {
+          h.transcriptions.push('rest');
           return { text: '', noSpeech: true };
         },
       },
-      tts,
-      guide: GUIDE,
-      calls,
-      warmTranscriber: true,
-      trace: (e) => traces.push(e),
-    });
-    await live.open();
-    await waitFor(() => traced(traces, 'stt', 'warmup-done').length === 1, 'the warm-up completes');
-    assert.equal(seen.length, 1);
-    assert.ok(seen[0]! > 44, 'the warm-up sends a real WAV, not an empty buffer');
-    assert.equal(calls.get('CAwarm').turn, 0);
-    assert.equal(calls.get('CAwarm').history.length, 0);
-  });
-});
-
-describe('local endpointing without partials', () => {
-  it('holds a mid-sentence pause when no partial channel exists', async () => {
-    const calls = new CallStore();
-    const transcriptions: number[] = [];
-    const { tts } = stubTts();
-    const live = new LiveCallSession({
-      identity: { callSid: 'CAhold', streamSid: 'MZhold' },
-      sendAudio: () => {},
-      vad: scriptVad([...speech(50), ...silence(15), ...speech(50), ...silence(40)]),
-      policy: POLICY,
-      transcriber: {
-        transcribe: async (wav) => {
-          transcriptions.push(wav.length);
-          return { text: 'whole sentence', noSpeech: false };
-        },
-      },
-      tts,
-      guide: GUIDE,
-      calls,
-    });
-    await feed(live, 200);
-    assert.equal(transcriptions.length, 1, 'the 300 ms pause must not split the utterance');
-    assert.equal(calls.get('CAhold').turn, 1);
-  });
-});
-
-describe('live hedged STT fallback', () => {
-  it('starts REST at the hedge deadline when the realtime final is slow', async () => {
-    const h = hedgedSession('CAhedge1', {
-      realtime: new FakeRealtime(() => new Promise<Transcription>(() => {})),
-      hedgeMs: 20,
     });
     for (let i = 0; i < 100; i++) await h.live.receiveAudio(Buffer.alloc(FRAME_BYTES, 0xff));
-    await waitFor(() => callerHistory(h.calls, 'CAhedge1').length === 1, 'the hedged turn');
-    assert.deepEqual(callerHistory(h.calls, 'CAhedge1'), ['rest words']);
-    assert.equal(h.transcriptions.length, 1);
-    assert.equal(traced(h.traces, 'stt', 'hedge-start').length, 1);
-    assert.equal(traced(h.traces, 'stt', 'hedge-win').length, 1);
+    await waitFor(() => h.transcriptions.length === 1, 'the hedge decode returns empty first');
+    assert.equal(callerHistory(h.calls, 'CAhedge3').length, 0, 'the Turn waits for the final');
+    releaseFinal({ text: 'late realtime words', noSpeech: false });
+    await waitFor(() => callerHistory(h.calls, 'CAhedge3').length === 1, 'the realtime final');
+    assert.deepEqual(callerHistory(h.calls, 'CAhedge3'), ['late realtime words']);
+    assert.equal(traced(h.traces, 'stt', 'hedge-win').length, 0);
+    assert.equal(traced(h.traces, 'stt', 'hedge-lost').length, 1);
   });
 
-  it('never starts REST when the realtime final arrives inside the hedge', async () => {
-    const h = hedgedSession('CAhedge2', {
-      realtime: new FakeRealtime(async () => ({ text: 'direct words', noSpeech: false })),
-      hedgeMs: 1000,
-    });
-    await feed(h.live, 100);
-    assert.deepEqual(callerHistory(h.calls, 'CAhedge2'), ['direct words']);
-    assert.equal(h.transcriptions.length, 0);
-    assert.equal(traced(h.traces, 'stt', 'hedge-start').length, 0);
-  });
-
-  it('uses a late realtime final when it beats the hedged REST decode', async () => {
-    let release!: (tx: Transcription) => void;
-    const final = new Promise<Transcription>((resolve) => {
-      release = resolve;
-    });
-    const restGates: (() => void)[] = [];
-    const h = hedgedSession('CAhedge3', {
-      realtime: new FakeRealtime(() => final),
-      hedgeMs: 15,
+  it('resolves an empty-final Turn in about max(final, REST), not final + REST', async () => {
+    const finalDelayMs = 50;
+    const restDelayMs = 300;
+    const h = hedgedSession('CAhedge4', {
+      realtime: new FakeRealtime(
+        () => new Promise<Transcription>((resolve) => setTimeout(() => resolve({ text: '', noSpeech: true }), finalDelayMs)),
+      ),
       transcriber: {
         transcribe: async () => {
-          await new Promise<void>((resolve) => restGates.push(resolve));
+          h.transcriptions.push('rest');
+          await delay(restDelayMs);
           return { text: 'rest words', noSpeech: false };
         },
       },
     });
     for (let i = 0; i < 100; i++) await h.live.receiveAudio(Buffer.alloc(FRAME_BYTES, 0xff));
-    await waitFor(() => restGates.length === 1, 'the hedged REST decode starts');
-    release({ text: 'late realtime words', noSpeech: false });
+    const started = Date.now();
+    await waitFor(() => callerHistory(h.calls, 'CAhedge4').length === 1, 'the hedged turn');
+    const elapsed = Date.now() - started;
+    assert.ok(elapsed >= restDelayMs - 20, `waits for the in-flight REST decode (${elapsed}ms)`);
+    assert.ok(elapsed < finalDelayMs + restDelayMs - 40, `must not pay final + REST (${elapsed}ms)`);
+  });
+
+  it('falls back to REST when the realtime final fails', async () => {
+    const h = hedgedSession('CAhedge5', {
+      realtime: new FakeRealtime(() => Promise.reject(new Error('realtime-final-timeout'))),
+      transcriber: {
+        transcribe: async () => {
+          h.transcriptions.push('rest');
+          return { text: 'rest words', noSpeech: false };
+        },
+      },
+    });
+    await feed(h.live, 100);
+    await waitFor(() => callerHistory(h.calls, 'CAhedge5').length === 1, 'the REST turn');
+    assert.deepEqual(callerHistory(h.calls, 'CAhedge5'), ['rest words']);
+    assert.equal(h.transcriptions.length, 1, 'the commit-time hedge is the only decode');
+    assert.equal(transcribeDone(h.phases)?.['source'], 'rest');
+  });
+
+  it('preserves a non-empty realtime final when the REST hedge errors', async () => {
+    const h = hedgedSession('CAhedge6', {
+      realtime: new FakeRealtime(async () => ({ text: 'direct words', noSpeech: false })),
+      transcriber: {
+        transcribe: async () => {
+          h.transcriptions.push('rest');
+          throw new Error('rest-boom');
+        },
+      },
+    });
+    await feed(h.live, 100);
+    await waitFor(() => callerHistory(h.calls, 'CAhedge6').length === 1, 'the realtime turn');
+    assert.deepEqual(callerHistory(h.calls, 'CAhedge6'), ['direct words']);
+    assert.equal(transcribeDone(h.phases)?.['source'], 'realtime');
+  });
+
+  it('reaches the miss path when both the final and the REST hedge are empty', async () => {
+    const h = hedgedSession('CAhedge7', {
+      realtime: new FakeRealtime(async () => ({ text: '', noSpeech: true })),
+      transcriber: {
+        transcribe: async () => {
+          h.transcriptions.push('rest');
+          return { text: '', noSpeech: true };
+        },
+      },
+    });
+    await feed(h.live, 100);
     await h.live.flush();
-    assert.deepEqual(callerHistory(h.calls, 'CAhedge3'), ['late realtime words']);
-    assert.equal(traced(h.traces, 'stt', 'hedge-lost').length, 1);
+    assert.equal(callerHistory(h.calls, 'CAhedge7').length, 0, 'nothing reaches history');
+    assert.equal(h.turns.length, 1);
+    assert.equal(h.turns[0]!.miss, true, 'the Turn is a miss');
+    assert.ok(h.texts.some((text) => /say that again/.test(text)), 'the Caller is reprompted');
   });
 
   it('starts the critical-field second decode while the realtime final is pending', async () => {
@@ -381,7 +438,7 @@ describe('live hedged STT fallback', () => {
         return { audio: Buffer.from([0xff]) };
       },
       begin: () => {
-        throw new Error('sarvam-tts-stream-unavailable');
+        throw new Error('tts-stream-unavailable');
       },
     };
     const assistant: Assistant = {
@@ -452,23 +509,6 @@ describe('live hedged STT fallback', () => {
     release();
     await live.flush();
     assert.ok(pushes.some((text) => text.includes('thanks for calling')), pushes.join(' | '));
-  });
-
-  it('uses the hedged REST decode exactly once when the realtime final fails', async () => {
-    let failFinal!: (err: Error) => void;
-    const final = new Promise<Transcription>((_, reject) => {
-      failFinal = reject;
-    });
-    const h = hedgedSession('CAhedge4', {
-      realtime: new FakeRealtime(() => final),
-      hedgeMs: 15,
-    });
-    for (let i = 0; i < 100; i++) await h.live.receiveAudio(Buffer.alloc(FRAME_BYTES, 0xff));
-    await delay(30);
-    failFinal(new Error('realtime-final-timeout'));
-    await waitFor(() => callerHistory(h.calls, 'CAhedge4').length === 1, 'the REST turn');
-    assert.deepEqual(callerHistory(h.calls, 'CAhedge4'), ['rest words']);
-    assert.equal(h.transcriptions.length, 1);
   });
 });
 

@@ -262,22 +262,6 @@ describe('config', () => {
     assert.equal(tuned.openrouterSttModel, 'openai/gpt-4o-mini-transcribe');
   });
 
-  it('defaults the STT hedge to 400 ms and lets the operator tune or disable it', () => {
-    const base = {
-      OPENAI_API_KEY: 'sk-openai',
-      OPENROUTER_API_KEY: 'o',
-      TWILIO_ACCOUNT_SID: 'ACx',
-      TWILIO_AUTH_TOKEN: 't',
-      STREAM_WS_URL: 'wss://example.com/stream',
-      SARVAM_API_KEY: 'sk-sarvam',
-    };
-    assert.equal(loadConfig(base).sttHedgeMs, 400);
-    assert.equal(loadConfig({ ...base, STT_HEDGE_MS: '250' }).sttHedgeMs, 250);
-    assert.equal(loadConfig({ ...base, STT_HEDGE_MS: '0' }).sttHedgeMs, 0);
-  });
-
-
-
   it('no longer carries the fixed silence and max-utterance knobs', () => {
     const cfg = loadConfig({
       OPENAI_API_KEY: 'sk-openai',

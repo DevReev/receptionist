@@ -122,12 +122,6 @@ export interface LiveCallOptions {
   speculation?: boolean;
   /** Whole-Turn deadline for the LLM response. <=0 disables. */
   turnDeadlineMs?: number;
-  /**
-   * Start the REST decode this many ms into a slow realtime final and race the
-   * results, so the Turn never waits out the adapter's full final timeout
-   * before the fallback begins. <=0 disables hedging (wait, then fall back).
-   */
-  sttHedgeMs?: number;
   /** Shared fixed-phrase audio cache; hits skip the provider. */
   fixedCache?: FixedAudioCache;
   /** Injectable reducer for deterministic tests. */
@@ -358,7 +352,6 @@ export class LiveCallSession {
   private readonly noResponseMs: number;
   private readonly availabilityTimeoutMs: number;
   private readonly turnDeadlineMs: number;
-  private readonly sttHedgeMs: number;
   private readonly fixedCache: FixedAudioCache | undefined;
   private readonly speculationEnabled: boolean;
   /** A partial-started generation awaiting its Turn's final. */
@@ -443,7 +436,6 @@ export class LiveCallSession {
     this.noResponseMs = opts.noResponseMs ?? 0;
     this.availabilityTimeoutMs = opts.availabilityTimeoutMs ?? 0;
     this.turnDeadlineMs = opts.turnDeadlineMs ?? DEFAULT_TURN_DEADLINE_MS;
-    this.sttHedgeMs = opts.sttHedgeMs ?? 0;
     this.fixedCache = opts.fixedCache;
     this.speculationEnabled = opts.speculation ?? true;
     this.cueNames = guideBookingNames(this.guide.raw);
@@ -784,13 +776,6 @@ export class LiveCallSession {
           detail: this.errorText(err),
         }),
     );
-  }
-
-  private afterMs(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-      const timer = setTimeout(resolve, ms);
-      timer.unref?.();
-    });
   }
 
   /**
@@ -1367,87 +1352,56 @@ export class LiveCallSession {
       }
       let tx: Transcription | null = null;
       let source = 'rest';
-      // The hedged REST decode starts at most once per Turn, so a slow
-      // provider final never waits out the full adapter timeout first.
-      let hedged: Promise<Transcription> | null = null;
-      const startHedge = (): Promise<Transcription> => {
-        if (hedged === null) {
-          hedged = this.transcriber.transcribe(wav!, 'audio/wav');
-          hedged.catch(() => {});
-          this.trace?.({ component: 'stt', event: 'hedge-start', turn, ms: this.sttHedgeMs });
+      // Commit-time hedge: the REST decode starts the moment the utterance is
+      // committed to the realtime channel, so an empty final never pays the
+      // commit-to-final wait and then a fresh REST decode on top.
+      let rest: Promise<Transcription> | null = null;
+      const startRest = (): Promise<Transcription> => {
+        if (rest === null) {
+          rest = this.transcriber.transcribe(wav!, 'audio/wav');
+          rest.catch(() => {});
+          this.trace?.({ component: 'stt', event: 'hedge-start', turn });
         }
-        return hedged;
+        return rest;
       };
       if (this.realtime) {
+        startRest();
         const finalize = this.realtime.finalize();
         const settledFinal = finalize.then(
           (t) => ({ kind: 'final' as const, t }),
           (err: unknown) => ({ kind: 'final-error' as const, err }),
         );
-        if (this.sttHedgeMs > 0) {
-          const winner = await Promise.race([
-            settledFinal,
-            this.afterMs(this.sttHedgeMs).then(() => ({ kind: 'hedge' as const })),
-          ]);
-          if (winner.kind === 'final') {
-            tx = winner.t;
-            source = 'realtime';
-          } else if (winner.kind === 'final-error') {
-            this.logPhase('transcribe', 'fallback', {
-              turn,
-              ms: Date.now() - transcribeStarted,
-              detail: this.errorText(winner.err),
-            });
-            if (this.closed) return;
-          } else {
-            const rest = startHedge();
-            const raced = await Promise.race([
-              settledFinal,
-              rest.then(
-                (t) => ({ kind: 'rest' as const, t }),
-                (err: unknown) => ({ kind: 'rest-error' as const, err }),
-              ),
-            ]);
-            if (raced.kind === 'final') {
-              tx = raced.t;
-              source = 'realtime';
-              this.trace?.({ component: 'stt', event: 'hedge-lost', turn });
-            } else if (raced.kind === 'rest') {
-              tx = raced.t;
-              source = 'rest';
-              this.trace?.({ component: 'stt', event: 'hedge-win', turn });
-            } else {
-              // The hedge decode failed; the provider final may still land.
-              const late = await settledFinal;
-              if (late.kind === 'final') {
-                tx = late.t;
-                source = 'realtime';
-                this.trace?.({ component: 'stt', event: 'hedge-lost', turn });
-              }
-            }
-          }
+        const settled = await settledFinal;
+        if (settled.kind === 'final') {
+          // A non-empty realtime final is preferred whenever it lands, even
+          // when the REST hedge already returned.
+          tx = settled.t;
+          source = 'realtime';
+          if (settled.t.text.trim()) this.trace?.({ component: 'stt', event: 'hedge-lost', turn });
         } else {
-          const settled = await settledFinal;
-          if (settled.kind === 'final') {
-            tx = settled.t;
-            source = 'realtime';
-          } else {
-            this.logPhase('transcribe', 'fallback', {
-              turn,
-              ms: Date.now() - transcribeStarted,
-              detail: this.errorText(settled.err),
-            });
-            if (this.closed) return;
-          }
+          this.logPhase('transcribe', 'fallback', {
+            turn,
+            ms: Date.now() - transcribeStarted,
+            detail: this.errorText(settled.err),
+          });
+          if (this.closed) return;
         }
       }
-      // An empty realtime final may re-decode through REST before counting as no speech.
+      // An empty realtime final uses the decode already in flight; a REST
+      // failure with a realtime result never overrides it.
       if (!tx || !tx.text.trim()) {
-        const rest = hedged ?? this.transcriber.transcribe(wav, 'audio/wav');
-        const result = await rest;
+        let result: Transcription;
+        try {
+          result = await (rest ?? this.transcriber.transcribe(wav, 'audio/wav'));
+        } catch (err) {
+          if (!tx) throw err;
+          this.trace?.({ component: 'stt', event: 'hedge-error', turn, detail: this.errorText(err) });
+          result = tx;
+        }
         if (result.text.trim() || !tx) {
           tx = result;
-          source = source === 'realtime' ? 'realtime-empty-rest' : 'rest';
+          if (source === 'realtime') source = 'realtime-empty-rest';
+          if (result.text.trim()) this.trace?.({ component: 'stt', event: 'hedge-win', turn });
         }
       }
       if (this.closed) return;

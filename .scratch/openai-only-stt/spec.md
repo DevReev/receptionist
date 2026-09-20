@@ -1,6 +1,6 @@
 # OpenAI-only STT: remove Sarvam from the speech-to-text loop and hedge the REST fallback
 
-**Status:** ready-for-agent
+**Status:** done
 
 ## Problem Statement
 

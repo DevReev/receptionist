@@ -70,8 +70,6 @@ export interface Config {
   recordMaxLength: number;
   voiceLoop: VoiceLoop;
   streamWsUrl: string;
-  /** Start the REST STT decode this many ms into a slow realtime final; <=0 disables. */
-  sttHedgeMs: number;
   /** Warm the REST transcription route on call open to hide provider cold start. */
   sttWarmup: boolean;
   vadThreshold: number;
@@ -252,7 +250,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     recordMaxLength: int(env, 'RECORD_MAX_LENGTH', 30),
     voiceLoop,
     streamWsUrl,
-    sttHedgeMs: int(env, 'STT_HEDGE_MS', 400),
     sttWarmup: bool(env, 'STT_WARMUP', true),
     vadThreshold: float(env, 'VAD_SPEECH_THRESHOLD', 0.1),
     echoGateCorrelation: float(env, 'ECHO_GATE_CORRELATION', 0.7),
