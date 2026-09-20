@@ -5,10 +5,10 @@ import { latencyText, latencySummary, type Summary } from './benchmark.ts';
  * Offline analysis of one live call's JSON log lines (the stdout capture the
  * RUNBOOK tails into `/tmp/receptionist.log`). It rebuilds the caller-observable
  * numbers the acceptance report promises — reply latency, stop latency,
- * Backchannel absorption and false stops, Echo false stops, stalls, detector
- * switches, speculation, interrupted readbacks, and Booking writes — from
- * structured traces, so no audio decoding or provider access is needed on the
- * reporting path. The debug-audio captures are listed, not re-analysed.
+ * Backchannel absorption and false stops, Echo false stops, speculation,
+ * interrupted readbacks, and Booking writes — from structured traces, so no
+ * audio decoding or provider access is needed on the reporting path. The
+ * debug-audio captures are listed, not re-analysed.
  */
 export interface LogLine {
   at: number;
@@ -47,13 +47,10 @@ export interface LiveCallMetrics {
   stopLatenciesMs: number[];
   stopLatencyMs: Summary;
   bargeIns: number;
-  corroboratedBargeIns: number;
   selfEchoBargeIns: number;
   backchannelAbsorptions: number;
   backchannelFalseStops: number;
   echoGate: LiveEchoGateSummary;
-  stalls: number;
-  detectorSwitches: number;
   speculation: LiveSpeculationSummary;
   readbackDecisions: number;
   interruptedReadbacks: number;
@@ -122,7 +119,6 @@ function bool(value: unknown): boolean | undefined {
 interface BargeIn {
   at: number;
   candidateMs: number;
-  corroborated: boolean;
 }
 
 interface Clear {
@@ -161,8 +157,6 @@ export function analyzeCall(lines: LogLine[], callSid: string): LiveCallMetrics 
   let openAt: string | undefined;
   let closeAt: string | undefined;
   let closeReason: string | undefined;
-  let stalls = 0;
-  let detectorSwitches = 0;
   let backchannelAbsorptions = 0;
   let holdLines = 0;
   const speculation: LiveSpeculationSummary = { started: 0, kept: 0, aborted: 0 };
@@ -208,6 +202,8 @@ export function analyzeCall(lines: LogLine[], callSid: string): LiveCallMetrics 
     }
     if (line.kind !== 'trace') continue;
 
+    // Historical provider-boundary logs (pre-openai-only-stt): no
+    // `vad/endpoint` line, so the provider end-of-turn anchors the Turn.
     if (line.component === 'stt' && line.event === 'vad-speech-end') {
       speechEnds.push(line.at);
       continue;
@@ -228,11 +224,7 @@ export function analyzeCall(lines: LogLine[], callSid: string): LiveCallMetrics 
       continue;
     }
     if (line.component === 'call' && line.event === 'barge-in') {
-      bargeIns.push({
-        at: line.at,
-        candidateMs: num(line.data.candidateMs) ?? 0,
-        corroborated: bool(line.data.corroborated) === true,
-      });
+      bargeIns.push({ at: line.at, candidateMs: num(line.data.candidateMs) ?? 0 });
       continue;
     }
     if (line.component === 'call' && line.event === 'playback-cleared') {
@@ -252,14 +244,6 @@ export function analyzeCall(lines: LogLine[], callSid: string): LiveCallMetrics 
     }
     if (line.component === 'echo-gate' && line.event === 'decision') {
       decisions.push({ at: line.at, echo: bool(line.data.echo) === true, reason: str(line.data.reason) ?? '' });
-      continue;
-    }
-    if (line.component === 'call' && line.event === 'stall') {
-      stalls += 1;
-      continue;
-    }
-    if (line.component === 'call' && line.event === 'detector-switch') {
-      detectorSwitches += 1;
       continue;
     }
     if (line.component === 'call' && line.event === 'speculation-start') {
@@ -385,13 +369,10 @@ export function analyzeCall(lines: LogLine[], callSid: string): LiveCallMetrics 
     stopLatenciesMs,
     stopLatencyMs: latencySummary(stopLatenciesMs),
     bargeIns: bargeIns.length,
-    corroboratedBargeIns: bargeIns.filter((bargeIn) => bargeIn.corroborated).length,
     selfEchoBargeIns,
     backchannelAbsorptions,
     backchannelFalseStops,
     echoGate,
-    stalls,
-    detectorSwitches,
     speculation,
     readbackDecisions: readbackDecisions.length,
     interruptedReadbacks,
@@ -438,10 +419,10 @@ export function formatLiveCallReport(metrics: LiveCallMetrics): string {
     `turns ${metrics.turns}  boundaries provider ${metrics.boundaries.provider} local ${metrics.boundaries.local}`,
     `reply latency ${latencyText(metrics.replyLatencyMs)}`,
     `stop latency ${latencyText(metrics.stopLatencyMs)}`,
-    `barge-in ${metrics.bargeIns} (corroborated ${metrics.corroboratedBargeIns})  self-echo barge-ins ${metrics.selfEchoBargeIns}`,
+    `barge-in ${metrics.bargeIns}  self-echo barge-ins ${metrics.selfEchoBargeIns}`,
     `backchannels absorbed ${metrics.backchannelAbsorptions}  false-stop ${metrics.backchannelFalseStops}`,
     `echo-gate frames ${metrics.echoGate.decisions}  echo ${metrics.echoGate.echoFrames}  caller ${metrics.echoGate.callerFrames}  silence ${metrics.echoGate.silentFrames}`,
-    `stalls ${metrics.stalls}  detector switches ${metrics.detectorSwitches}  hold lines ${metrics.holdLines}`,
+    `hold lines ${metrics.holdLines}`,
     `speculation started ${metrics.speculation.started} kept ${metrics.speculation.kept} aborted ${metrics.speculation.aborted}`,
     `readbacks ${metrics.readbackDecisions}  interrupted ${metrics.interruptedReadbacks}  bookings ${metrics.bookingsSaved}/${metrics.bookingAttempts} saved`,
     `audio captures ${metrics.audioCaptures.length}`,

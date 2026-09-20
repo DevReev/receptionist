@@ -1,4 +1,17 @@
+import type { Vad } from '../src/endpoint.ts';
 import type { StreamObserver, StreamSocket } from '../src/stream.ts';
+
+/** 20 ms of 8 kHz mu-law, the Twilio media frame size. */
+export const FRAME_BYTES = 160;
+/** Audible caller audio: 0xFF is mu-law silence and can never be Caller speech. */
+export const SPEECH_FRAME = Buffer.alloc(FRAME_BYTES, 0x11);
+export const SILENCE_FRAME = Buffer.alloc(FRAME_BYTES, 0xff);
+
+/** The frame bytes are the script: 0x11 is audible speech, 0xFF is silence. */
+export const byteVad: Vad = {
+  score: async (pcm) => (pcm.every((sample) => sample === 0) ? 0.05 : 0.9),
+  reset: () => {},
+};
 
 /** In-memory stand-in for a Twilio Media Streams websocket. No network. */
 export class FakeSocket implements StreamSocket {

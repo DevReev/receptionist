@@ -9,10 +9,7 @@ import { HOLD_ASSISTANT_LINE } from '../src/app.ts';
 import type { PlaybackResult } from '../src/transport.ts';
 import type { Tts } from '../src/tts.ts';
 import { echoFrame, voice } from './voiceFixtures.ts';
-
-const FRAME_BYTES = 160;
-/** Audible caller audio: 0xFF is mu-law silence and can never be Caller speech. */
-const SPEECH_FRAME = Buffer.alloc(FRAME_BYTES, 0x11);
+import { FRAME_BYTES, SPEECH_FRAME } from './fakeStream.ts';
 const POLICY = { silenceMs: 700, minSpeechMs: 300, maxUtteranceMs: 30000, threshold: 0.5, latchDipMs: 200 };
 const GUIDE = { raw: '# Clinic Guide — Maple Clinic\n', name: 'Maple Clinic' };
 const AVAILABILITY =

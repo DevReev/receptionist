@@ -2,24 +2,16 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { CallStore } from '../src/calls.ts';
 import { LiveCallSession } from '../src/live.ts';
-import type { Utterance, Vad } from '../src/endpoint.ts';
+import type { Utterance } from '../src/endpoint.ts';
 import type { Assistant, Transcription } from '../src/app.ts';
 import type { PartialTranscript, RealtimeStt } from '../src/realtimeStt.ts';
+import { FRAME_BYTES, SILENCE_FRAME, SPEECH_FRAME, byteVad } from './fakeStream.ts';
 import type { Tts } from '../src/tts.ts';
 
-const FRAME_BYTES = 160; // 20 ms of 8 kHz mulaw.
-const SPEECH_FRAME = Buffer.alloc(FRAME_BYTES, 0x11);
-const SILENCE_FRAME = Buffer.alloc(FRAME_BYTES, 0xff);
 const POLICY = { silenceMs: 5000, minSpeechMs: 300, maxUtteranceMs: 30000, threshold: 0.5, latchDipMs: 200 };
 const GUIDE = { raw: '# Clinic Guide — Maple Clinic\n', name: 'Maple Clinic' };
 const AVAILABILITY =
   'AVAILABILITY (fetched live — only these slots exist)\n- 2026-09-30 09:30 Appointment with Bob Gowda at Bobby Clinic';
-
-/** The frame bytes are the script: 0x11 is audible speech, 0xFF is mu-law silence. */
-const byteVad: Vad = {
-  score: async (pcm) => (pcm.every((sample) => sample === 0) ? 0.05 : 0.9),
-  reset: () => {},
-};
 
 async function waitFor(cond: () => boolean, what: string): Promise<void> {
   const deadline = Date.now() + 2000;

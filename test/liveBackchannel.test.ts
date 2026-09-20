@@ -8,11 +8,8 @@ import type { PartialTranscript, RealtimeStt } from '../src/realtimeStt.ts';
 import type { PlaybackResult } from '../src/transport.ts';
 import type { TraceEvent } from '../src/trace.ts';
 import type { Tts } from '../src/tts.ts';
+import { FRAME_BYTES, SILENCE_FRAME, SPEECH_FRAME, byteVad } from './fakeStream.ts';
 
-const FRAME_BYTES = 160;
-/** Audible caller audio: 0xFF is mu-law silence and can never be Caller speech. */
-const SPEECH_FRAME = Buffer.alloc(FRAME_BYTES, 0x11);
-const SILENCE_FRAME = Buffer.alloc(FRAME_BYTES, 0xff);
 const POLICY = { silenceMs: 700, minSpeechMs: 300, maxUtteranceMs: 30000, threshold: 0.5, latchDipMs: 200 };
 const GUIDE = { raw: '# Clinic Guide — Maple Clinic\n', name: 'Maple Clinic' };
 const AVAILABILITY =
@@ -28,12 +25,6 @@ function scriptVad(pattern: ('speech' | 'silence')[]): Vad {
     reset: () => {},
   };
 }
-
-/** The frame bytes are the script: 0x11 is audible speech, 0xFF is silence. */
-const byteVad: Vad = {
-  score: async (pcm) => (pcm.every((sample) => sample === 0) ? 0.05 : 0.9),
-  reset: () => {},
-};
 
 const speech = (n: number): ('speech' | 'silence')[] => Array(n).fill('speech');
 const silence = (n: number): ('speech' | 'silence')[] => Array(n).fill('silence');

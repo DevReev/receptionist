@@ -8,8 +8,8 @@ import type { PartialTranscript, RealtimeStt } from '../src/realtimeStt.ts';
 import type { Tts } from '../src/tts.ts';
 import type { TraceEvent } from '../src/trace.ts';
 import type { PlaybackResult } from '../src/transport.ts';
+import { FRAME_BYTES, SILENCE_FRAME, SPEECH_FRAME, byteVad } from './fakeStream.ts';
 
-const FRAME_BYTES = 160; // 20 ms of 8 kHz mulaw.
 const POLICY = { silenceMs: 700, minSpeechMs: 300, maxUtteranceMs: 30000, threshold: 0.5, latchDipMs: 200 };
 const GUIDE = {
   raw: [
@@ -31,14 +31,6 @@ const GUIDE = {
 };
 const AVAILABILITY =
   'AVAILABILITY (fetched live — only these slots exist)\n- 2026-09-30 09:30 Appointment with Bob Gowda at Bobby Clinic';
-
-/** The local detector owns boundaries: 0x11 is audible speech, 0xFF is silence. */
-const SPEECH_FRAME = Buffer.alloc(FRAME_BYTES, 0x11);
-const SILENCE_FRAME = Buffer.alloc(FRAME_BYTES, 0xff);
-const byteVad: Vad = {
-  score: async (pcm) => (pcm.every((sample) => sample === 0) ? 0.05 : 0.9),
-  reset: () => {},
-};
 
 async function waitFor(cond: () => boolean, what: string): Promise<void> {
   const deadline = Date.now() + 2000;

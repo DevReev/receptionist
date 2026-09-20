@@ -161,15 +161,14 @@ describe('live call analysis: barge-in', () => {
     const metrics = analyzeCall(
       parse([
         session(0, 'open'),
-        trace(10000, 'call', 'barge-in', { generation: 3, candidateMs: 220, corroborated: true }),
+        trace(10000, 'call', 'barge-in', { generation: 3, candidateMs: 220 }),
         trace(10002, 'call', 'playback-cleared', { reason: 'caller-barge-in', generation: 3 }),
-        trace(20000, 'call', 'barge-in', { generation: 4, candidateMs: 240, corroborated: false }),
+        trace(20000, 'call', 'barge-in', { generation: 4, candidateMs: 240 }),
         trace(20001, 'call', 'playback-cleared', { reason: 'caller-barge-in', generation: 4 }),
       ]),
       'CAone',
     );
     assert.equal(metrics.bargeIns, 2);
-    assert.equal(metrics.corroboratedBargeIns, 1);
     assert.deepEqual(metrics.stopLatenciesMs, [222, 241]);
     assert.equal(metrics.stopLatencyMs.p50, 222);
   });
@@ -178,9 +177,9 @@ describe('live call analysis: barge-in', () => {
     const metrics = analyzeCall(
       parse([
         session(0, 'open'),
-        trace(10000, 'call', 'barge-in', { generation: 3, candidateMs: 500, corroborated: false }),
+        trace(10000, 'call', 'barge-in', { generation: 3, candidateMs: 500 }),
         trace(10001, 'twilio', 'clear-sent', { reason: 'caller-barge-in' }),
-        trace(15000, 'call', 'barge-in', { generation: 4, candidateMs: 200, corroborated: true }),
+        trace(15000, 'call', 'barge-in', { generation: 4, candidateMs: 200 }),
         trace(15001, 'call', 'playback-cleared', { reason: 'caller-barge-in', generation: 4 }),
       ]),
       'CAone',
@@ -194,10 +193,10 @@ describe('live call analysis: barge-in', () => {
         session(0, 'open'),
         trace(9900, 'echo-gate', 'decision', { echo: true, reason: 'echo' }),
         trace(9950, 'echo-gate', 'decision', { echo: true, reason: 'echo' }),
-        trace(10000, 'call', 'barge-in', { generation: 3, candidateMs: 240, corroborated: false }),
+        trace(10000, 'call', 'barge-in', { generation: 3, candidateMs: 240 }),
         trace(10001, 'call', 'playback-cleared', { reason: 'caller-barge-in', generation: 3 }),
         trace(19900, 'echo-gate', 'decision', { echo: false, reason: 'double-talk' }),
-        trace(20000, 'call', 'barge-in', { generation: 4, candidateMs: 200, corroborated: true }),
+        trace(20000, 'call', 'barge-in', { generation: 4, candidateMs: 200 }),
         trace(20001, 'call', 'playback-cleared', { reason: 'caller-barge-in', generation: 4 }),
       ]),
       'CAone',
@@ -211,7 +210,7 @@ describe('live call analysis: barge-in', () => {
       parse([
         session(0, 'open'),
         trace(9950, 'echo-gate', 'decision', { echo: false, reason: 'no-reference' }),
-        trace(10000, 'call', 'barge-in', { generation: 3, candidateMs: 240, corroborated: false }),
+        trace(10000, 'call', 'barge-in', { generation: 3, candidateMs: 240 }),
         trace(10001, 'call', 'playback-cleared', { reason: 'caller-barge-in', generation: 3 }),
       ]),
       'CAone',
@@ -225,7 +224,7 @@ describe('live call analysis: barge-in', () => {
         session(0, 'open'),
         trace(10000, 'call', 'backchannel', { durationMs: 260, text: 'okay' }),
         trace(20000, 'echo-gate', 'decision', { echo: false, reason: 'double-talk' }),
-        trace(20100, 'call', 'barge-in', { generation: 4, candidateMs: 200, corroborated: true }),
+        trace(20100, 'call', 'barge-in', { generation: 4, candidateMs: 200 }),
         trace(20101, 'call', 'playback-cleared', { reason: 'caller-barge-in', generation: 4 }),
         turn(21000, { excerpt: 'mm-hmm', reply: 'Certainly.', endCall: false, miss: false }),
       ]),
@@ -240,7 +239,7 @@ describe('live call analysis: barge-in', () => {
       parse([
         session(0, 'open'),
         trace(20000, 'echo-gate', 'decision', { echo: false, reason: 'double-talk' }),
-        trace(20100, 'call', 'barge-in', { generation: 4, candidateMs: 200, corroborated: true }),
+        trace(20100, 'call', 'barge-in', { generation: 4, candidateMs: 200 }),
         trace(20101, 'call', 'playback-cleared', { reason: 'caller-barge-in', generation: 4 }),
         turn(22000, { excerpt: 'no wait, the tenth', reply: 'Sure.', endCall: false, miss: false }),
       ]),
@@ -254,7 +253,7 @@ describe('live call analysis: barge-in', () => {
       parse([
         session(0, 'open'),
         trace(20000, 'echo-gate', 'decision', { echo: false, reason: 'double-talk' }),
-        trace(20100, 'call', 'barge-in', { generation: 4, candidateMs: 200, corroborated: true }),
+        trace(20100, 'call', 'barge-in', { generation: 4, candidateMs: 200 }),
         trace(20101, 'call', 'playback-cleared', { reason: 'caller-barge-in', generation: 4 }),
         turn(60000, { excerpt: 'okay', reply: 'Sure.', endCall: false, miss: false }),
       ]),
@@ -271,7 +270,7 @@ describe('live call analysis: readback and booking safety', () => {
         session(0, 'open'),
         trace(40000, 'dialogue', 'reduced', { turn: 3, phase: 'collecting-patient', decision: 'readback' }),
         phase(40100, 'tts', 'start', { generation: 7, chars: 80 }),
-        trace(40300, 'call', 'barge-in', { generation: 7, candidateMs: 200, corroborated: true }),
+        trace(40300, 'call', 'barge-in', { generation: 7, candidateMs: 200 }),
         trace(40301, 'call', 'playback-cleared', { reason: 'caller-barge-in', generation: 7 }),
         phase(40400, 'booking', 'start', { turn: 4, date: '2026-09-30', time: '09:30', location: 'Bobby Clinic' }),
         phase(40500, 'booking', 'outcome', { turn: 4, ok: false, reason: 'slot-taken' }),
@@ -336,7 +335,7 @@ describe('live call analysis: readback and booking safety', () => {
   });
 });
 
-describe('live call analysis: echo gate, stalls, speculation, session shape', () => {
+describe('live call analysis: echo gate, speculation, session shape', () => {
   it('summarizes gate decisions by reason and kind', () => {
     const metrics = analyzeCall(
       parse([
@@ -360,11 +359,9 @@ describe('live call analysis: echo gate, stalls, speculation, session shape', ()
     });
   });
 
-  it('counts stalls, detector switches, and speculation lifecycle events', () => {
+  it('counts speculation lifecycle events', () => {
     const metrics = analyzeCall(
       parse([
-        trace(100, 'call', 'stall', { trailingSilenceMs: 1200, speechMs: 800, graceMs: 1200 }),
-        trace(200, 'call', 'detector-switch', { mode: 'hybrid', stalls: 2, reason: 'provider-stall' }),
         trace(300, 'call', 'speculation-start', { partial: 'what are your hours', reason: 'partial' }),
         trace(400, 'call', 'speculation-kept', { turn: 1, partial: 'what are your hours', chars: 42, ms: 120 }),
         trace(500, 'call', 'speculation-start', { partial: 'book', reason: 'partial' }),
@@ -372,8 +369,6 @@ describe('live call analysis: echo gate, stalls, speculation, session shape', ()
       ]),
       'CAone',
     );
-    assert.equal(metrics.stalls, 1);
-    assert.equal(metrics.detectorSwitches, 1);
     assert.deepEqual(metrics.speculation, { started: 2, kept: 1, aborted: 1 });
   });
 
@@ -405,13 +400,13 @@ describe('live call analysis: report', () => {
         trace(700, 'tts', 'first-audio', { generation: 1, ms: 120 }),
         trace(10000, 'echo-gate', 'decision', { echo: true, reason: 'echo' }),
         trace(10050, 'echo-gate', 'decision', { echo: false, reason: 'double-talk' }),
-        trace(10100, 'call', 'barge-in', { generation: 2, candidateMs: 220, corroborated: true }),
+        trace(10100, 'call', 'barge-in', { generation: 2, candidateMs: 220 }),
         trace(10102, 'call', 'playback-cleared', { reason: 'caller-barge-in', generation: 2 }),
         trace(10200, 'call', 'backchannel', { durationMs: 200, text: 'mm-hmm' }),
         trace(20000, 'dialogue', 'reduced', { turn: 2, phase: 'collecting-patient', decision: 'readback' }),
         phase(20100, 'tts', 'start', { generation: 3, chars: 60 }),
         trace(20200, 'echo-gate', 'decision', { echo: false, reason: 'double-talk' }),
-        trace(20300, 'call', 'barge-in', { generation: 3, candidateMs: 180, corroborated: true }),
+        trace(20300, 'call', 'barge-in', { generation: 3, candidateMs: 180 }),
         trace(20302, 'call', 'playback-cleared', { reason: 'caller-barge-in', generation: 3 }),
       ]),
       'CAone',
@@ -420,7 +415,7 @@ describe('live call analysis: report', () => {
     assert.match(report, /live call CAone/, report);
     assert.match(report, /reply latency p50 200ms p95 200ms \(n=1\)/, report);
     assert.match(report, /stop latency p50 182ms p95 222ms \(n=2\)/, report);
-    assert.match(report, /barge-in 2 \(corroborated 2\)  self-echo barge-ins 0/, report);
+    assert.match(report, /barge-in 2  self-echo barge-ins 0/, report);
     assert.match(report, /backchannels absorbed 1  false-stop 0/, report);
     assert.match(report, /readbacks 1  interrupted 1  bookings 0\/0 saved/, report);
     assert.match(report, /gate echo false-stop 0 -> PASS/, report);

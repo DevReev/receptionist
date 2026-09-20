@@ -234,8 +234,8 @@ describe('live commit-time STT hedge', () => {
   });
 
   it('resolves an empty-final Turn in about max(final, REST), not final + REST', async () => {
-    const finalDelayMs = 50;
-    const restDelayMs = 300;
+    const finalDelayMs = 200;
+    const restDelayMs = 400;
     const h = hedgedSession('CAhedge4', {
       realtime: new FakeRealtime(
         () => new Promise<Transcription>((resolve) => setTimeout(() => resolve({ text: '', noSpeech: true }), finalDelayMs)),
@@ -252,8 +252,9 @@ describe('live commit-time STT hedge', () => {
     const started = Date.now();
     await waitFor(() => callerHistory(h.calls, 'CAhedge4').length === 1, 'the hedged turn');
     const elapsed = Date.now() - started;
-    assert.ok(elapsed >= restDelayMs - 20, `waits for the in-flight REST decode (${elapsed}ms)`);
-    assert.ok(elapsed < finalDelayMs + restDelayMs - 40, `must not pay final + REST (${elapsed}ms)`);
+    assert.ok(elapsed >= restDelayMs - 50, `waits for the in-flight REST decode (${elapsed}ms)`);
+    // Serial would cost final + REST (~600 ms); the hedge costs ~max (~400 ms).
+    assert.ok(elapsed < finalDelayMs + restDelayMs - 120, `must not pay final + REST (${elapsed}ms)`);
   });
 
   it('falls back to REST when the realtime final fails', async () => {

@@ -414,7 +414,7 @@ describe('config', () => {
     assert.throws(
       () =>
         loadConfig({
-      OPENAI_API_KEY: 'sk-openai',
+          OPENAI_API_KEY: 'sk-openai',
           OPENROUTER_API_KEY: 'o',
           TWILIO_ACCOUNT_SID: 'ACx',
           TWILIO_AUTH_TOKEN: 't',

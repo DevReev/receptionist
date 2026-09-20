@@ -301,6 +301,9 @@ interface ActiveSpeech {
   speculative: boolean;
 }
 
+/** Which decoder supplied a Turn's transcript, for traces and tests. */
+type TranscriptionSource = 'rest' | 'realtime' | 'realtime-empty-rest';
+
 /**
  * Why a speculation was discarded. Every abort is traced with one of these.
  */
@@ -1351,7 +1354,7 @@ export class LiveCallSession {
         this.trace?.({ component: 'stt', event: 'second-opinion-start', turn });
       }
       let tx: Transcription | null = null;
-      let source = 'rest';
+      let source: TranscriptionSource = 'rest';
       // Commit-time hedge: the REST decode starts the moment the utterance is
       // committed to the realtime channel, so an empty final never pays the
       // commit-to-final wait and then a fresh REST decode on top.
@@ -1359,7 +1362,9 @@ export class LiveCallSession {
       const startRest = (): Promise<Transcription> => {
         if (rest === null) {
           rest = this.transcriber.transcribe(wav!, 'audio/wav');
-          rest.catch(() => {});
+          rest.catch((err: unknown) =>
+            this.trace?.({ component: 'stt', event: 'hedge-error', turn, detail: this.errorText(err) }),
+          );
           this.trace?.({ component: 'stt', event: 'hedge-start', turn });
         }
         return rest;
@@ -1395,7 +1400,6 @@ export class LiveCallSession {
           result = await (rest ?? this.transcriber.transcribe(wav, 'audio/wav'));
         } catch (err) {
           if (!tx) throw err;
-          this.trace?.({ component: 'stt', event: 'hedge-error', turn, detail: this.errorText(err) });
           result = tx;
         }
         if (result.text.trim() || !tx) {
