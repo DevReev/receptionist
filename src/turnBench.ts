@@ -536,7 +536,6 @@ class ScenarioRunner implements TurnBenchContext {
     // channel's partials; this scripted stand-in supplies one per declared
     // speech frame while the bench keeps local boundaries.
     const realtime: RealtimeStt = {
-      endpointing: 'manual',
       pushAudio: () => {},
       speechStart: () => {},
       finalize: () =>

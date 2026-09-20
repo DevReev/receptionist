@@ -740,7 +740,7 @@ describe('live full Turn (ticket 11)', () => {
     assert.equal(names.includes('availability:done'), true);
   });
 
-  it('reads each Turn from the live Sarvam session instead of REST', async () => {
+  it('reads each Turn from the live realtime session instead of REST', async () => {
     const calls = new CallStore();
     const { tts } = stubTts();
     const events: string[] = [];
@@ -836,7 +836,7 @@ describe('live full Turn (ticket 11)', () => {
         events.push('start');
       },
       finalize: async () => {
-        if (!open) throw new Error('sarvam-realtime-not-streaming');
+        if (!open) throw new Error('realtime-not-streaming');
         open = false;
         return { text: 'yes', noSpeech: false };
       },
@@ -881,7 +881,7 @@ describe('live full Turn (ticket 11)', () => {
       pushAudio: () => {},
       speechStart: () => {},
       finalize: async () => {
-        throw new Error('sarvam-realtime-closed');
+        throw new Error('realtime-closed');
       },
       close: () => {},
     };

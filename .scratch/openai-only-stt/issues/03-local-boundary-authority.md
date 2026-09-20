@@ -4,10 +4,10 @@
 
 **Blocked by:** 02 (removes the last provider-VAD channel).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] No config env or trace field remains for provider VAD, endpointing mode switching, or detector escalation; `.env` and the RUNBOOK env table are updated.
-- [ ] The realtime channel contract has one boundary story: the local detector opens and closes utterances and the channel only streams audio and finalizes.
-- [ ] Turn-taking behavior suites (turn, barge-in, backchannel, speculation, no-response, hybrid detector) pass against the simplified contract.
-- [ ] Provider-VAD and stall-guard suites are deleted, not skipped, and no reference to a provider-owned boundary mode remains in the turn-taking code.
-- [ ] `npm run typecheck` and `npm test` pass.
+- [x] No config env or trace field remains for provider VAD, endpointing mode switching, or detector escalation; `.env` and the RUNBOOK env table are updated.
+- [x] The realtime channel contract has one boundary story: the local detector opens and closes utterances and the channel only streams audio and finalizes.
+- [x] Turn-taking behavior suites (turn, barge-in, backchannel, speculation, no-response, hybrid detector) pass against the simplified contract.
+- [x] Provider-VAD and stall-guard suites are deleted, not skipped, and no reference to a provider-owned boundary mode remains in the turn-taking code.
+- [x] `npm run typecheck` and `npm test` pass.

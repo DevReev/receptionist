@@ -4,7 +4,7 @@ import { CallStore } from '../src/calls.ts';
 import { LiveCallSession } from '../src/live.ts';
 import type { Utterance, Vad } from '../src/endpoint.ts';
 import type { Assistant, Transcription } from '../src/app.ts';
-import type { PartialTranscript, RealtimeEndpointing, RealtimeStt } from '../src/realtimeStt.ts';
+import type { PartialTranscript, RealtimeStt } from '../src/realtimeStt.ts';
 import type { Tts } from '../src/tts.ts';
 
 const FRAME_BYTES = 160; // 20 ms of 8 kHz mulaw.
@@ -48,23 +48,15 @@ const assistant: Assistant = {
   },
 };
 
-/** Manual-mode channel with scripted partials; `vad` start exposes the switch. */
+/** Channel with scripted partials; the local detector owns the boundaries. */
 class FakeHybridStt implements RealtimeStt {
-  endpointing: RealtimeEndpointing;
-  setEndpointingCalls: RealtimeEndpointing[] = [];
   finalizeCalls = 0;
   speechStartCalls = 0;
   private partialHandler: ((partial: PartialTranscript) => void) | null = null;
   private readonly finals: Transcription[];
 
-  constructor(opts: { endpointing?: RealtimeEndpointing; finals?: Transcription[] } = {}) {
-    this.endpointing = opts.endpointing ?? 'vad';
+  constructor(opts: { finals?: Transcription[] } = {}) {
     this.finals = opts.finals ?? [];
-  }
-
-  setEndpointing(mode: RealtimeEndpointing): void {
-    this.setEndpointingCalls.push(mode);
-    this.endpointing = mode;
   }
 
   pushAudio(): void {}
@@ -76,7 +68,7 @@ class FakeHybridStt implements RealtimeStt {
   finalize(): Promise<Transcription> {
     this.finalizeCalls += 1;
     const tx = this.finals.shift();
-    return tx ? Promise.resolve(tx) : Promise.reject(new Error('sarvam-realtime-not-streaming'));
+    return tx ? Promise.resolve(tx) : Promise.reject(new Error('realtime-not-streaming'));
   }
 
   onPartial(handler: (partial: PartialTranscript) => void): void {
@@ -103,7 +95,6 @@ function liveSession(opts: {
     policy: POLICY,
     transcriber: { transcribe: async () => ({ text: opts.transcriberText ?? 'rest', noSpeech: false }) },
     realtime: opts.stt,
-    turnDetection: 'hybrid',
     tts,
     guide: GUIDE,
     availability: AVAILABILITY,
@@ -114,14 +105,11 @@ function liveSession(opts: {
 }
 
 describe('live hybrid detector (ticket 07)', () => {
-  it('runs the socket in manual mode and ends the Turn at the adaptive floor', async () => {
+  it('ends the Turn at the adaptive floor', async () => {
     const stt = new FakeHybridStt({
-      endpointing: 'vad',
       finals: [{ text: 'what are your hours', noSpeech: false }],
     });
     const { live, texts } = liveSession({ callSid: 'CAhyb1', stt });
-    assert.deepEqual(stt.setEndpointingCalls, ['manual'], 'the flag switches the provider socket to manual');
-    assert.equal(stt.endpointing, 'manual');
 
     for (let i = 0; i < 15; i += 1) await live.receiveAudio(SPEECH_FRAME);
     stt.partial('what are your hours');

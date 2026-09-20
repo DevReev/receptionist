@@ -1,7 +1,5 @@
 import type { AppointmentsEnv } from './appointments.ts';
 import { BARGE_IN_DEFAULTS } from './endpoint.ts';
-import { STALL_DEFAULTS } from './hybridDetector.ts';
-import type { TurnDetection } from './turnTaking.ts';
 import type { SttConfig } from './whisper.ts';
 
 const STT_PROVIDER_DEFAULTS = {
@@ -72,10 +70,6 @@ export interface Config {
   recordMaxLength: number;
   voiceLoop: VoiceLoop;
   streamWsUrl: string;
-  /** Boundary authority: `sarvam` (provider VAD, default) or `hybrid` (local detector). */
-  turnDetection: TurnDetection;
-  /** Local trailing silence that takes a stalled provider boundary. */
-  stallGraceMs: number;
   /** Start the REST STT decode this many ms into a slow realtime final; <=0 disables. */
   sttHedgeMs: number;
   /** Warm the REST transcription route on call open to hide provider cold start. */
@@ -226,11 +220,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     throw new Error(`invalid VOICE_LOOP: ${voiceLoopRaw} (expected legacy|stream)`);
   }
   const voiceLoop: VoiceLoop = voiceLoopRaw;
-  const turnDetectionRaw = optional(env, 'TURN_DETECTION', 'sarvam');
-  if (turnDetectionRaw !== 'sarvam' && turnDetectionRaw !== 'hybrid') {
-    throw new Error(`invalid TURN_DETECTION: ${turnDetectionRaw} (expected sarvam|hybrid)`);
-  }
-  const turnDetection: TurnDetection = turnDetectionRaw;
   const streamWsUrl =
     voiceLoop === 'stream' ? required(env, 'STREAM_WS_URL', missing) : optional(env, 'STREAM_WS_URL', '');
   if (missing.length > 0) throw new Error(`missing required env: ${missing.join(', ')}`);
@@ -263,8 +252,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     recordMaxLength: int(env, 'RECORD_MAX_LENGTH', 30),
     voiceLoop,
     streamWsUrl,
-    turnDetection,
-    stallGraceMs: int(env, 'STALL_GRACE_MS', STALL_DEFAULTS.graceMs),
     sttHedgeMs: int(env, 'STT_HEDGE_MS', 400),
     sttWarmup: bool(env, 'STT_WARMUP', true),
     vadThreshold: float(env, 'VAD_SPEECH_THRESHOLD', 0.1),

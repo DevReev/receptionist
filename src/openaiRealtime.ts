@@ -57,9 +57,6 @@ export class OpenAiRealtimeStt implements RealtimeStt {
     timer: NodeJS.Timeout;
   } | null = null;
 
-  /** Boundaries stay local: this channel has no VAD and partials only after commit. */
-  readonly endpointing = 'manual' as const;
-
   constructor(opts: { config: OpenAiRealtimeConfig; connect?: RealtimeSocketFactory; onTrace?: TraceFn }) {
     this.finalTimeoutMs = opts.config.finalTimeoutMs ?? DEFAULT_FINAL_TIMEOUT_MS;
     this.preRollBytes = opts.config.preRollBytes ?? DEFAULT_PRE_ROLL_BYTES;

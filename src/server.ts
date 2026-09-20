@@ -414,8 +414,6 @@ export async function main(): Promise<void> {
             bargeInMinSpeechMs: config.bargeInMinSpeechMs,
             bargeInDipToleranceMs: config.bargeInDipToleranceMs,
             bargeInConfirmMs: config.bargeInConfirmMs,
-            turnDetection: config.turnDetection,
-            stallGraceMs: config.stallGraceMs,
             sttHedgeMs: config.sttHedgeMs,
             warmTranscriber: config.sttWarmup,
             echoGate: {
@@ -493,7 +491,6 @@ export async function main(): Promise<void> {
       component: 'boot',
       event: 'ready',
       voiceLoop: config.voiceLoop,
-      turnDetection: config.turnDetection,
       sttProvider: config.sttProvider,
       assistantProvider: config.assistant.primary,
       assistantModel: config.assistant.primary === 'groq' ? config.assistant.groqModel : config.openrouterModel,

@@ -32,7 +32,6 @@ import {
 import { type BargeInEvent, type EndpointPolicy, type Utterance, type Vad } from './endpoint.ts';
 import type { EchoGateOptions } from './echoGate.ts';
 import type { FixedAudioCache } from './fixedAudio.ts';
-import { STALL_DEFAULTS } from './hybridDetector.ts';
 import type { RealtimeStt } from './realtimeStt.ts';
 import {
   classifySpeculation,
@@ -43,7 +42,7 @@ import {
 import type { PlaybackResult } from './transport.ts';
 import type { StreamIdentity } from './stream.ts';
 import type { TraceFn } from './trace.ts';
-import { TurnTaking, type TurnDetection, type UtteranceSpeechStats } from './turnTaking.ts';
+import { TurnTaking, type UtteranceSpeechStats } from './turnTaking.ts';
 import { bufferedSpeech, type SpeechResponse, type Tts } from './tts.ts';
 import type { FailureEvent, TurnEvent } from './app.ts';
 
@@ -108,20 +107,11 @@ export interface LiveCallOptions {
   /**
    * Partial transcripts arrive while the Receptionist speaks, so a Barge-in
    * candidate holds briefly for Backchannel classification. Defaults to the
-   * realtime channel streaming the whole audio diet (provider VAD mode).
+   * realtime channel streaming partials.
    */
   partialSemantics?: boolean;
   /** How long the energy pre-trigger waits for partial semantics before taking the floor. */
   bargeInConfirmMs?: number;
-  /**
-   * `sarvam` (default): the provider owns Turn boundaries when the realtime
-   * channel is in VAD mode. `hybrid`: the local detector owns them and the
-   * socket is switched to manual mode. Without a boundary-capable realtime
-   * channel the local detector is used either way.
-   */
-  turnDetection?: TurnDetection;
-  /** Local trailing silence that takes a stalled provider boundary. */
-  stallGraceMs?: number;
   /** Echo-gate tuning; defaults ship the bench-tuned values. */
   echoGate?: EchoGateOptions;
   /**
@@ -324,7 +314,6 @@ type SpeculationAbort =
   | 'booking-cue'
   | 'booking-final'
   | 'rewritten'
-  | 'stalled-turn'
   | 'final-mismatch'
   | 'deterministic-turn'
   | 'empty-final'
@@ -368,10 +357,6 @@ export class LiveCallSession {
   private readonly holdAfterMs: number;
   private readonly noResponseMs: number;
   private readonly availabilityTimeoutMs: number;
-  /** True when provider `vad.*` events own Turn boundaries on this call. */
-  private providerBoundaries: boolean;
-  /** Consecutive stalled Turns; two switch the session to the local detector. */
-  private consecutiveStalls = 0;
   private readonly turnDeadlineMs: number;
   private readonly sttHedgeMs: number;
   private readonly fixedCache: FixedAudioCache | undefined;
@@ -457,11 +442,6 @@ export class LiveCallSession {
     this.holdAfterMs = opts.holdAfterMs ?? 3000;
     this.noResponseMs = opts.noResponseMs ?? 0;
     this.availabilityTimeoutMs = opts.availabilityTimeoutMs ?? 0;
-    const turnDetection = opts.turnDetection ?? 'sarvam';
-    // Hybrid delegates boundaries to the local detector, so the provider must
-    // not own them: the socket runs in manual mode for the whole call.
-    if (turnDetection === 'hybrid') opts.realtime?.setEndpointing?.('manual');
-    this.providerBoundaries = turnDetection === 'sarvam' && opts.realtime?.endpointing === 'vad';
     this.turnDeadlineMs = opts.turnDeadlineMs ?? DEFAULT_TURN_DEADLINE_MS;
     this.sttHedgeMs = opts.sttHedgeMs ?? 0;
     this.fixedCache = opts.fixedCache;
@@ -491,14 +471,10 @@ export class LiveCallSession {
       policy: opts.policy,
       bargeInMinSpeechMs: opts.bargeInMinSpeechMs,
       bargeInDipToleranceMs: opts.bargeInDipToleranceMs,
-      partialSemantics:
-        opts.partialSemantics ??
-        (opts.realtime?.endpointing === 'vad' && typeof opts.realtime.onPartial === 'function'),
+      partialSemantics: opts.partialSemantics ?? typeof opts.realtime?.onPartial === 'function',
       bargeInConfirmMs: opts.bargeInConfirmMs,
-      detection: this.providerBoundaries ? 'sarvam' : 'hybrid',
       // Only a channel that exposes partials can feed the semantic boundary.
       semanticBoundaries: typeof opts.realtime?.onPartial === 'function',
-      stallGraceMs: opts.stallGraceMs,
       echoGate: opts.echoGate,
       observer: {
         onUtterance: (utterance, stats) => {
@@ -516,8 +492,7 @@ export class LiveCallSession {
         },
         onSpeechStart: () => {
           this.cancelNoResponse();
-          // In provider VAD mode the boundary came from the channel itself.
-          if (!this.providerBoundaries) this.realtime?.speechStart();
+          this.realtime?.speechStart();
         },
         onUpstreamFrame: (frame) => this.realtime?.pushAudio(frame),
         onEchoDecision: (decision) => {
@@ -543,15 +518,6 @@ export class LiveCallSession {
           if (score > this.scoreStats.max) this.scoreStats.max = score;
           if (latched) this.scoreStats.latched = true;
         },
-        onStall: (event) => {
-          this.trace?.({
-            component: 'call',
-            event: 'stall',
-            trailingSilenceMs: event.trailingSilenceMs,
-            speechMs: event.speechMs,
-            graceMs: event.graceMs,
-          });
-        },
       },
     });
     this.scoreTimer = setInterval(() => {
@@ -573,15 +539,6 @@ export class LiveCallSession {
       this.turnTaking.observePartial(partial.text);
       this.handlePartial(partial.text);
     });
-    // Provider VAD mode: the provider's boundary opens and closes the
-    // utterance; the Turn's final is read from the same channel.
-    if (this.providerBoundaries) {
-      opts.realtime?.onVadEvent?.((event) => {
-        if (this.closed) return;
-        if (event === 'speech_start') this.turnTaking.providerSpeechStart();
-        else this.turnTaking.providerSpeechEnd();
-      });
-    }
   }
 
   get isClosed(): boolean {
@@ -698,26 +655,6 @@ export class LiveCallSession {
     this.setPhase('LISTENING');
     this.turnTaking.startListening();
     this.scheduleNoResponse();
-  }
-
-  /**
-   * Two consecutive stalled Turns mean the provider is not owning boundaries:
-   * switch to the local detector at the boundary just taken. The socket is told
-   * at once (the adapter adopts manual at its next boundary); from here on the
-   * local detector ends Turns and the provider is a transcription channel.
-   */
-  private switchToHybrid(stalls: number): void {
-    if (!this.providerBoundaries) return;
-    this.providerBoundaries = false;
-    this.turnTaking.setDetection('hybrid');
-    this.realtime?.setEndpointing?.('manual');
-    this.trace?.({
-      component: 'call',
-      event: 'detector-switch',
-      mode: 'hybrid',
-      stalls,
-      reason: 'provider-stall',
-    });
   }
 
   /**
@@ -987,7 +924,6 @@ export class LiveCallSession {
       event: 'barge-in',
       generation: speech?.generation,
       candidateMs: event.durationMs,
-      corroborated: event.corroborated,
     });
     this.clearPlaybackFn?.('caller-barge-in');
     if (speech) {
@@ -1381,17 +1317,6 @@ export class LiveCallSession {
     if (this.closed) return;
     this.cancelNoResponse();
     this.noResponsePrompts = 0;
-    // A stalled Turn means the provider took the speech but never closed the
-    // boundary; two in a row mean it is not owning boundaries at all.
-    const stalled = utterance.stalled === true;
-    if (stalled) {
-      this.consecutiveStalls += 1;
-      if (this.providerBoundaries && this.consecutiveStalls >= STALL_DEFAULTS.escalateAfter) {
-        this.switchToHybrid(this.consecutiveStalls);
-      }
-    } else if (this.providerBoundaries) {
-      this.consecutiveStalls = 0;
-    }
     const state = this.calls.get(this.identity.callSid);
     state.turn += 1;
     const turn = state.turn;
@@ -1405,7 +1330,6 @@ export class LiveCallSession {
       component: 'vad',
       event: 'endpoint',
       turn,
-      source: stalled || !this.providerBoundaries ? 'local' : 'provider',
       speechMs: utterance.durationMs,
       trailingSilenceMs: utterance.trailingSilenceMs,
       frames: stats.frames,
@@ -1413,20 +1337,14 @@ export class LiveCallSession {
       meanScore: stats.meanScore,
     });
     this.activeTurn = { turn, excerpt: '', replySoFar: '' };
-    // The partial-started generation becomes this Turn's, or is dropped when
-    // the boundary was stalled (the provider never declared the utterance
-    // complete, so there is nothing trustworthy to answer yet).
+    // The partial-started generation becomes this Turn's.
     const speculation = this.speculation;
     this.speculation = null;
     let speculativeRun: Promise<{ text: string; generation: number }> | null = null;
     let historyPushed = false;
     if (speculation) {
-      if (stalled) {
-        this.abortSpeculation(speculation, 'stalled-turn');
-      } else {
-        speculativeRun = this.speakSpeculation(turn, speculation);
-        speculativeRun.catch(() => {});
-      }
+      speculativeRun = this.speakSpeculation(turn, speculation);
+      speculativeRun.catch(() => {});
     }
     let text = '';
     const transcribeStarted = Date.now();
@@ -1460,18 +1378,7 @@ export class LiveCallSession {
         }
         return hedged;
       };
-      if (stalled) {
-        // No provider boundary means no new final will be read: release the
-        // utterance the provider still holds open and use a final that already
-        // landed; otherwise the captured audio goes to REST.
-        const delivered = this.realtime?.abandonUtterance?.();
-        if (delivered) {
-          tx = delivered;
-          source = 'realtime-stall';
-        } else {
-          this.trace?.({ component: 'stt', event: 'fallback', source: 'rest', reason: 'provider-stall', turn });
-        }
-      } else if (this.realtime) {
+      if (this.realtime) {
         const finalize = this.realtime.finalize();
         const settledFinal = finalize.then(
           (t) => ({ kind: 'final' as const, t }),

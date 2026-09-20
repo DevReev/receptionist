@@ -14,10 +14,8 @@ _Avoid_: lock, block
 _Avoid_: test booking
 - **Booking**: confirmed appointment. Written via Picktime page automation (no public Picktime API). Public operation name: `book_appointment`.
 - **Picktime page**: the single configured booking page from env for v1; it currently exposes one service, one doctor, and two Locations.
-- **Endpointing**: deciding the caller has stopped speaking; the Receptionist replies only after it. It may be delegated to the speech provider.
+- **Endpointing**: deciding the caller has stopped speaking; the Receptionist replies only after it. The local detector always owns it: the Caller-adaptive pause plus partial-transcript completeness.
 _Avoid_: silence timeout
-- **Stall guard**: local speech presence taking a Turn's boundary when the provider emits neither an end signal nor a final within the grace (1.2 s); the stalled Turn is transcribed through the REST fallback. Two consecutive stalls switch the session to the local detector.
-_Avoid_: fallback timer
 - **Hedge**: starting the REST transcription alongside a slow realtime final instead of waiting out the adapter timeout; the first non-empty result wins, and the provider final is preferred while the REST request is in flight.
 _Avoid_: timeout fallback, race
 - **Stream session**: one call's bidirectional audio websocket; it replaces the per-turn webhook chain while live streaming is enabled.

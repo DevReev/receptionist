@@ -465,7 +465,7 @@ describe('live hedged STT fallback', () => {
     });
     for (let i = 0; i < 100; i++) await h.live.receiveAudio(Buffer.alloc(FRAME_BYTES, 0xff));
     await delay(30);
-    failFinal(new Error('sarvam-realtime-final-timeout'));
+    failFinal(new Error('realtime-final-timeout'));
     await waitFor(() => callerHistory(h.calls, 'CAhedge4').length === 1, 'the REST turn');
     assert.deepEqual(callerHistory(h.calls, 'CAhedge4'), ['rest words']);
     assert.equal(h.transcriptions.length, 1);

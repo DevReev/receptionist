@@ -4,7 +4,7 @@ import { CallStore } from '../src/calls.ts';
 import { LiveCallSession } from '../src/live.ts';
 import type { Vad } from '../src/endpoint.ts';
 import type { Assistant, FailureEvent, Transcription, TurnEvent } from '../src/app.ts';
-import type { PartialTranscript, RealtimeEndpointing, RealtimeStt, VadEvent } from '../src/realtimeStt.ts';
+import type { PartialTranscript, RealtimeStt } from '../src/realtimeStt.ts';
 import type { PlaybackResult } from '../src/transport.ts';
 import type { TraceEvent } from '../src/trace.ts';
 import type { Tts } from '../src/tts.ts';
@@ -12,6 +12,7 @@ import type { Tts } from '../src/tts.ts';
 const FRAME_BYTES = 160;
 /** Audible caller audio: 0xFF is mu-law silence and can never be Caller speech. */
 const SPEECH_FRAME = Buffer.alloc(FRAME_BYTES, 0x11);
+const SILENCE_FRAME = Buffer.alloc(FRAME_BYTES, 0xff);
 const POLICY = { silenceMs: 700, minSpeechMs: 300, maxUtteranceMs: 30000, threshold: 0.5, latchDipMs: 200 };
 const GUIDE = { raw: '# Clinic Guide — Maple Clinic\n', name: 'Maple Clinic' };
 const AVAILABILITY =
@@ -27,6 +28,12 @@ function scriptVad(pattern: ('speech' | 'silence')[]): Vad {
     reset: () => {},
   };
 }
+
+/** The frame bytes are the script: 0x11 is audible speech, 0xFF is silence. */
+const byteVad: Vad = {
+  score: async (pcm) => (pcm.every((sample) => sample === 0) ? 0.05 : 0.9),
+  reset: () => {},
+};
 
 const speech = (n: number): ('speech' | 'silence')[] => Array(n).fill('speech');
 const silence = (n: number): ('speech' | 'silence')[] => Array(n).fill('silence');
@@ -64,17 +71,14 @@ function stubTts(): { tts: Tts; texts: string[] } {
 
 /**
  * Scripted realtime channel: emits partials from the test (the production
- * carrier of Backchannel semantics) and optional provider VAD boundaries.
+ * carrier of Backchannel semantics).
  */
 class FakePartialStt implements RealtimeStt {
-  readonly endpointing: RealtimeEndpointing;
   finalizeCalls = 0;
   private partialHandler: ((partial: PartialTranscript) => void) | null = null;
-  private vadHandler: ((event: VadEvent) => void) | null = null;
   private readonly finals: Transcription[];
 
-  constructor(opts: { endpointing: RealtimeEndpointing; finals?: Transcription[] }) {
-    this.endpointing = opts.endpointing;
+  constructor(opts: { finals?: Transcription[] } = {}) {
     this.finals = opts.finals ?? [];
   }
 
@@ -85,7 +89,7 @@ class FakePartialStt implements RealtimeStt {
   finalize(): Promise<Transcription> {
     this.finalizeCalls += 1;
     const tx = this.finals.shift();
-    return tx ? Promise.resolve(tx) : Promise.reject(new Error('sarvam-realtime-not-streaming'));
+    return tx ? Promise.resolve(tx) : Promise.reject(new Error('realtime-not-streaming'));
   }
 
   onPartial(handler: (partial: PartialTranscript) => void): void {
@@ -94,14 +98,6 @@ class FakePartialStt implements RealtimeStt {
 
   partial(text: string): void {
     this.partialHandler?.({ text });
-  }
-
-  onVadEvent(handler: (event: VadEvent) => void): void {
-    this.vadHandler = handler;
-  }
-
-  vad(event: VadEvent): void {
-    this.vadHandler?.(event);
   }
 
   close(): void {}
@@ -113,7 +109,7 @@ describe('live Backchannel absorption', () => {
     const { tts, texts } = stubTts();
     const traces: TraceEvent[] = [];
     let cleared = 0;
-    const stt = new FakePartialStt({ endpointing: 'vad' });
+    const stt = new FakePartialStt();
     const live = new LiveCallSession({
       identity: { callSid: 'CAbc1', streamSid: 'MZbc1' },
       sendAudio: () => {},
@@ -133,12 +129,10 @@ describe('live Backchannel absorption', () => {
     });
     void live.open().catch(() => {});
     await waitFor(() => live.currentPhase === 'SPEAKING', 'the greeting to start');
-    stt.vad('speech_start');
     for (let i = 0; i < 30; i++) {
       stt.partial('mm-hmm');
       await live.receiveAudio(SPEECH_FRAME);
     }
-    stt.vad('speech_end');
     await live.flush();
 
     assert.equal(cleared, 0, 'a Backchannel never stops the Receptionist');
@@ -161,13 +155,12 @@ describe('live Backchannel absorption', () => {
     let cleared = 0;
     let resolveFinish: ((result: PlaybackResult) => void) | null = null;
     const stt = new FakePartialStt({
-      endpointing: 'vad',
       finals: [{ text: 'wait, I meant tomorrow', noSpeech: false }],
     });
     const live = new LiveCallSession({
       identity: { callSid: 'CAbc2', streamSid: 'MZbc2' },
       sendAudio: () => {},
-      vad: scriptVad(speech(200)),
+      vad: byteVad,
       policy: POLICY,
       transcriber: queueTranscriber(['rest transcript']),
       realtime: stt,
@@ -205,8 +198,8 @@ describe('live Backchannel absorption', () => {
       0,
       'content-bearing speech is never absorbed as a Backchannel',
     );
-    // The interruption's provider boundary closes its Turn with its final.
-    stt.vad('speech_end');
+    // The local detector closes the interrupted utterance with its final.
+    for (let i = 0; i < 15; i++) await live.receiveAudio(SILENCE_FRAME);
     await live.flush();
 
     assert.equal(calls.get('CAbc2').turn, 1, 'the interruption becomes a Turn');
@@ -219,7 +212,7 @@ describe('live Backchannel absorption', () => {
     const calls = new CallStore();
     const { tts } = stubTts();
     let cleared = 0;
-    const stt = new FakePartialStt({ endpointing: 'manual' });
+    const stt = new FakePartialStt();
     const live = new LiveCallSession({
       identity: { callSid: 'CAbc4', streamSid: 'MZbc4' },
       sendAudio: () => {},
@@ -257,7 +250,7 @@ describe('live Backchannel absorption', () => {
     let cleared = 0;
     let speechOn = true;
     const vad: Vad = { score: async () => (speechOn ? 0.9 : 0.05), reset: () => {} };
-    const stt = new FakePartialStt({ endpointing: 'manual' });
+    const stt = new FakePartialStt();
     const live = new LiveCallSession({
       identity: { callSid: 'CAbc5', streamSid: 'MZbc5' },
       sendAudio: () => {},
@@ -306,7 +299,7 @@ describe('live Backchannel absorption', () => {
     const proposed: unknown[] = [];
     let cleared = 0;
     let resolveFinish: ((result: PlaybackResult) => void) | null = null;
-    const stt = new FakePartialStt({ endpointing: 'manual' });
+    const stt = new FakePartialStt();
     const live = new LiveCallSession({
       identity: { callSid: 'CAbc3', streamSid: 'MZbc3' },
       sendAudio: () => {},

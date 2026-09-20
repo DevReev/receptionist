@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeMulaw } from '../src/audio.ts';
-import { TurnTaking, type TurnDetection } from '../src/turnTaking.ts';
+import { TurnTaking } from '../src/turnTaking.ts';
 import type { BargeInEvent, Utterance, Vad } from '../src/endpoint.ts';
 import { attachStreamSocket } from '../src/stream.ts';
 import { FakeSocket, twilioMedia, twilioStart } from './fakeStream.ts';
@@ -36,10 +36,7 @@ interface Harness {
   feed(pattern: Frame[]): Promise<void>;
 }
 
-function harness(
-  vad: Vad,
-  options?: { bargeInMinSpeechMs?: number; detection?: TurnDetection },
-): Harness {
+function harness(vad: Vad, options?: { bargeInMinSpeechMs?: number }): Harness {
   const socket = new FakeSocket();
   const utterances: Utterance[] = [];
   const bargeIns: BargeInEvent[] = [];
@@ -48,7 +45,6 @@ function harness(
     vad,
     policy: POLICY,
     bargeInMinSpeechMs: options?.bargeInMinSpeechMs,
-    detection: options?.detection ?? 'hybrid',
     observer: {
       onUtterance: (u) => utterances.push(u),
       onBargeIn: (e) => bargeIns.push(e),
@@ -90,7 +86,6 @@ describe('turn taking barge-in candidates', () => {
     const event = h.bargeIns[0]!;
     assert.ok(event.durationMs >= 200);
     assert.equal(event.audio.length, event.durationMs * 8);
-    assert.equal(event.corroborated, false, 'the local trigger needs no provider event');
     assert.equal(h.utterances.length, 0);
   });
 
@@ -191,7 +186,6 @@ describe('turn taking barge-in candidates', () => {
       await h.turnTaking.receiveAudio(encodeMulaw(caller.subarray((t + 5) * FRAME_BYTES, (t + 6) * FRAME_BYTES)));
     }
     assert.equal(h.bargeIns.length, 1);
-    assert.equal(h.bargeIns[0]!.corroborated, false);
   });
 
   it('never counts a silent frame as speech, whatever the VAD scores', async () => {
@@ -202,15 +196,4 @@ describe('turn taking barge-in candidates', () => {
     assert.equal(h.utterances.length, 0);
   });
 
-  it('carries provider corroboration without letting it trigger alone', async () => {
-    const h = harness(scriptVad(speech(200)), { detection: 'sarvam' });
-    h.turnTaking.startSpeaking();
-    h.turnTaking.providerSpeechStart();
-    await h.feed(silence(5));
-    assert.equal(h.bargeIns.length, 0, 'a provider speech-start never triggers Barge-in');
-
-    await h.feed(speech(12));
-    assert.equal(h.bargeIns.length, 1);
-    assert.equal(h.bargeIns[0]!.corroborated, true);
-  });
 });

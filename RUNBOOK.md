@@ -12,7 +12,7 @@ sh scripts/fetch-vad-model.sh
 
 ## 2. Required env vars
 
-The live streaming loop is the default (`VOICE_LOOP=stream`), and transcription defaults to OpenAI's realtime channel (`STT_PROVIDER=openai-realtime`, `gpt-live-transcribe`) with `whisper-1` REST as the per-Turn fallback. Set `STT_PROVIDER=openai` or `groq` to transcribe through Whisper REST instead, or `STT_PROVIDER=openrouter` for the OpenRouter transcriptions endpoint (`OPENROUTER_STT_MODEL`, default `openai/gpt-transcribe`). OpenRouter transcription is a completed-utterance request with no realtime channel: the local detector owns turn boundaries, per-Turn partials (speculation, Backchannel semantics) are absent, and each Turn uploads its WAV before the reply can start. The OpenAI Realtime channel streams 8 kHz mu-law to a persistent socket, gated to the local detector's speech windows (the model rejects server turn detection), so `finalize` commits and reads the final ~550 ms later; it is billed on the audio appended, which the `stt close` trace reports as `bytes`/`audioMs`. With that channel, raise `STT_HEDGE_MS` (e.g. `1200`) so the REST fallback only fires on genuine stalls.
+The live streaming loop is the default (`VOICE_LOOP=stream`), and transcription defaults to OpenAI's realtime channel (`STT_PROVIDER=openai-realtime`, `gpt-live-transcribe`) with `whisper-1` REST as the per-Turn fallback. Set `STT_PROVIDER=openai` or `groq` to transcribe through Whisper REST instead, or `STT_PROVIDER=openrouter` for the OpenRouter transcriptions endpoint (`OPENROUTER_STT_MODEL`, default `openai/gpt-transcribe`). OpenRouter transcription is a completed-utterance request with no realtime channel: per-Turn partials (speculation, Backchannel semantics) are absent, and each Turn uploads its WAV before the reply can start. The OpenAI Realtime channel streams 8 kHz mu-law to a persistent socket, gated to the local detector's speech windows (the model rejects server turn detection), so `finalize` commits and reads the final ~550 ms later; it is billed on the audio appended, which the `stt close` trace reports as `bytes`/`audioMs`. Turn boundaries are always local: a Caller-adaptive pause (1.25 × p90 of the Caller's last 8 intra-utterance pauses, 150–600 ms, 300 ms until three are seen, 1.5 s emergency cap) plus partial-transcript completeness, with a 600 ms floor while collecting the Patient's name or phone. With the realtime channel, raise `STT_HEDGE_MS` (e.g. `1200`) so the REST fallback only fires on genuine stalls.
 
 | Var | Purpose |
 | --- | --- |
@@ -24,9 +24,7 @@ The live streaming loop is the default (`VOICE_LOOP=stream`), and transcription 
 | `OPENROUTER_MODEL` | Optional, default `deepseek/deepseek-v4.1-flash`: the OpenRouter assistant model, used as the fallback whenever `ASSISTANT_PROVIDER=groq`. `reasoning: effort` is sent as `OPENROUTER_REASONING_EFFORT` (default `minimal`); reasoning-mandatory endpoints refuse `none` |
 | `STREAM_WS_URL` | Public `wss://<public-host>/stream` — must be `wss://`, cannot be `ws://` |
 | `SARVAM_API_KEY` | TTS only, required when `TTS_PROVIDER=sarvam`. Sarvam is never an STT provider |
-| `TURN_DETECTION` | Optional, default `sarvam` (`sarvam` \| `hybrid`): who ends a Turn. `sarvam` = the provider's VAD (`vad.speech_start`/`vad.speech_end`, no local fixed wait); `hybrid` = the local detector with the socket in manual mode: a Caller-adaptive pause (1.25 × p90 of the Caller's last 8 intra-utterance pauses, 150–600 ms, 300 ms until three are seen, 1.5 s emergency cap) plus partial-transcript completeness, with a 600 ms floor while collecting the Patient's name or phone |
-| `STALL_GRACE_MS` | Optional, default `1200`: local trailing silence after locally-heard speech that takes a provider-held boundary when the provider emits neither `vad.speech_end` nor a final. A final without its boundary closes the Turn by itself; a truly stalled Turn transcribes through the REST path, and two consecutive stalled Turns switch the session to the local detector (`hybrid` behaviour) at the next boundary |
-| `STT_HEDGE_MS` | Optional, default `400`: how long a Turn waits for the realtime final before starting the REST decode alongside it. Whichever non-empty result lands first wins; the provider final is still preferred while the REST request is in flight, and REST is called at most once per Turn. `0` disables hedging and waits out `SARVAM_STT_FINAL_TIMEOUT_MS` |
+| `STT_HEDGE_MS` | Optional, default `400`: how long a Turn waits for the realtime final before starting the REST decode alongside it. Whichever non-empty result lands first wins; the provider final is still preferred while the REST request is in flight, and REST is called at most once per Turn. `0` disables hedging and waits out the adapter's final timeout |
 | `STT_WARMUP` | Optional, default `true`: on call open, one throwaway transcription heats the REST STT route while the greeting plays, so the first Turn does not pay the provider cold start (traced `stt/warmup-start/done/error`). `false` disables |
 | `SARVAM_TTS_MIN_BUFFER_SIZE` | Optional, default `30` (the provider's floor; values below 30 are clamped up): provider-side text buffering before speech synthesis starts. Keep it near the floor so the first phrase the voice chunker pushes starts synthesizing as soon as the provider allows; raise it only if the provider's phrasing suffers |
 | `ECHO_GATE_CORRELATION` | Optional, default `0.7`: normalized cross-correlation against the played-audio reference needed to classify an inbound frame as the Receptionist's own Echo |
@@ -34,7 +32,7 @@ The live streaming loop is the default (`VOICE_LOOP=stream`), and transcription 
 | `ECHO_GATE_MAX_DELAY_MS` | Optional, default `600`: longest Echo return delay the adaptive-delay correlation search considers |
 | `BARGE_IN_MIN_SPEECH_MS` | Optional, default `200`: non-Echo Caller speech needed before the Receptionist stops mid-reply and the Caller takes the floor |
 | `BARGE_IN_DIP_TOLERANCE_MS` | Optional, default `200`: brief sub-threshold dip inside a Barge-in candidate that does not reset it |
-| `BARGE_IN_CONFIRM_MS` | Optional, default `300`: how long past `BARGE_IN_MIN_SPEECH_MS` the candidate waits for a partial transcript to confirm a Backchannel before unknown speech takes the floor. Only applies while partials arrive (provider VAD mode); a Backchannel is absorbed, content-bearing speech stops the Receptionist at once |
+| `BARGE_IN_CONFIRM_MS` | Optional, default `300`: how long past `BARGE_IN_MIN_SPEECH_MS` the candidate waits for a partial transcript to confirm a Backchannel before unknown speech takes the floor. Only applies while partials arrive; a Backchannel is absorbed, content-bearing speech stops the Receptionist at once |
 | `SARVAM_TTS_STREAM` | Optional, default `true`: stream replies over Sarvam's text-to-speech WebSocket (`bulbul:v3`, `mulaw` @ 8 kHz) so audio reaches the Caller while it is still being generated. A failed or stalled utterance falls back to the REST TTS call; set `false` to force REST |
 | `SARVAM_TTS_STREAM_IDLE_TIMEOUT_MS` | Optional, default `5000`: silence on the TTS socket before the sentence falls back to REST |
 | `GROQ_API_KEY` or `OPENAI_API_KEY` | `OPENAI_API_KEY` is required for the default `STT_PROVIDER=openai-realtime` (it drives both the realtime channel and its `whisper-1` REST fallback). `GROQ_API_KEY` is required only for `STT_PROVIDER=groq`; `STT_PROVIDER=openai` uses `OPENAI_API_KEY` |
@@ -151,12 +149,11 @@ Component traces (`kind:"trace"`):
   a short backoff before the round is allowed to fail the call.
 - `component:"stt"` — socket `open`/`close`/`error`, `speech-start`
   (`bufferedBytes`), `final` (`ms`, `chars`, `partials`, `noSpeech`),
-  `final-timeout`, `stale-final`, `vad-speech-start`/`vad-speech-end`,
-  `endpointing-update`, and REST `rest-start/rest-done/rest-error`. Hedging:
-  `hedge-start` (REST began alongside a late final), `hedge-win` (the REST
-  result answered the Turn) and `hedge-lost` (the provider final still won).
-  `second-opinion-start` marks a critical-field second decode started before
-  the primary final landed; `second-opinion-disagree` reprompts without
+  `final-timeout`, `stale-final`, and REST `rest-start/rest-done/rest-error`.
+  Hedging: `hedge-start` (REST began alongside a late final), `hedge-win` (the
+  REST result answered the Turn) and `hedge-lost` (the provider final still
+  won). `second-opinion-start` marks a critical-field second decode started
+  before the primary final landed; `second-opinion-disagree` reprompts without
   committing the field. `warmup-start/done/error` is the on-open route warm-up.
   The OpenAI Realtime channel traces `open` (model, delay, keywords),
   `speech-start` (`bufferedBytes`), `commit` (`bytes`), `committed`, `final`
@@ -166,12 +163,10 @@ Component traces (`kind:"trace"`):
   `utterance-start`, `first-audio` (latency), `utterance-done` (`chunks`,
   `bytes`), `provider-error`, `idle-timeout`, `closed`, and REST
   `rest-start/rest-done/rest-error`.
-- `component:"vad"` — `endpoint` per utterance: `source` (`provider` when the
-  provider VAD owned the boundary, `local` in hybrid mode), `speechMs`, the
-  locally-heard `trailingSilenceMs` the detector waited out (the Caller's last
-  speech sample is the endpoint minus this, which is what `analyze-call`
-  measures reply latency from), and the local-detector `frames`, `maxScore`,
-  `meanScore` (all zero when the provider owned the boundary).
+- `component:"vad"` — `endpoint` per utterance: `speechMs`, the locally-heard
+  `trailingSilenceMs` the detector waited out (the Caller's last speech sample
+  is the endpoint minus this, which is what `analyze-call` measures reply
+  latency from), and the local-detector `frames`, `maxScore`, `meanScore`.
 - `component:"echo-gate"` — `decision` per inbound frame heard while the
   Receptionist speaks: `echo` (true = own voice returning), `reason`
   (`echo` | `silence` | `no-reference` | `uncorrelated` | `double-talk`), and the
@@ -179,15 +174,12 @@ Component traces (`kind:"trace"`):
   `residualRms`, `returnLossDb`, `threshold`, `marginDb`). High-volume by
   design: one line per 20 ms frame, `grep <callSid>` scoped.
 - `component:"call"` — `phase` transitions, `playback-cleared`, `barge-in`
-  (`generation`, `candidateMs`, `corroborated`), `first-outbound`
+  (`generation`, `candidateMs`), `first-outbound`
   (`generation`; the first frame of a reply that reached the transport — the
   caller-observable audio start), and `backchannel` (`durationMs`,
   `text`). Keypad entry: `dtmf-digit` (`buffered` count), `dtmf-submit`,
   `dtmf-rejected`, `dtmf-cleared`; digits themselves are never logged.
-  `barge-in`'s `corroborated` is true when a provider
-  `vad.speech_start` arrived while the local candidate was building; the
-  provider never triggers Barge-in, the local Silero candidate plus Echo-gate
-  clearance does. `backchannel` is one line per absorbed acknowledgement: the
+  `backchannel` is one line per absorbed acknowledgement: the
   Receptionist kept speaking, no Turn opened, no history was written. A
   `failure`/`goodbye` close also REST-hangs the call up (`component:"twilio"`,
   `rest-hangup` with `ok`), so the Caller never sits on a dead line after the

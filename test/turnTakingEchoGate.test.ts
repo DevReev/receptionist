@@ -28,7 +28,6 @@ function harness(options?: { bargeInMinSpeechMs?: number }): Harness {
   const turnTaking = new TurnTaking({
     vad: scriptVad(),
     policy: POLICY,
-    detection: 'hybrid',
     bargeInMinSpeechMs: options?.bargeInMinSpeechMs,
     observer: {
       onUtterance: (utterance) => utterances.push(utterance),

@@ -4,7 +4,7 @@ import { CallStore } from '../src/calls.ts';
 import { LiveCallSession } from '../src/live.ts';
 import type { Vad } from '../src/endpoint.ts';
 import type { Assistant, AssistantContext, BookingOutcome, TurnEvent } from '../src/app.ts';
-import type { PartialTranscript, RealtimeEndpointing, RealtimeStt, VadEvent } from '../src/realtimeStt.ts';
+import type { PartialTranscript, RealtimeStt } from '../src/realtimeStt.ts';
 import type { Tts } from '../src/tts.ts';
 import type { TraceEvent } from '../src/trace.ts';
 import type { PlaybackResult } from '../src/transport.ts';
@@ -32,8 +32,13 @@ const GUIDE = {
 const AVAILABILITY =
   'AVAILABILITY (fetched live — only these slots exist)\n- 2026-09-30 09:30 Appointment with Bob Gowda at Bobby Clinic';
 
-/** The provider owns boundaries in this suite; the local VAD never latches. */
-const silentVad: Vad = { score: async () => 0.05, reset: () => {} };
+/** The local detector owns boundaries: 0x11 is audible speech, 0xFF is silence. */
+const SPEECH_FRAME = Buffer.alloc(FRAME_BYTES, 0x11);
+const SILENCE_FRAME = Buffer.alloc(FRAME_BYTES, 0xff);
+const byteVad: Vad = {
+  score: async (pcm) => (pcm.every((sample) => sample === 0) ? 0.05 : 0.9),
+  reset: () => {},
+};
 
 async function waitFor(cond: () => boolean, what: string): Promise<void> {
   const deadline = Date.now() + 2000;
@@ -70,10 +75,8 @@ function scriptedAssistant(replyFor: (ctx: AssistantContext) => string): {
   return { assistant, calls };
 }
 
-/** Scripted provider VAD channel whose finalize can be held open by the test. */
+/** Scripted realtime channel whose finalize can be held open by the test. */
 class FakeSpecStt implements RealtimeStt {
-  endpointing: RealtimeEndpointing = 'vad';
-  private handler: ((event: VadEvent) => void) | null = null;
   private partialHandler: ((partial: PartialTranscript) => void) | null = null;
   private pending: ((tx: { text: string; noSpeech: boolean }) => void) | null = null;
   private readonly finals: { text: string; noSpeech: boolean }[];
@@ -102,14 +105,6 @@ class FakeSpecStt implements RealtimeStt {
     const pending = this.pending;
     this.pending = null;
     pending?.({ text, noSpeech: text.trim().length === 0 });
-  }
-
-  onVadEvent(handler: (event: VadEvent) => void): void {
-    this.handler = handler;
-  }
-
-  emit(event: VadEvent): void {
-    this.handler?.(event);
   }
 
   onPartial(handler: (partial: PartialTranscript) => void): void {
@@ -177,11 +172,10 @@ function liveSession(
   const live = new LiveCallSession({
     identity: { callSid, streamSid: `MZ${callSid}` },
     sendAudio: () => {},
-    vad: silentVad,
+    vad: byteVad,
     policy: POLICY,
     transcriber: { transcribe: async () => ({ text: opts.restText ?? 'rest transcript', noSpeech: false }) },
     realtime: stt,
-    turnDetection: 'sarvam',
     speculation: opts.speculation,
     tts,
     guide: GUIDE,
@@ -234,6 +228,17 @@ async function feed(live: LiveCallSession, frames: number): Promise<void> {
   }
 }
 
+/**
+ * One locally-endpointed utterance: speech long enough to latch, the partial
+ * under test, then the trailing silence that ends the Turn (the 300 ms
+ * adaptive floor, since the partial is complete).
+ */
+async function speak(h: Harness, partial: string, speechFrames = 20): Promise<void> {
+  for (let i = 0; i < speechFrames; i++) await h.live.receiveAudio(SPEECH_FRAME);
+  h.stt.partial(partial);
+  for (let i = 0; i < 15; i++) await h.live.receiveAudio(SILENCE_FRAME);
+}
+
 function speculationEvents(traces: TraceEvent[], event: string): TraceEvent[] {
   return traces.filter((entry) => entry.component === 'call' && entry.event === event);
 }
@@ -244,11 +249,7 @@ describe('live speculative replies (ticket 09)', () => {
     const { assistant, calls: assistantCalls } = scriptedAssistant(() => 'We are open Monday to Friday.');
     const h = liveSession('CAspec1', { stt, assistant });
 
-    stt.emit('speech_start');
-    await feed(h.live, 20);
-    stt.partial('what are your hours');
-    stt.emit('speech_end');
-    await feed(h.live, 1);
+    await speak(h, 'what are your hours');
 
     await waitFor(() => h.texts.length > 0, 'reply audio before the final');
     assert.equal(stt.finalPending, true, 'the reply started while the final was still in flight');
@@ -279,11 +280,7 @@ describe('live speculative replies (ticket 09)', () => {
     const { assistant, calls: assistantCalls } = scriptedAssistant(() => 'We are open Monday to Friday.');
     const h = liveSession('CAspec2', { stt, assistant });
 
-    stt.emit('speech_start');
-    await feed(h.live, 20);
-    stt.partial('what are your hours');
-    stt.emit('speech_end');
-    await feed(h.live, 1);
+    await speak(h, 'what are your hours');
     stt.resolveFinal('what are your hours please');
     await h.live.flush();
     await waitFor(() => h.live.currentPhase === 'LISTENING', 'listening after the reply');
@@ -300,11 +297,7 @@ describe('live speculative replies (ticket 09)', () => {
     const { assistant, calls: assistantCalls } = scriptedAssistant(() => 'What time would you like?');
     const h = liveSession('CAspec3', { stt, assistant });
 
-    stt.emit('speech_start');
-    await feed(h.live, 20);
-    stt.partial('book me for tomorrow');
-    stt.emit('speech_end');
-    await feed(h.live, 1);
+    await speak(h, 'book me for tomorrow');
     await new Promise((r) => setTimeout(r, 20));
 
     assert.equal(h.texts.length, 0, 'no reply before the final');
@@ -333,11 +326,7 @@ describe('live speculative replies (ticket 09)', () => {
       onClear: barrier.clear,
     });
 
-    stt.emit('speech_start');
-    await feed(h.live, 20);
-    stt.partial('what are your hours');
-    stt.emit('speech_end');
-    await feed(h.live, 1);
+    await speak(h, 'what are your hours');
     await waitFor(() => h.texts.length > 0, 'speculative reply audio');
     assert.equal(h.clears.length, 0, 'the speculative playback is still running');
 
@@ -393,11 +382,7 @@ describe('live speculative replies (ticket 09)', () => {
     };
     const h = liveSession('CAspec5', { stt, assistant });
 
-    stt.emit('speech_start');
-    await feed(h.live, 20);
-    stt.partial('what are your hours');
-    stt.emit('speech_end');
-    await feed(h.live, 1);
+    await speak(h, 'what are your hours');
     await waitFor(() => outcomes.length > 0, 'the speculative tool attempts');
     stt.resolveFinal('where is the clinic located');
     await h.live.flush();
@@ -415,11 +400,7 @@ describe('live speculative replies (ticket 09)', () => {
     const { assistant, calls: assistantCalls } = scriptedAssistant(() => 'We are open Monday to Friday.');
     const h = liveSession('CAspec6', { stt, assistant, speculation: false });
 
-    stt.emit('speech_start');
-    await feed(h.live, 20);
-    stt.partial('what are your hours');
-    stt.emit('speech_end');
-    await feed(h.live, 1);
+    await speak(h, 'what are your hours');
     await new Promise((r) => setTimeout(r, 20));
 
     assert.equal(h.texts.length, 0, 'the no-speculation path waits for the final');
@@ -446,8 +427,7 @@ describe('live speculative replies (ticket 09)', () => {
     };
     const h = liveSession('CAspec7', { stt, assistant });
 
-    stt.emit('speech_start');
-    await feed(h.live, 10);
+    for (let i = 0; i < 20; i++) await h.live.receiveAudio(SPEECH_FRAME);
     stt.partial('what are your hours');
     const started = speculationEvents(h.traces, 'speculation-start').length;
     stt.partial('what are your hours tomorrow');
@@ -456,8 +436,7 @@ describe('live speculative replies (ticket 09)', () => {
     assert.equal(aborted.length, 1);
     assert.equal(aborted[0]!['reason'], 'booking-cue');
 
-    stt.emit('speech_end');
-    await feed(h.live, 1);
+    await feed(h.live, 15);
     stt.resolveFinal('what are your hours tomorrow');
     await h.live.flush();
     await waitFor(() => h.live.currentPhase === 'LISTENING', 'listening after the reply');
@@ -472,11 +451,7 @@ describe('live speculative replies (ticket 09)', () => {
     );
     const h = liveSession('CAspec9', { stt, assistant });
 
-    stt.emit('speech_start');
-    await feed(h.live, 20);
-    stt.partial('can i ask you something');
-    stt.emit('speech_end');
-    await feed(h.live, 1);
+    await speak(h, 'can i ask you something');
     await waitFor(() => h.texts.length > 0, 'speculative reply audio');
 
     stt.resolveFinal('can i ask you something to reschedule');
@@ -508,11 +483,7 @@ describe('live speculative replies (ticket 09)', () => {
       restText: '',
     });
 
-    stt.emit('speech_start');
-    await feed(h.live, 20);
-    stt.partial('what are your hours');
-    stt.emit('speech_end');
-    await feed(h.live, 1);
+    await speak(h, 'what are your hours');
     await waitFor(() => h.texts.length > 0, 'speculative reply audio');
 
     stt.resolveFinal('');

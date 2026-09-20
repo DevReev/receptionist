@@ -216,7 +216,7 @@ export function analyzeCall(lines: LogLine[], callSid: string): LiveCallMetrics 
       // The boundary fires after the detector's own trailing silence, so the
       // Caller's last speech sample is the endpoint minus that silence.
       const trailingMs = num(line.data.trailingSilenceMs) ?? 0;
-      endpoints.push({ at: line.at, anchorAt: line.at - trailingMs, source: str(line.data.source) ?? 'provider' });
+      endpoints.push({ at: line.at, anchorAt: line.at - trailingMs, source: str(line.data.source) ?? 'local' });
       continue;
     }
     if (line.component === 'call' && line.event === 'first-outbound') {

@@ -5,11 +5,9 @@ export interface Vad {
 }
 
 /**
- * Local (hybrid) detector fallbacks for the knobs that left the env surface:
- * the provider owns primary boundaries, and the Barge-in candidate knobs are
- * separate. `silenceMs` backs the non-hybrid fallback boundary and the
- * Barge-in candidate reset; the hybrid detector's adaptive pause owns the
- * local Turn boundary.
+ * Local detector fallbacks for the knobs that left the env surface: the
+ * Barge-in candidate knobs are separate, and `silenceMs` backs the Barge-in
+ * candidate reset while the adaptive pause owns the local Turn boundary.
  */
 export const LOCAL_ENDPOINT_FALLBACKS = {
   silenceMs: 1000,
@@ -44,29 +42,14 @@ export interface Utterance {
   durationMs: number;
   /**
    * Locally-heard silence that preceded this boundary, in ms. The Caller's
-   * last speech sample is roughly the endpoint minus this; it is the only
-   * local estimate once the provider has waited out its own silence window.
+   * last speech sample is roughly the endpoint minus this.
    */
   trailingSilenceMs?: number;
-  /** True when the local detector took this boundary because the provider stalled. */
-  stalled?: boolean;
-}
-
-/** Local evidence that the provider stopped emitting a Turn's boundary. */
-export interface StallEvent {
-  /** Local trailing silence that triggered the takeover. */
-  trailingSilenceMs: number;
-  /** Locally-heard speech before that silence. */
-  speechMs: number;
-  /** Grace the provider was given to emit its own boundary. */
-  graceMs: number;
 }
 
 export interface BargeInEvent {
   audio: Int16Array;
   durationMs: number;
-  /** True when a provider `vad.speech_start` corroborated the local candidate. */
-  corroborated: boolean;
 }
 
 /** A short acknowledgement absorbed while the Receptionist held the floor. */

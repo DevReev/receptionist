@@ -1,9 +1,7 @@
 /**
- * Local (hybrid) endpointing policy: a Caller-adaptive pause built from the
- * Caller's own intra-utterance silences, plus semantic completeness read from
- * partial transcripts. `TURN_DETECTION=hybrid` runs this because the provider
- * does not own boundaries on its manual-mode socket; provider VAD mode
- * (`sarvam`) never consults it.
+ * Local endpointing policy: a Caller-adaptive pause built from the Caller's own
+ * intra-utterance silences, plus semantic completeness read from partial
+ * transcripts. The local detector owns every Turn boundary.
  *
  * The default until enough pauses are observed is a fixed 300 ms, so the
  * detector never answers faster than the short default but also never waits
@@ -34,22 +32,9 @@ export const HYBRID_DEFAULTS = {
    * Floor when the session has no partial channel: the adaptive pause alone
    * tracks brief intra-word gaps and can fall near the 150 ms clamp, which
    * cuts utterances into fragments once no semantic evidence can hold the
-   * boundary. Provider VAD used 500 ms of silence, so this matches it.
+   * boundary. Matches the retired provider-side 500 ms of silence.
    */
   noPartialsFloorMs: 500,
-} as const;
-
-/**
- * Stall guard: the provider owns boundaries in `sarvam` mode, but when local
- * speech presence hears a Turn and the provider emits neither an end signal nor
- * a final within this grace, the hybrid detector takes the boundary. Two
- * consecutive stalled Turns escalate the session to the local detector.
- */
-export const STALL_DEFAULTS = {
-  /** Local trailing silence that takes a provider-held boundary. */
-  graceMs: 1200,
-  /** Consecutive stalled Turns that switch the session's detector. */
-  escalateAfter: 2,
 } as const;
 
 /**

@@ -30,7 +30,6 @@ function harness(): Harness {
   const turnTaking = new TurnTaking({
     vad,
     policy: POLICY,
-    detection: 'hybrid',
     observer: {
       onUtterance: (utterance) => {
         utterances.push(utterance);

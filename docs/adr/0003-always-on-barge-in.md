@@ -1,5 +1,11 @@
 # ADR-0003: Always-on Barge-in over echo-gated audio; provider VAD owns turn boundaries
 
+> **Superseded in part** by the OpenAI-only STT change
+> (`.scratch/openai-only-stt/spec.md`): there is no provider-VAD channel any
+> more, so the local detector is the only Turn boundary authority and the
+> stall guard, endpointing switching, and `abandonUtterance` are deleted. The
+> Echo-gate and always-on Barge-in decisions below still hold.
+
 ## Context
 
 The live loop ends a Caller's Turn on a fixed local silence window
@@ -15,14 +21,17 @@ listening makes the Receptionist cut itself off.
 
 ## Decision
 
-- **Turn boundary**: Sarvam realtime `endpointing=vad` is authoritative
+- **Turn boundary** ~~Sarvam realtime `endpointing=vad` is authoritative
   (`vad.speech_start` / `vad.speech_end`; knobs `threshold`,
   `silence_duration_ms`, `min_speech_duration_ms`). Local Silero is demoted to
-  Barge-in candidate detection and Echo-gate timing.
-- **Hybrid backup**: `TURN_DETECTION=hybrid` runs the socket in manual mode
+  Barge-in candidate detection and Echo-gate timing.~~ Superseded: the local
+  detector owns boundaries (adaptive pause + partial completeness); Silero
+  detects speech and Barge-in candidates.
+- **Hybrid backup** ~~`TURN_DETECTION=hybrid` runs the socket in manual mode
   with local semantic + caller-adaptive endpointing. A stall guard falls back
   per Turn (REST transcription) and escalates the session to manual after two
-  consecutive provider stalls.
+  consecutive provider stalls.~~ Superseded: the local detector is always the
+  authority.
 - **Echo handling**: audio streams upstream continuously, with per-frame
   gating: frames classified as Echo are replaced with mulaw silence, Caller
   frames pass through. Rejected: muting upstream while speaking (kills
