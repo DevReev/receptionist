@@ -25,6 +25,8 @@ export interface StreamObserver {
   onOpen?(identity: StreamIdentity, session?: StreamSession): void;
   /** Fired for each outbound media frame as it is sent, in playout order. */
   onOutboundFrame?(identity: StreamIdentity, audio: Buffer, session?: StreamSession): void;
+  /** An inbound keypad digit; bidirectional Streams only. */
+  onDtmf?(identity: StreamIdentity, digit: string, session?: StreamSession): void;
 }
 
 /** Minimal surface a media-stream socket must provide; real and fake sockets both fit. */
@@ -174,6 +176,7 @@ interface TwilioFrame {
   sequenceNumber?: unknown;
   media?: { payload?: unknown; chunk?: unknown; timestamp?: unknown };
   mark?: { name?: unknown };
+  dtmf?: { digit?: unknown };
 }
 
 const SUPPORTED_MEDIA_FORMAT = { encoding: 'audio/x-mulaw', sampleRate: 8000, channels: 1 } as const;
@@ -258,6 +261,14 @@ export function attachStreamSocket(
     if (frame.event === 'mark') {
       const name = frame.mark?.name;
       if (typeof name === 'string') session.receiveMark(name);
+      return;
+    }
+    if (frame.event === 'dtmf') {
+      const digit = frame.dtmf?.digit;
+      const identity = session.currentIdentity;
+      if (typeof digit === 'string' && digit.length > 0 && identity) {
+        observer.onDtmf?.(identity, digit, session);
+      }
       return;
     }
     if (frame.event === 'stop') {

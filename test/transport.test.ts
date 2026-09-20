@@ -264,6 +264,22 @@ describe('TwilioMediaTransport clears', () => {
     h.transport.close('test');
   });
 
+  it('still sends the next mark after a clear dropped queued audio', async () => {
+    const h = harness();
+    // The clear drops unsent frames; the next response's barrier must not wait
+    // on frames that will never play.
+    h.transport.enqueueMulaw(bytes(1600));
+    assert.equal(h.socket.media().length, 1, 'first frame immediate');
+    h.transport.clearPlayback('caller-barge-in');
+    h.transport.enqueueMulaw(bytes(320));
+    const pending = h.transport.finishPlayback(9);
+    h.clock.advance(100);
+    assert.deepEqual(h.socket.marks(), ['reply-9-mark-1'], 'the mark follows its own audio only');
+    h.transport.receiveMark('reply-9-mark-1');
+    assert.equal((await pending).outcome, 'played');
+    h.transport.close('test');
+  });
+
   it('clears and reports overflow past the queued-duration bound', () => {
     let overflow = '';
     const h = harness({ maxQueuedMs: 40, onOverflow: (reason) => (overflow = reason) });

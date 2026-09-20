@@ -254,6 +254,10 @@ export class TwilioMediaTransport {
     this.epoch += 1;
     this.queue = [];
     this.nextSendAt = null;
+    // Dropped frames will never be sent, and every barrier that referenced
+    // them has just been settled: align the sent counter so a barrier created
+    // after this clear can still be reached by its own frames.
+    this.framesSentTotal = this.framesQueuedTotal;
     const pending = this.pendingBarriers;
     this.pendingBarriers = [];
     for (const barrier of pending) this.settleCleared(barrier, reason);

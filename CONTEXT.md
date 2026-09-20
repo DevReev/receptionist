@@ -18,6 +18,8 @@ _Avoid_: test booking
 _Avoid_: silence timeout
 - **Stall guard**: local speech presence taking a Turn's boundary when the provider emits neither an end signal nor a final within the grace (1.2 s); the stalled Turn is transcribed through the REST fallback. Two consecutive stalls switch the session to the local detector.
 _Avoid_: fallback timer
+- **Hedge**: starting the REST transcription alongside a slow realtime final instead of waiting out the adapter timeout; the first non-empty result wins, and the provider final is preferred while the REST request is in flight.
+_Avoid_: timeout fallback, race
 - **Stream session**: one call's bidirectional audio websocket; it replaces the per-turn webhook chain while live streaming is enabled.
 - **Turn**: one caller utterance → transcription → reply cycle, inside a Stream session while streaming is enabled. A Turn may begin while the previous reply is still being spoken (Barge-in).
 - **Speculative reply**: a reply started from a partial transcription, before the Turn's final transcription arrives; discarded and regenerated if the final disagrees with the partial.

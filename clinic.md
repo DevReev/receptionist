@@ -22,7 +22,6 @@
 
 - Live weekday slot probe: Monday–Friday, 09:00–17:00 IST.
 - Appointment starts are offered every 15 minutes; the last observed start is 16:45 for a 15-minute service.
-- Weekend hours were not supplied by the directory and are not confirmed.
 - Availability is location-specific. Always tell the caller which location a Slot belongs to.
 - Never invent a time. Offer only Slots returned by the live Picktime availability response.
 
@@ -30,10 +29,14 @@
 
 - **Appointment** — 15 minutes — Rs 700.
 - The fee is the amount currently reported by Picktime. Payment method and payment timing were not supplied by the directory.
+- Endoscopy: performed by Dr Bob Gowda, requires patients to not eat or drink anything for 8 hours prior
 
 ## Doctor
 
 - **Bob Gowda** is the only doctor currently returned by the live Picktime directory.
+- Bob Gowda is a gastroenterologist, proctologist and laparoscopic surgeon who did his specialisation and superspecialisation in the UK
+- Bob Gowda has 20 years experience
+- Bob Gowda also sees patients at Manipal Hebbal and Koshys Hospital
 - The API may omit `doctorId` while exactly one live doctor exists. If the page later returns multiple doctors, ask the caller to choose; never silently select one.
 
 ## Booking rules

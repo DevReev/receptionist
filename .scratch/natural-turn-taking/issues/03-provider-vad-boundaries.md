@@ -4,7 +4,7 @@
 
 **Blocked by:** 01, 02.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] A scripted call is answered with no local fixed silence wait; the reply pipeline starts from the provider end-of-turn signal plus its final.
 - [x] Adapter protocol tests cover VAD-mode connect parameters, provider speech events, and boundary-gated mode switching; no client boundary messages are sent in VAD mode.

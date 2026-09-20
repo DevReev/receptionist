@@ -232,6 +232,23 @@ describe('stream session lifecycle', () => {
     assert.deepEqual(observer.closes, [{ callSid: 'CA4', reason: 'socket-closed' }]);
   });
 
+  it('forwards an inbound DTMF digit to the observer', () => {
+    const socket = new FakeSocket();
+    const digits: { callSid: string; digit: string }[] = [];
+    attachStreamSocket(socket, {
+      onAudio: () => {},
+      onClose: () => {},
+      onDtmf: (identity, digit) => digits.push({ callSid: identity.callSid, digit }),
+    });
+    socket.peerMessage(twilioStart({ callSid: 'CAdtmf', streamSid: 'MZdtmf' }));
+    socket.peerMessage({ event: 'dtmf', streamSid: 'MZdtmf', dtmf: { track: 'inbound_track', digit: '5' } });
+    socket.peerMessage({ event: 'dtmf', streamSid: 'MZdtmf', dtmf: { digit: '#' } });
+    assert.deepEqual(digits, [
+      { callSid: 'CAdtmf', digit: '5' },
+      { callSid: 'CAdtmf', digit: '#' },
+    ]);
+  });
+
   it('drops audio arriving before start', () => {
     const socket = new FakeSocket();
     const observer = recordingObserver();

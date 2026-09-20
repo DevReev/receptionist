@@ -42,6 +42,12 @@ export interface EndpointPolicy {
 export interface Utterance {
   audio: Int16Array;
   durationMs: number;
+  /**
+   * Locally-heard silence that preceded this boundary, in ms. The Caller's
+   * last speech sample is roughly the endpoint minus this; it is the only
+   * local estimate once the provider has waited out its own silence window.
+   */
+  trailingSilenceMs?: number;
   /** True when the local detector took this boundary because the provider stalled. */
   stalled?: boolean;
 }

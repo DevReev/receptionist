@@ -51,6 +51,13 @@ async function feed(live: LiveCallSession, frames: number): Promise<void> {
   await live.flush();
 }
 
+/** Frames while a Turn is in flight, when waiting for the Turn queue would block. */
+async function pump(live: LiveCallSession, frames: number): Promise<void> {
+  for (let i = 0; i < frames; i++) {
+    await live.receiveAudio(Buffer.alloc(FRAME_BYTES, 0xff));
+  }
+}
+
 async function waitFor(cond: () => boolean, what: string): Promise<void> {
   const deadline = Date.now() + 2000;
   for (;;) {
@@ -320,6 +327,113 @@ describe('live provider VAD boundaries', () => {
     });
     await feed(live, 100);
     assert.equal(calls.get('CApv7').history[0]!.text, 'hello');
+    live.close('test');
+  });
+
+  it('answers an utterance that arrives while a reply is still generating', async () => {
+    const calls = new CallStore();
+    const { tts } = stubTts();
+    const turns: TurnEvent[] = [];
+    const realtime = new FakeProviderStt([
+      { text: 'what are your hours', noSpeech: false },
+      { text: 'and where are you', noSpeech: false },
+    ]);
+    let release = (): void => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const heldAssistant: Assistant = {
+      reply: async () => ({ text: '', endCall: false }),
+      replyStream: async function* stream() {
+        await held;
+        yield 'We are open Monday to Friday. ';
+      },
+    };
+    const live = new LiveCallSession({
+      identity: { callSid: 'CApv8', streamSid: 'MZpv8' },
+      sendAudio: () => {},
+      vad: scriptVad(silence(400)),
+      policy: POLICY,
+      transcriber: { transcribe: async () => ({ text: 'rest', noSpeech: false }) },
+      realtime,
+      turnDetection: 'sarvam',
+      tts,
+      guide: GUIDE,
+      assistant: heldAssistant,
+      calls,
+      logTurn: (e) => turns.push(e),
+    });
+    // Turn 1: the Caller asks and the reply generation starts but is held.
+    realtime.emit('speech_start');
+    await pump(live, 30);
+    realtime.emit('speech_end');
+    await pump(live, 1);
+    await waitFor(() => realtime.finalizeCalls === 1, 'the first final');
+    // While the reply is still generating, the Caller asks a full second
+    // question and the provider closes its boundary before the reply speaks.
+    realtime.emit('speech_start');
+    await pump(live, 30);
+    realtime.emit('speech_end');
+    await pump(live, 1);
+    release();
+    await waitFor(() => turns.length === 2, 'the Turn held during generation');
+    assert.equal(turns[0]!.excerpt, 'what are your hours');
+    assert.equal(turns[1]!.excerpt, 'and where are you');
+    live.close('test');
+  });
+
+  it('reprompts and keeps answering when the turn deadline aborts the reply', async () => {
+    const calls = new CallStore();
+    const { tts, texts } = stubTts();
+    const turns: TurnEvent[] = [];
+    const realtime = new FakeProviderStt([
+      { text: 'what are your hours', noSpeech: false },
+      { text: 'hello again', noSpeech: false },
+    ]);
+    let streams = 0;
+    const abortableAssistant: Assistant = {
+      reply: async () => ({ text: '', endCall: false }),
+      replyStream: async function* stream(_ctx, signal) {
+        streams += 1;
+        if (streams === 1) {
+          await new Promise((_resolve, reject) => {
+            signal?.addEventListener('abort', () => reject(new DOMException('The operation was aborted.', 'AbortError')), {
+              once: true,
+            });
+          });
+        }
+        yield 'Sure, happy to help. ';
+      },
+    };
+    const live = new LiveCallSession({
+      identity: { callSid: 'CApv9', streamSid: 'MZpv9' },
+      sendAudio: () => {},
+      vad: scriptVad(silence(400)),
+      policy: POLICY,
+      transcriber: { transcribe: async () => ({ text: 'rest', noSpeech: false }) },
+      realtime,
+      turnDetection: 'sarvam',
+      tts,
+      guide: GUIDE,
+      assistant: abortableAssistant,
+      calls,
+      turnDeadlineMs: 40,
+      logTurn: (e) => turns.push(e),
+    });
+    realtime.emit('speech_start');
+    await feed(live, 30);
+    realtime.emit('speech_end');
+    await feed(live, 1);
+    await waitFor(() => turns.some((t) => t.miss && /say that again/.test(t.reply)), 'the deadline reprompt');
+    assert.ok(texts.some((t) => /say that again/.test(t)), 'the reprompt is spoken');
+    await waitFor(() => live.currentPhase === 'LISTENING', 'listening after the reprompt');
+    // The Caller speaks again and is answered normally.
+    realtime.emit('speech_start');
+    await feed(live, 30);
+    realtime.emit('speech_end');
+    await feed(live, 1);
+    await waitFor(() => turns.length === 2, 'the Turn after the deadline');
+    assert.equal(turns[1]!.excerpt, 'hello again');
     live.close('test');
   });
 });

@@ -473,6 +473,70 @@ describe('live full Turn (ticket 11)', () => {
     assert.equal(reads, 1, 'the first booking turn reuses the prefetched read');
   });
 
+  it('keeps the warm availability block out of a non-availability Turn', async () => {
+    const calls = new CallStore();
+    const { tts } = stubTts();
+    const phases: Record<string, unknown>[] = [];
+    const seen: AssistantContext[] = [];
+    const live = new LiveCallSession({
+      identity: { callSid: 'CAnoavail', streamSid: 'MZnoavail' },
+      sendAudio: () => {},
+      vad: scriptVad([...speech(50), ...silence(50)]),
+      policy: POLICY,
+      transcriber: queueTranscriber(['what are your hours']),
+      tts,
+      guide: GUIDE,
+      availability: AVAILABILITY,
+      assistant: {
+        reply: async () => ({ text: '', endCall: false }),
+        replyStream: async function* (ctx: AssistantContext) {
+          seen.push(ctx);
+          yield 'We are open Monday to Friday. ';
+        },
+      },
+      calls,
+      logSession: (e) => phases.push(e),
+    });
+    await live.open();
+    assert.ok(phases.some((p) => p.phase === 'availability' && p.event === 'done' && p.prefetch === true));
+    await feed(live, 100);
+    assert.equal(seen[0]!.availability, undefined, 'the FAQ Turn does not pay the availability prefill');
+  });
+
+  it('bridges a cold availability read without stacking a second hold', async () => {
+    const calls = new CallStore();
+    const { tts, texts } = stubTts();
+    const phases: Record<string, unknown>[] = [];
+    const seen: AssistantContext[] = [];
+    const live = new LiveCallSession({
+      identity: { callSid: 'CAbridge', streamSid: 'MZbridge' },
+      sendAudio: () => {},
+      vad: scriptVad([...speech(50), ...silence(50)]),
+      policy: POLICY,
+      transcriber: queueTranscriber(['can I book an appointment?']),
+      tts,
+      guide: GUIDE,
+      availability: () => new Promise<string>((resolve) => setTimeout(() => resolve(AVAILABILITY), 60)),
+      assistant: {
+        reply: async () => ({ text: '', endCall: false }),
+        replyStream: async function* (ctx: AssistantContext) {
+          seen.push(ctx);
+          await new Promise((r) => setTimeout(r, 40));
+          yield 'Sure, Wednesday at ten is free. ';
+        },
+      },
+      calls,
+      holdAfterMs: 20,
+      logSession: (e) => phases.push(e),
+    });
+    await feed(live, 100);
+    assert.equal(texts[0], HOLD_ASSISTANT_LINE, 'the read is bridged after the hold budget');
+    assert.equal(texts.filter((t) => t === HOLD_ASSISTANT_LINE).length, 1, 'one hold per Turn');
+    assert.ok(phases.some((p) => p.phase === 'availability' && p.event === 'hold'));
+    assert.equal(seen[0]!.availability, AVAILABILITY, 'the answer still waits for the live slots');
+    assert.ok(texts.some((t) => t.includes('Wednesday at ten is free')));
+  });
+
   it('injects warm availability and traces assistant rounds', async () => {
     const calls = new CallStore();
     const { tts } = stubTts();

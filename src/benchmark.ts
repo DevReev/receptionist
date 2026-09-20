@@ -56,6 +56,21 @@ export function percentile(values: number[], p: number): number {
   return sorted[index]!;
 }
 
+/** Latency sample summary; the shared shape of the bench and live-call reports. */
+export interface Summary {
+  samples: number;
+  p50: number;
+  p95: number;
+}
+
+export function latencySummary(values: number[]): Summary {
+  return { samples: values.length, p50: percentile(values, 50), p95: percentile(values, 95) };
+}
+
+export function latencyText(summary: Summary): string {
+  return summary.samples > 0 ? `p50 ${summary.p50}ms p95 ${summary.p95}ms (n=${summary.samples})` : 'none (n=0)';
+}
+
 function tokens(text: string): string[] {
   return text
     .toLowerCase()

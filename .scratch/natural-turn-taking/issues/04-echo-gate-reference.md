@@ -4,7 +4,7 @@
 
 **Blocked by:** 03.
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Echo-mixed fixtures and scripted inbound produce correct classifications: Echo frames flagged, clean Caller speech passed.
 - [x] Trace lines record each gate decision with the evidence used.

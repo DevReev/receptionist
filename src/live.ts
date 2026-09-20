@@ -80,6 +80,11 @@ export interface LiveCallOptions {
   realtime?: RealtimeStt;
   /** Selective independent second decode for critical fields; never every Turn. */
   secondOpinion?: Transcriber;
+  /**
+   * Warm the REST transcription route while the greeting plays, so the first
+   * Turn does not pay the provider's cold start. The result is discarded.
+   */
+  warmTranscriber?: boolean;
   tts: Tts;
   guide: ClinicGuide;
   /** Fresh guide per open when hot-reload matters; falls back to `guide`. */
@@ -127,6 +132,12 @@ export interface LiveCallOptions {
   speculation?: boolean;
   /** Whole-Turn deadline for the LLM response. <=0 disables. */
   turnDeadlineMs?: number;
+  /**
+   * Start the REST decode this many ms into a slow realtime final and race the
+   * results, so the Turn never waits out the adapter's full final timeout
+   * before the fallback begins. <=0 disables hedging (wait, then fall back).
+   */
+  sttHedgeMs?: number;
   /** Shared fixed-phrase audio cache; hits skip the provider. */
   fixedCache?: FixedAudioCache;
   /** Injectable reducer for deterministic tests. */
@@ -152,6 +163,13 @@ export interface LiveCallOptions {
   /** Drops queued audio immediately; required for barge-in. */
   clearPlayback?: (reason: string) => void;
   onClose?: (reason: string) => void;
+  /**
+   * Ends the caller's phone call through the Twilio REST API. `failure` and
+   * `goodbye` closes leave Twilio's `<Connect><Stream>` with no follow-up
+   * TwiML, so without this the caller stays on a dead line — speaking into
+   * silence until Twilio stops the stream on its own.
+   */
+  hangupCall?: (callSid: string) => Promise<void>;
 }
 
 /**
@@ -191,6 +209,13 @@ function lastQuestionIn(text: string): string | null {
 }
 
 const ABBREVIATIONS = ['mr.', 'mrs.', 'ms.', 'dr.', 'st.', 'vs.', 'rs.', 'no.', 'e.g.', 'i.e.'];
+
+/**
+ * A clause boundary this early still starts synthesis; waiting for the first
+ * full sentence would hold every reply behind the model's punctuation. The
+ * floor keeps one-word acknowledgements from becoming their own utterance.
+ */
+const CLAUSE_MIN_CHARS = 8;
 
 /**
  * Voice chunker: emits speakable phrases early without splitting abbreviations,
@@ -233,6 +258,17 @@ export class VoiceChunker {
       const prefix = text.slice(0, i + 1).toLowerCase();
       const word = /([a-z.]+)$/.exec(prefix)?.[1] ?? '';
       if (ch === '.' && ABBREVIATIONS.includes(word)) continue;
+      return i + 1;
+    }
+    // Clause cuts, for replies whose first sentence is still streaming. Only
+    // after a letter, so grouped digits ("1,000") never split.
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i]!;
+      if (ch !== ',' && ch !== ';') continue;
+      if (i + 1 < CLAUSE_MIN_CHARS) continue;
+      if (!/[a-z]/i.test(text[i - 1] ?? '')) continue;
+      const next = text[i + 1];
+      if (next !== undefined && !/\s/.test(next)) continue;
       return i + 1;
     }
     if (text.length < this.minChars) return null;
@@ -323,6 +359,7 @@ export class LiveCallSession {
   private readonly transcriber: Transcriber;
   private readonly realtime: RealtimeStt | undefined;
   private readonly secondOpinion: Transcriber | undefined;
+  private readonly warmTranscriber: boolean;
   private readonly tts: Tts;
   private guide: ClinicGuide;
   private readonly loadGuide: (() => Promise<ClinicGuide>) | undefined;
@@ -336,6 +373,7 @@ export class LiveCallSession {
   /** Consecutive stalled Turns; two switch the session to the local detector. */
   private consecutiveStalls = 0;
   private readonly turnDeadlineMs: number;
+  private readonly sttHedgeMs: number;
   private readonly fixedCache: FixedAudioCache | undefined;
   private readonly speculationEnabled: boolean;
   /** A partial-started generation awaiting its Turn's final. */
@@ -358,6 +396,7 @@ export class LiveCallSession {
   private readonly finishPlaybackFn?: (generation?: number) => Promise<PlaybackResult>;
   private readonly clearPlaybackFn?: (reason: string) => void;
   private readonly onCloseCb?: (reason: string) => void;
+  private readonly hangupCall?: (callSid: string) => Promise<void>;
   private phase: LivePhase = 'GREETING';
   private pending: Promise<unknown> = Promise.resolve();
   private closed = false;
@@ -366,6 +405,8 @@ export class LiveCallSession {
   private speechTail: Promise<void> = Promise.resolve();
   /** Monotonic response generation; every spoken response owns one. */
   private generation = 0;
+  /** Highest generation whose first audio frame reached the transport. */
+  private firstOutboundGeneration = 0;
   /** Responses at or below this generation were interrupted and must not play. */
   private cancelledThrough = 0;
   private activeSpeech: ActiveSpeech | null = null;
@@ -373,6 +414,8 @@ export class LiveCallSession {
   private turnAbort: AbortController | null = null;
   /** Last Turn interrupted by a Barge-in; its pending generation must not speak. */
   private interruptedTurn = 0;
+  /** Turn that already played a holding line; a Turn never stacks two. */
+  private holdSpokenTurn = 0;
   /** One Availability read per Turn, however many times the assistant asks. */
   private availabilityForTurn: { turn: number; value: Promise<{ block: string; slots: SlotOption[] }> } | null = null;
   /** Availability read started when the session opened; early Turns reuse it. */
@@ -390,6 +433,8 @@ export class LiveCallSession {
   private noResponsePrompts = 0;
   /** Last question spoken, revisited when the Caller goes quiet. */
   private lastQuestion: string | null = null;
+  /** Keypad digits buffered until `#` submits them as a phone number. */
+  private dtmfBuffer = '';
   private readonly scoreTimer: NodeJS.Timeout;
   /**
    * Turn opened by handleUtterance but not yet settled by a Turn log.
@@ -403,6 +448,7 @@ export class LiveCallSession {
     this.transcriber = opts.transcriber;
     this.realtime = opts.realtime;
     this.secondOpinion = opts.secondOpinion;
+    this.warmTranscriber = opts.warmTranscriber ?? false;
     this.tts = opts.tts;
     this.guide = opts.guide;
     this.loadGuide = opts.loadGuide;
@@ -417,6 +463,7 @@ export class LiveCallSession {
     if (turnDetection === 'hybrid') opts.realtime?.setEndpointing?.('manual');
     this.providerBoundaries = turnDetection === 'sarvam' && opts.realtime?.endpointing === 'vad';
     this.turnDeadlineMs = opts.turnDeadlineMs ?? DEFAULT_TURN_DEADLINE_MS;
+    this.sttHedgeMs = opts.sttHedgeMs ?? 0;
     this.fixedCache = opts.fixedCache;
     this.speculationEnabled = opts.speculation ?? true;
     this.cueNames = guideBookingNames(this.guide.raw);
@@ -433,6 +480,7 @@ export class LiveCallSession {
     this.onPlaybackComplete = opts.onPlaybackComplete;
     this.clearPlaybackFn = opts.clearPlayback;
     this.onCloseCb = opts.onClose;
+    this.hangupCall = opts.hangupCall;
     this.finishPlaybackFn =
       opts.finishPlayback ??
       (opts.waitForPlayback
@@ -448,6 +496,8 @@ export class LiveCallSession {
         (opts.realtime?.endpointing === 'vad' && typeof opts.realtime.onPartial === 'function'),
       bargeInConfirmMs: opts.bargeInConfirmMs,
       detection: this.providerBoundaries ? 'sarvam' : 'hybrid',
+      // Only a channel that exposes partials can feed the semantic boundary.
+      semanticBoundaries: typeof opts.realtime?.onPartial === 'function',
       stallGraceMs: opts.stallGraceMs,
       echoGate: opts.echoGate,
       observer: {
@@ -553,6 +603,7 @@ export class LiveCallSession {
     this.setPhase('GREETING');
     this.logSession?.({ callSid: this.identity.callSid, kind: 'session', event: 'open' });
     this.prefetchAvailability();
+    if (this.warmTranscriber) this.warmSttRoute();
     if (this.loadGuide) {
       try {
         this.adoptGuide(await this.loadGuide());
@@ -572,6 +623,49 @@ export class LiveCallSession {
   receiveAudio(mulaw: Buffer): Promise<void> {
     if (this.closed) return Promise.resolve();
     return this.turnTaking.receiveAudio(mulaw);
+  }
+
+  /**
+   * Inbound keypad entry. Digits buffer until `#` submits a full number
+   * (10-13 digits) through the normal dialogue path, so a keyed number gets
+   * the same readback and booking safeguards as a spoken one. `*` clears.
+   * Digits are never traced or logged; only lengths are.
+   */
+  receiveDtmf(digit: string): void {
+    if (this.closed) return;
+    if (digit === '*') {
+      this.dtmfBuffer = '';
+      this.trace?.({ component: 'call', event: 'dtmf-cleared' });
+      return;
+    }
+    if (digit === '#') {
+      this.submitDtmf();
+      return;
+    }
+    if (!/^\d$/.test(digit) || this.dtmfBuffer.length >= 13) return;
+    this.dtmfBuffer += digit;
+    this.trace?.({ component: 'call', event: 'dtmf-digit', buffered: this.dtmfBuffer.length });
+  }
+
+  private submitDtmf(): void {
+    const digits = this.dtmfBuffer;
+    this.dtmfBuffer = '';
+    if (digits.length < 10 || digits.length > 13) {
+      this.trace?.({ component: 'call', event: 'dtmf-rejected', digits: digits.length });
+      return;
+    }
+    this.cancelNoResponse();
+    this.noResponsePrompts = 0;
+    const state = this.calls.get(this.identity.callSid);
+    state.turn += 1;
+    const turn = state.turn;
+    this.setPhase('FINALIZING');
+    this.trace?.({ component: 'call', event: 'dtmf-submit', turn, digits: digits.length });
+    const text = `my number is ${digits}`;
+    this.calls.pushHistory(this.identity.callSid, { role: 'caller', text });
+    this.pending = this.pending
+      .then(() => this.reduceAndAnswer(text, turn, null, null))
+      .catch(() => {});
   }
 
   /**
@@ -731,6 +825,49 @@ export class LiveCallSession {
     return this.generation;
   }
 
+  private errorText(err: unknown): string {
+    return err instanceof Error ? err.message : String(err);
+  }
+
+  /**
+   * One throwaway transcription while the greeting plays heats the REST STT
+   * route (TCP/TLS and provider cold start) so the Caller's first Turn does
+   * not pay it. The result is discarded and never becomes a Turn.
+   */
+  private warmSttRoute(): void {
+    const started = Date.now();
+    this.trace?.({ component: 'stt', event: 'warmup-start' });
+    this.transcriber.transcribe(encodeWav(new Int16Array(1600)), 'audio/wav').then(
+      () => this.trace?.({ component: 'stt', event: 'warmup-done', ms: Date.now() - started }),
+      (err: unknown) =>
+        this.trace?.({
+          component: 'stt',
+          event: 'warmup-error',
+          ms: Date.now() - started,
+          detail: this.errorText(err),
+        }),
+    );
+  }
+
+  private afterMs(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      timer.unref?.();
+    });
+  }
+
+  /**
+   * The first audio frame of a reply is the Caller-observable start; trace it
+   * once per generation so live analysis measures from last Caller speech.
+   */
+  private sendResponseAudio(generation: number, chunk: Buffer): void {
+    if (generation > this.firstOutboundGeneration) {
+      this.firstOutboundGeneration = generation;
+      this.trace?.({ component: 'call', event: 'first-outbound', generation });
+    }
+    this.sendAudio(chunk);
+  }
+
   private async runResponse(
     generation: number,
     text: string | null,
@@ -757,7 +894,7 @@ export class LiveCallSession {
       if (fixedBytes) {
         // Cache hits never touch the provider, but still pass through the
         // paced transport queue and the response-tail mark barrier.
-        this.sendAudio(fixedBytes);
+        this.sendResponseAudio(generation, fixedBytes);
       } else if (text !== null) {
         const response = this.createSpeechResponse(generation);
         speech.response = response;
@@ -767,7 +904,7 @@ export class LiveCallSession {
           try {
             for await (const chunk of response.audio()) {
               if (this.closed || speech.cancelled || generation !== this.generation) return;
-              this.sendAudio(chunk);
+              this.sendResponseAudio(generation, chunk);
               if (collect) chunks.push(chunk);
             }
           } catch (err) {
@@ -803,7 +940,14 @@ export class LiveCallSession {
   }
 
   private createSpeechResponse(generation: number): SpeechResponse {
-    if (this.tts.begin) return this.tts.begin({ generation });
+    if (this.tts.begin) {
+      try {
+        return this.tts.begin({ generation });
+      } catch {
+        // The streaming socket is unavailable (provider reject, socket drop):
+        // fall back to the phrase-by-phrase path instead of failing the Turn.
+      }
+    }
     return bufferedSpeech(this.tts, {
       generation,
       onFallback: (text, detail) => this.logPhase('tts', 'fallback', { chars: text.length, detail }),
@@ -939,7 +1083,10 @@ export class LiveCallSession {
 
   /** Assistant context for speculation: no tools, no writes, no history. */
   private speculativeContext(transcript: string): AssistantContext {
-    const availabilityBlock = this.warmAvailabilityBlock();
+    // Speculation only runs on clearly non-booking partials, but the dialogue
+    // may already be availability-intent; keep the same gate as a normal Turn.
+    const availabilityBlock =
+      this.dialogue.intent === 'availability' ? this.warmAvailabilityBlock() : undefined;
     return {
       transcript,
       history: [...this.calls.get(this.identity.callSid).history],
@@ -1107,6 +1254,33 @@ export class LiveCallSession {
   }
 
   /**
+   * The controller-owned read with dead air bounded: while it is in flight, a
+   * holding line speaks after the same budget the model's first token gets.
+   * The bridge is not awaited — the model stream starts the moment the read
+   * lands and queues behind it — and a bridge played here means the model's
+   * own hold is skipped, so a Turn never stacks two holding lines.
+   */
+  private async loadAvailabilityCovered(turn: number): Promise<{ block: string; slots: SlotOption[] }> {
+    const load = this.loadAvailability(turn);
+    if (this.holdAfterMs <= 0 || this.holdSpokenTurn === turn) return load;
+    let timer: NodeJS.Timeout | null = null;
+    const hold = new Promise<'hold'>((resolve) => {
+      timer = setTimeout(() => resolve('hold'), this.holdAfterMs);
+      timer.unref?.();
+    });
+    try {
+      const winner = await Promise.race([load.then((result) => ({ result })), hold.then(() => 'hold' as const)]);
+      if (winner !== 'hold') return winner.result;
+      this.holdSpokenTurn = turn;
+      this.logPhase('availability', 'hold', { turn, text: HOLD_ASSISTANT_LINE });
+      void this.speakFixed(HOLD_ASSISTANT_LINE).catch(() => {});
+      return await load;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  /**
    * The open-of-call Availability block while it is still fresh enough to
    * serve later Turns without a Picktime read.
    */
@@ -1180,6 +1354,27 @@ export class LiveCallSession {
       });
     }
     this.onCloseCb?.(reason);
+    this.hangupViaRest(reason);
+  }
+
+  /**
+   * Fire-and-forget REST hangup for locally-initiated call ends: Twilio learns
+   * about `failure`/`goodbye` only through the phone network, and a dropped
+   * stream alone leaves the Caller listening to dead air.
+   */
+  private hangupViaRest(reason: string): void {
+    if (!this.hangupCall || (reason !== 'failure' && reason !== 'goodbye')) return;
+    this.hangupCall(this.identity.callSid).then(
+      () => this.trace?.({ component: 'twilio', event: 'rest-hangup', ok: true, reason }),
+      (err) =>
+        this.trace?.({
+          component: 'twilio',
+          event: 'rest-hangup',
+          ok: false,
+          reason,
+          detail: err instanceof Error ? err.message : String(err),
+        }),
+    );
   }
 
   private async handleUtterance(utterance: Utterance, stats: UtteranceSpeechStats): Promise<void> {
@@ -1212,6 +1407,7 @@ export class LiveCallSession {
       turn,
       source: stalled || !this.providerBoundaries ? 'local' : 'provider',
       speechMs: utterance.durationMs,
+      trailingSilenceMs: utterance.trailingSilenceMs,
       frames: stats.frames,
       maxScore: stats.maxScore,
       meanScore: stats.meanScore,
@@ -1236,11 +1432,34 @@ export class LiveCallSession {
     const transcribeStarted = Date.now();
     this.logPhase('transcribe', 'start', { turn });
     let wav: Buffer | null = null;
+    // A name or phone number is being dictated: start the selective second
+    // decode alongside the primary transcription instead of serializing it
+    // after the dialogue has already decided. Verification gates the commit.
+    let secondOpinion: Promise<Transcription> | null = null;
+    const prePhase = this.dialogue.phase;
+    const criticalPrePhase =
+      prePhase === 'collecting-patient' || prePhase === 'awaiting-confirmation' || prePhase === 'booking';
     try {
       wav = encodeWav(utterance.audio);
       this.onUtteranceAudio?.({ callSid: this.identity.callSid, turn, wav });
+      if (this.secondOpinion && criticalPrePhase) {
+        secondOpinion = this.secondOpinion.transcribe(wav, 'audio/wav');
+        secondOpinion.catch(() => {});
+        this.trace?.({ component: 'stt', event: 'second-opinion-start', turn });
+      }
       let tx: Transcription | null = null;
       let source = 'rest';
+      // The hedged REST decode starts at most once per Turn, so a slow
+      // provider final never waits out the full adapter timeout first.
+      let hedged: Promise<Transcription> | null = null;
+      const startHedge = (): Promise<Transcription> => {
+        if (hedged === null) {
+          hedged = this.transcriber.transcribe(wav!, 'audio/wav');
+          hedged.catch(() => {});
+          this.trace?.({ component: 'stt', event: 'hedge-start', turn, ms: this.sttHedgeMs });
+        }
+        return hedged;
+      };
       if (stalled) {
         // No provider boundary means no new final will be read: release the
         // utterance the provider still holds open and use a final that already
@@ -1253,23 +1472,74 @@ export class LiveCallSession {
           this.trace?.({ component: 'stt', event: 'fallback', source: 'rest', reason: 'provider-stall', turn });
         }
       } else if (this.realtime) {
-        try {
-          tx = await this.realtime.finalize();
-          source = 'realtime';
-        } catch (err) {
-          this.logPhase('transcribe', 'fallback', {
-            turn,
-            ms: Date.now() - transcribeStarted,
-            detail: err instanceof Error ? err.message : String(err),
-          });
-          if (this.closed) return;
+        const finalize = this.realtime.finalize();
+        const settledFinal = finalize.then(
+          (t) => ({ kind: 'final' as const, t }),
+          (err: unknown) => ({ kind: 'final-error' as const, err }),
+        );
+        if (this.sttHedgeMs > 0) {
+          const winner = await Promise.race([
+            settledFinal,
+            this.afterMs(this.sttHedgeMs).then(() => ({ kind: 'hedge' as const })),
+          ]);
+          if (winner.kind === 'final') {
+            tx = winner.t;
+            source = 'realtime';
+          } else if (winner.kind === 'final-error') {
+            this.logPhase('transcribe', 'fallback', {
+              turn,
+              ms: Date.now() - transcribeStarted,
+              detail: this.errorText(winner.err),
+            });
+            if (this.closed) return;
+          } else {
+            const rest = startHedge();
+            const raced = await Promise.race([
+              settledFinal,
+              rest.then(
+                (t) => ({ kind: 'rest' as const, t }),
+                (err: unknown) => ({ kind: 'rest-error' as const, err }),
+              ),
+            ]);
+            if (raced.kind === 'final') {
+              tx = raced.t;
+              source = 'realtime';
+              this.trace?.({ component: 'stt', event: 'hedge-lost', turn });
+            } else if (raced.kind === 'rest') {
+              tx = raced.t;
+              source = 'rest';
+              this.trace?.({ component: 'stt', event: 'hedge-win', turn });
+            } else {
+              // The hedge decode failed; the provider final may still land.
+              const late = await settledFinal;
+              if (late.kind === 'final') {
+                tx = late.t;
+                source = 'realtime';
+                this.trace?.({ component: 'stt', event: 'hedge-lost', turn });
+              }
+            }
+          }
+        } else {
+          const settled = await settledFinal;
+          if (settled.kind === 'final') {
+            tx = settled.t;
+            source = 'realtime';
+          } else {
+            this.logPhase('transcribe', 'fallback', {
+              turn,
+              ms: Date.now() - transcribeStarted,
+              detail: this.errorText(settled.err),
+            });
+            if (this.closed) return;
+          }
         }
       }
       // An empty realtime final may re-decode through REST before counting as no speech.
       if (!tx || !tx.text.trim()) {
-        const rest = await this.transcriber.transcribe(wav, 'audio/wav');
-        if (rest.text.trim() || !tx) {
-          tx = rest;
+        const rest = hedged ?? this.transcriber.transcribe(wav, 'audio/wav');
+        const result = await rest;
+        if (result.text.trim() || !tx) {
+          tx = result;
           source = source === 'realtime' ? 'realtime-empty-rest' : 'rest';
         }
       }
@@ -1338,7 +1608,7 @@ export class LiveCallSession {
       }
     }
     if (!historyPushed) this.calls.pushHistory(this.identity.callSid, { role: 'caller', text });
-    await this.reduceAndAnswer(text, turn, wav);
+    await this.reduceAndAnswer(text, turn, wav, secondOpinion);
   }
 
   /**
@@ -1350,7 +1620,7 @@ export class LiveCallSession {
     turn: number,
     spec: PendingSpeculation,
   ): Promise<{ text: string; generation: number }> {
-    return this.firstTokenOrHold(spec.iterator, spec.first).then((first) =>
+    return this.firstTokenOrHold(spec.iterator, turn, spec.first).then((first) =>
       this.enqueueModelResponse(spec.iterator, first, spec.controller, turn, {
         speculative: true,
         commitHistory: false,
@@ -1363,7 +1633,12 @@ export class LiveCallSession {
    * execute it. Only `continue`/`availability` reach the LLM; reads, field
    * questions, readbacks, writes, and goodbyes are deterministic.
    */
-  private async reduceAndAnswer(excerpt: string, turn: number, wav: Buffer | null): Promise<void> {
+  private async reduceAndAnswer(
+    excerpt: string,
+    turn: number,
+    wav: Buffer | null,
+    prestartedSecondOpinion: Promise<Transcription> | null = null,
+  ): Promise<void> {
     this.setPhase('PLANNING');
     const before = this.dialogue;
     let availabilityBlock: string | undefined;
@@ -1372,14 +1647,13 @@ export class LiveCallSession {
       state: this.dialogue,
       callerPhone: this.identity.callerPhone,
     });
-    this.setDialogue(state);
     const patientChanged =
       state.patient.name !== before.patient.name || state.patient.phone !== before.patient.phone;
     this.trace?.({ component: 'dialogue', event: 'reduced', turn, phase: state.phase, decision: decision.kind });
 
     if (decision.kind === 'availability') {
       try {
-        const { block, slots } = await this.loadAvailability(turn);
+        const { block, slots } = await this.loadAvailabilityCovered(turn);
         availabilityBlock = block;
         ({ state, decision } = this.reducer.reduce({
           transcript: excerpt,
@@ -1387,7 +1661,6 @@ export class LiveCallSession {
           callerPhone: this.identity.callerPhone,
           slots,
         }));
-        this.setDialogue(state);
         this.trace?.({
           component: 'dialogue',
           event: 'reduced',
@@ -1398,6 +1671,7 @@ export class LiveCallSession {
           slots: slots.length,
         });
       } catch (err) {
+        this.setDialogue(state);
         const detail = `availability-error: ${err instanceof Error ? err.message : String(err)}`;
         this.logPhase('availability', 'turn-error', { turn, detail });
         // Availability failures stay conversational: say the booking system
@@ -1416,12 +1690,21 @@ export class LiveCallSession {
         return;
       }
       if (decision.kind === 'continue') {
+        this.setDialogue(state);
         await this.answerWithModel(excerpt, turn, state, { availability: availabilityBlock });
         return;
       }
     }
 
-    if (patientChanged && (await this.verifyCriticalFields(excerpt, turn, wav, state))) return;
+    // A critical field only becomes dialogue state after the second decode
+    // agrees; a disagreement clarifies while the prior state stays intact.
+    if (patientChanged) {
+      const second =
+        prestartedSecondOpinion ??
+        (this.secondOpinion && wav ? this.secondOpinion.transcribe(wav, 'audio/wav') : null);
+      if (await this.verifyCriticalFields(excerpt, turn, second, state)) return;
+    }
+    this.setDialogue(state);
 
     switch (decision.kind) {
       case 'speak': {
@@ -1548,22 +1831,21 @@ export class LiveCallSession {
   }
 
   /**
-   * Selective second decode: only when the dialogue state expects a critical
-   * field. A material disagreement clarifies instead of guessing.
+   * Selective second decode: only when the dialogue changed a critical field.
+   * The decode promise is started by the caller (alongside the primary
+   * transcription when dictation is expected, serially otherwise). A material
+   * disagreement clarifies instead of guessing and blocks the state commit.
    */
   private async verifyCriticalFields(
     excerpt: string,
     turn: number,
-    wav: Buffer | null,
+    second: Promise<Transcription> | null,
     state: DialogueState,
   ): Promise<boolean> {
-    if (!this.secondOpinion || !wav) return false;
-    const critical =
-      state.phase === 'collecting-patient' || state.phase === 'awaiting-confirmation' || state.phase === 'booking';
-    if (!critical) return false;
-    let second: Transcription;
+    if (!second) return false;
+    let result: Transcription;
     try {
-      second = await this.secondOpinion.transcribe(wav, 'audio/wav');
+      result = await second;
     } catch (err) {
       this.trace?.({
         component: 'stt',
@@ -1573,7 +1855,8 @@ export class LiveCallSession {
       });
       return false;
     }
-    if (!second.text.trim() || this.agreesWithPrimary(excerpt, second.text, state)) return false;
+    if (!result.text.trim() || this.agreesWithPrimary(excerpt, result.text, state)) return false;
+    this.trace?.({ component: 'stt', event: 'second-opinion-disagree', turn });
     this.trace?.({ component: 'stt', event: 'second-opinion-disagree', turn });
     const line = "Sorry, I want to make sure I have that exactly right. Could you repeat that for me?";
     this.logTurn?.({
@@ -1625,7 +1908,10 @@ export class LiveCallSession {
     }
     const assistant = this.assistant;
     if (this.activeTurn) this.activeTurn.excerpt = excerpt;
-    const availabilityBlock = extra.availability ?? this.warmAvailabilityBlock();
+    // The full block is per-Turn prefill cost: only a Turn that is actually
+    // about availability gets it; every other Turn answers from the guide.
+    const availabilityBlock =
+      extra.availability ?? (state.intent === 'availability' ? this.warmAvailabilityBlock() : undefined);
     if (availabilityBlock) {
       this.logPhase('availability', 'injected', { turn, chars: availabilityBlock.length });
     }
@@ -1670,7 +1956,7 @@ export class LiveCallSession {
     let replyGeneration = 0;
     let generationCompleted = false;
     try {
-      const first = await this.firstTokenOrHold(iterator);
+      const first = await this.firstTokenOrHold(iterator, turn);
       const result = await this.enqueueModelResponse(iterator, first, controller, turn, {
         onGenerationDone: () => {
           // The deadline governs generation, not the time a finished reply takes
@@ -1684,7 +1970,17 @@ export class LiveCallSession {
     } catch (err) {
       if (deadline) clearTimeout(deadline);
       if (this.closed || this.activeTurn === null) return;
-      if (isAbortError(err, controller.signal)) return;
+      if (isAbortError(err, controller.signal)) {
+        // A Barge-in owns the Turn: its promoted utterance is already the next
+        // Turn. A deadline abort heard nothing to answer, so reprompt and
+        // return the floor instead of leaving the call silent.
+        if (this.interruptedTurn === turn || generationCompleted) return;
+        this.logPhase('turn', 'deadline', { turn, ms: this.turnDeadlineMs });
+        this.logTurn?.({ callSid: this.identity.callSid, turn, excerpt, reply: REPROMPT_LINE, endCall: false, miss: true });
+        this.activeTurn = null;
+        await this.speakSafe(REPROMPT_LINE);
+        return;
+      }
       const raw = err instanceof Error ? err : new Error(String(err));
       const detail = /^(tts-error|assistant-error|availability-error|booking-error):/.test(raw.message)
         ? raw.message
@@ -1735,13 +2031,15 @@ export class LiveCallSession {
   /**
    * Wait for the first non-empty token; if the model is slower than the hold
    * budget, speak the holding line first. The iterator keeps its in-flight
-   * `next()` so no token is lost.
+   * `next()` so no token is lost. A Turn that already bridged an Availability
+   * read speaks no second hold.
    */
   private async firstTokenOrHold(
     iterator: AsyncIterator<string>,
+    turn: number,
     pending: Promise<IteratorResult<string>> = iterator.next(),
   ): Promise<IteratorResult<string>> {
-    if (this.holdAfterMs <= 0) return pending;
+    if (this.holdAfterMs <= 0 || this.holdSpokenTurn === turn) return pending;
     let timer: NodeJS.Timeout | null = null;
     const hold = new Promise<'hold'>((resolve) => {
       timer = setTimeout(() => resolve('hold'), this.holdAfterMs);
@@ -1750,6 +2048,7 @@ export class LiveCallSession {
     try {
       const winner = await Promise.race([pending.then((result) => ({ result })), hold.then(() => 'hold' as const)]);
       if (winner === 'hold') {
+        this.holdSpokenTurn = turn;
         this.logPhase('assistant', 'hold', { text: HOLD_ASSISTANT_LINE });
         await this.speakFixed(HOLD_ASSISTANT_LINE);
         return pending;
@@ -1799,7 +2098,7 @@ export class LiveCallSession {
         const audioDrain = (async () => {
           for await (const chunk of response.audio()) {
             if (this.closed || speech.cancelled || generation !== this.generation) return;
-            this.sendAudio(chunk);
+            this.sendResponseAudio(generation, chunk);
           }
         })();        let streamError: Error | undefined;
         try {

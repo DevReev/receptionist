@@ -74,6 +74,12 @@ export interface TurnTakingOptions {
   partialSemantics?: boolean;
   /** How long the energy pre-trigger waits for partial semantics before taking the floor. */
   bargeInConfirmMs?: number;
+  /**
+   * Whether partial transcripts feed the local Turn boundary. When true the
+   * caller-adaptive pause plus semantic completeness own it; when false (no
+   * partial channel at all) a fixed no-partials floor owns it instead.
+   */
+  semanticBoundaries?: boolean;
   /** Boundary authority for this call. */
   detection: TurnDetection;
   /** Echo-gate tuning; defaults ship the bench-tuned values. */
@@ -119,6 +125,7 @@ export class TurnTaking {
   private readonly bargeInDipToleranceMs: number;
   private readonly partialSemantics: boolean;
   private readonly bargeInConfirmMs: number;
+  private readonly semanticBoundaries: boolean;
   private detection: TurnDetection;
   private readonly echoGate: EchoGate;
   /** The Caller's own intra-utterance pause rhythm, for the hybrid boundary. */
@@ -138,6 +145,15 @@ export class TurnTaking {
   /** Provider speech_open state; the utterance under capture in sarvam mode. */
   private providerOpen = false;
   private providerCorroborated = false;
+  /**
+   * A provider utterance heard while a Turn is in flight. The session cannot
+   * open it yet, so its audio is captured here and adopted when the floor
+   * returns: speech the Caller already finished must not be dropped.
+   */
+  private pendingProviderOpen = false;
+  private pendingProviderEnded = false;
+  private pendingChunks: Int16Array[] = [];
+  private pendingSamples = 0;
   /** Provider-boundary mode: local speech presence, tracked for the stall guard. */
   private stallSpeechSeen = false;
   private stallSpeechSamples = 0;
@@ -161,6 +177,7 @@ export class TurnTaking {
     this.bargeInDipToleranceMs = opts.bargeInDipToleranceMs ?? BARGE_IN_DEFAULTS.dipToleranceMs;
     this.partialSemantics = opts.partialSemantics ?? false;
     this.bargeInConfirmMs = opts.bargeInConfirmMs ?? BARGE_IN_DEFAULTS.confirmMs;
+    this.semanticBoundaries = opts.semanticBoundaries ?? true;
     this.detection = opts.detection;
     this.stallGraceMs = opts.stallGraceMs ?? STALL_DEFAULTS.graceMs;
     // A blip is not a Turn: local speech must reach the detector's own
@@ -206,10 +223,13 @@ export class TurnTaking {
     this.mode = 'listening';
     this.absorptionEnabled = true;
     this.reset();
+    this.adoptPendingProviderUtterance();
   }
 
   /** Adopts a Barge-in candidate as the first audio of the new Turn. */
   acceptBargeIn(event: BargeInEvent): void {
+    // The Caller has moved on: a captured earlier utterance is superseded.
+    this.clearPendingProvider();
     this.mode = 'listening';
     this.reset();
     if (this.detection === 'sarvam') {
@@ -229,6 +249,7 @@ export class TurnTaking {
 
   /** Drops any partial utterance and releases the VAD. */
   close(): void {
+    this.clearPendingProvider();
     this.reset();
     this.adaptivePause.reset();
     this.vad.reset();
@@ -246,7 +267,18 @@ export class TurnTaking {
       this.providerCorroborated = true;
       return;
     }
-    if (this.mode !== 'listening' || this.providerOpen) return;
+    if (this.mode !== 'listening') {
+      // A Turn is in flight: capture the utterance so it is answered when the
+      // floor returns, instead of dropping speech the Caller already finished.
+      if (!this.pendingProviderOpen) {
+        this.pendingProviderOpen = true;
+        this.pendingProviderEnded = false;
+        this.pendingChunks = [];
+        this.pendingSamples = 0;
+      }
+      return;
+    }
+    if (this.providerOpen) return;
     this.providerOpen = true;
     // Locally-heard speech already owns the capture; only adopt the pre-roll
     // when the provider is the first to open the utterance.
@@ -256,7 +288,12 @@ export class TurnTaking {
 
   /** The provider closed the utterance (`vad.speech_end`): emit it for a Turn. */
   providerSpeechEnd(): void {
-    if (this.detection !== 'sarvam' || this.mode !== 'listening' || !this.providerOpen) return;
+    if (this.detection !== 'sarvam') return;
+    if (this.mode !== 'listening') {
+      if (this.pendingProviderOpen) this.pendingProviderEnded = true;
+      return;
+    }
+    if (!this.providerOpen) return;
     this.providerOpen = false;
     this.emit();
   }
@@ -268,6 +305,7 @@ export class TurnTaking {
    */
   setDetection(mode: TurnDetection): void {
     this.detection = mode;
+    if (mode === 'hybrid') this.clearPendingProvider();
   }
 
   /**
@@ -301,7 +339,18 @@ export class TurnTaking {
   }
 
   private async process(mulaw: Buffer): Promise<void> {
-    if (this.mode === 'idle' || mulaw.length === 0) {
+    if (mulaw.length === 0) {
+      this.observer.onUpstreamFrame?.(mulaw);
+      return;
+    }
+    if (this.mode === 'idle') {
+      // A Turn is in flight. A provider utterance heard now is captured so the
+      // session can answer it after the current Turn, never silently dropped.
+      if (this.pendingProviderOpen) {
+        const pcm = decodeMulaw(mulaw);
+        this.pendingChunks.push(pcm);
+        this.pendingSamples += pcm.length;
+      }
       this.observer.onUpstreamFrame?.(mulaw);
       return;
     }
@@ -424,7 +473,13 @@ export class TurnTaking {
   private listeningBoundaryDue(): boolean {
     const trailingMs = toMs(this.trailingSilenceSamples);
     if (this.detection !== 'hybrid') return trailingMs >= this.policy.silenceMs;
-    const floorMs = Math.max(this.adaptivePause.floorMs, this.dialogueFloorMs);
+    // Without partials there is no semantic evidence to hold a short pause:
+    // the adaptive pause alone cuts mid-sentence, so a longer fixed floor owns
+    // the boundary instead.
+    const floorMs = Math.max(
+      this.semanticBoundaries ? this.adaptivePause.floorMs : HYBRID_DEFAULTS.noPartialsFloorMs,
+      this.dialogueFloorMs,
+    );
     if (trailingMs < floorMs) return false;
     if (trailingMs >= HYBRID_DEFAULTS.emergencyMs) return true;
     return isSemanticallyComplete(this.lastPartialText);
@@ -558,11 +613,48 @@ export class TurnTaking {
 
   private emit(opts: { stalled?: boolean } = {}): void {
     this.mode = 'idle';
+    // The local detector counts trailing silence in one of two fields
+    // depending on who owned the boundary; only one is ever non-zero.
+    const trailingSamples =
+      this.trailingSilenceSamples > 0 ? this.trailingSilenceSamples : this.stallTrailingSamples;
     const utterance = this.speechAudio();
+    utterance.trailingSilenceMs = Math.round(toMs(trailingSamples));
     if (opts.stalled) utterance.stalled = true;
     const stats = this.takeStats();
     this.reset();
     this.observer.onUtterance(utterance, stats);
+  }
+
+  /**
+   * The floor returned with a provider utterance captured while a Turn was in
+   * flight. Adopt it: an already-ended utterance becomes the next Turn at
+   * once; one still open is held until its provider boundary arrives.
+   */
+  private adoptPendingProviderUtterance(): void {
+    if (!this.pendingProviderOpen) return;
+    const chunks = this.pendingChunks;
+    const samples = this.pendingSamples;
+    const ended = this.pendingProviderEnded;
+    this.clearPendingProvider();
+    if (samples === 0) return;
+    this.chunks = chunks;
+    this.bufferedSamples = samples;
+    // The provider's capture is evidence of speech: the stall guard may take
+    // this utterance's boundary if the provider stops emitting.
+    this.stallSpeechSeen = true;
+    this.stallSpeechSamples = samples;
+    if (ended) {
+      this.emit();
+      return;
+    }
+    this.providerOpen = true;
+  }
+
+  private clearPendingProvider(): void {
+    this.pendingProviderOpen = false;
+    this.pendingProviderEnded = false;
+    this.pendingChunks = [];
+    this.pendingSamples = 0;
   }
 
   private fireBargeIn(): void {

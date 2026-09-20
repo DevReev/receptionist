@@ -35,8 +35,10 @@ export interface Assistant {
 export interface AssistantEvent {
   /** 1-based LLM request this event belongs to; later rounds follow tool calls. */
   round: number;
-  event: 'round-start' | 'first-token' | 'done' | 'empty-retry' | 'tool-done';
+  event: 'round-start' | 'first-token' | 'done' | 'empty-retry' | 'tool-done' | 'http-retry';
   ms?: number;
+  /** Retry count for `http-retry` (1-based), before the attempt that follows. */
+  attempt?: number;
   /** Tool name, for `tool-done`. */
   name?: string;
   /** Content characters produced in the round, for `done`. */

@@ -4,7 +4,7 @@
 
 **Blocked by:** 02, 05, 06, 07, 08, 09.
 
-**Status:** ready-for-agent
+**Status:** in-progress
 
 - [ ] The scenario script exists and is run on a real speakerphone call placed by the user, with the capture retained.
 - [ ] Echo false-stop and Backchannel false-stop are zero in synthetic runs and recorded on the live call; stop latency and reply latency are reported against baseline.

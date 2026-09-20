@@ -399,4 +399,80 @@ describe('live error contract (ticket 12)', () => {
     const out = socket.sentJson() as { event: string }[];
     assert.ok(out.some((m) => m.event === 'media'));
   });
+
+  describe('REST hangup on session-end close', () => {
+    it('an assistant failure ends the caller\'s phone call after the failure line', async () => {
+      const calls = new CallStore();
+      const { tts } = stubTts();
+      const hangups: string[] = [];
+      const live = new LiveCallSession({
+        identity: { callSid: 'CA12hangup', streamSid: 'MZ12hangup' },
+        sendAudio: () => {},
+        vad: scriptVad([...speech(50), ...silence(50)]),
+        policy: POLICY,
+        transcriber: { transcribe: async () => ({ text: 'book now', noSpeech: false }) },
+        tts,
+        guide: GUIDE,
+        assistant: {
+          reply: async () => ({ text: '', endCall: false }),
+          replyStream: async function* () {
+            throw new Error('llm down');
+          },
+        },
+        calls,
+        logFailure: () => {},
+        hangupCall: async (callSid) => {
+          hangups.push(callSid);
+        },
+      });
+      await feed(live, 100);
+      assert.deepEqual(hangups, ['CA12hangup'], 'the dead session must hang the call up');
+    });
+
+    it('a goodbye close hangs the call up too', async () => {
+      const calls = new CallStore();
+      const { tts } = stubTts();
+      const hangups: string[] = [];
+      const live = new LiveCallSession({
+        identity: { callSid: 'CA12bye', streamSid: 'MZ12bye' },
+        sendAudio: () => {},
+        vad: scriptVad([...speech(50), ...silence(50), ...speech(50), ...silence(50), ...speech(50), ...silence(50)]),
+        policy: POLICY,
+        transcriber: { transcribe: async () => ({ text: '', noSpeech: true }) },
+        tts,
+        guide: GUIDE,
+        calls,
+        hangupCall: async (callSid) => {
+          hangups.push(callSid);
+        },
+      });
+      await feed(live, 100);
+      await feed(live, 100);
+      await feed(live, 100);
+      assert.equal(live.isClosed, true);
+      assert.deepEqual(hangups, ['CA12bye']);
+    });
+
+    it('a caller-hangup close never re-hangs-up', async () => {
+      const calls = new CallStore();
+      const { tts } = stubTts();
+      let hangups = 0;
+      const live = new LiveCallSession({
+        identity: { callSid: 'CA12self', streamSid: 'MZ12self' },
+        sendAudio: () => {},
+        vad: scriptVad([...speech(50), ...silence(50)]),
+        policy: POLICY,
+        transcriber: { transcribe: async () => ({ text: '', noSpeech: true }) },
+        tts,
+        guide: GUIDE,
+        calls,
+        hangupCall: async () => {
+          hangups += 1;
+        },
+      });
+      await feed(live, 100);
+      live.close('socket-closed');
+      assert.equal(hangups, 0, 'Twilio already ended the stream; no REST hangup');
+    });
+  });
 });

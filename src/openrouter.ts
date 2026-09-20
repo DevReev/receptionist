@@ -10,21 +10,30 @@ import type {
 } from './app.ts';
 import { clip } from './trace.ts';
 
-const ENDPOINT = 'https://openrouter.ai/api/v1/chat/completions';
+const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1';
 const MAX_TOOL_ROUNDS = 5;
 /** Providers occasionally return an empty completion; one retry usually recovers. */
 const MAX_EMPTY_RETRIES = 1;
+/**
+ * A failed round hangs up on the Caller, and upstream rate limits and blips
+ * last seconds; a short bounded backoff is cheaper than a dead Turn. Same
+ * transient statuses the booking client retries.
+ */
+const RETRYABLE_STATUS = new Set([429, 502, 503]);
+const HTTP_RETRY_BACKOFF_MS = 300;
 
 /**
  * OpenRouter routing: favour whatever provider currently has the lowest
- * observed latency, restricted to providers that support every request
- * parameter (tools included). Without this, requests land on the default
- * provider and TTFT can swing from under a second to many seconds. The p90
- * preference is a soft reorder over a rolling window, never a hard deadline.
+ * observed latency, with a soft p90 ceiling. Without this, requests land on
+ * the default provider and TTFT can swing from under a second to many
+ * seconds. `require_parameters` is deliberately NOT set: it is stricter than
+ * tool support and zeroes out endpoint pools (e.g. gpt-5-nano) whose
+ * first-party providers already support every parameter actually sent.
+ * Sent only when `openRouterRouting` is on; a direct Groq endpoint rejects
+ * or ignores these fields.
  */
 const PROVIDER_PREFERENCE = {
   sort: 'latency',
-  require_parameters: true,
   preferred_max_latency: { p90: 2.0 },
 } as const;
 
@@ -239,12 +248,26 @@ function usageFields(usage: StreamUsage | null | undefined): AssistantEvent['usa
   return { prompt: usage.prompt_tokens, completion: usage.completion_tokens, total: usage.total_tokens };
 }
 
+/**
+ * Assistant over the OpenAI-compatible chat-completions dialect: OpenRouter
+ * by default (with its routing preferences and reasoning envelope), or any
+ * direct provider via `baseUrl` (Groq), which takes a flat `reasoning_effort`.
+ */
 export class OpenRouterAssistant implements Assistant {
   private readonly apiKey: string;
+  private readonly baseUrl: string;
+  private readonly openRouterRouting: boolean;
   private readonly model: string;
   private readonly temperature: number;
   private readonly maxTokens: number;
+  private readonly tokenLimitField: 'max_tokens' | 'max_completion_tokens';
+  private readonly omitTemperature: boolean;
+  /** Reasoning effort sent with every request; `none` is refused by reasoning-mandatory endpoints. */
+  private readonly reasoningEffort: 'none' | 'minimal' | 'low' | 'medium' | 'high';
   private readonly fetchFn: typeof fetch;
+  /** Total request attempts per round, first included; the bound on transient-error retries. */
+  private readonly retryAttempts: number;
+  private readonly sleepMs: (ms: number) => Promise<void>;
   /**
    * `legacy` keeps the tool-driven booking loop for the record-based voice
    * loop; `phase` is the live controller-owned mode where the model words
@@ -254,17 +277,38 @@ export class OpenRouterAssistant implements Assistant {
 
   constructor(opts: {
     apiKey: string;
+    /** Endpoint base; defaults to OpenRouter. */
+    baseUrl?: string;
+    /** Send OpenRouter routing fields (provider prefs, session id, reasoning envelope). */
+    openRouterRouting?: boolean;
     model?: string;
     temperature?: number;
     maxTokens?: number;
+    /**
+     * Which token-cap field the provider accepts: `max_tokens` for
+     * OpenRouter/Groq, `max_completion_tokens` for OpenAI's GPT-5 models.
+     */
+    tokenLimitField?: 'max_tokens' | 'max_completion_tokens';
+    /** Omit `temperature` for models that only accept the provider default. */
+    omitTemperature?: boolean;
+    reasoningEffort?: 'none' | 'minimal' | 'low' | 'medium' | 'high';
     fetchFn?: typeof fetch;
     tools?: 'legacy' | 'phase';
+    retryAttempts?: number;
+    sleepMs?: (ms: number) => Promise<void>;
   }) {
     this.apiKey = opts.apiKey;
-    this.model = opts.model ?? 'deepseek/deepseek-v4-flash-0731';
+    this.baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '');
+    this.openRouterRouting = opts.openRouterRouting ?? true;
+    this.model = opts.model ?? 'openai/gpt-5-nano';
     this.temperature = opts.temperature ?? 0.4;
-    this.maxTokens = opts.maxTokens ?? 200;
+    this.maxTokens = opts.maxTokens ?? 512;
+    this.tokenLimitField = opts.tokenLimitField ?? 'max_tokens';
+    this.omitTemperature = opts.omitTemperature ?? false;
+    this.reasoningEffort = opts.reasoningEffort ?? 'minimal';
     this.fetchFn = opts.fetchFn ?? fetch;
+    this.retryAttempts = Math.max(1, opts.retryAttempts ?? 3);
+    this.sleepMs = opts.sleepMs ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
     this.toolsMode = opts.tools ?? 'legacy';
   }
 
@@ -361,17 +405,25 @@ export class OpenRouterAssistant implements Assistant {
     return Promise.all((message.tool_calls ?? []).map((toolCall) => this.runTool(toolCall, ctx)));
   }
 
+  /** Direct providers only take OpenAI's flat low/medium/high scale. */
+  private directReasoningEffort(): 'low' | 'medium' | 'high' {
+    return this.reasoningEffort === 'none' || this.reasoningEffort === 'minimal' ? 'low' : this.reasoningEffort;
+  }
+
   private requestBase(ctx: AssistantContext): Record<string, unknown> {
     return {
       model: this.model,
-      temperature: this.temperature,
-      max_tokens: this.maxTokens,
+      ...(this.omitTemperature ? {} : { temperature: this.temperature }),
+      [this.tokenLimitField]: this.maxTokens,
       tools: this.toolsFor(ctx),
       tool_choice: 'auto',
-      parallel_tool_calls: false,
-      reasoning: { effort: 'none' },
-      provider: PROVIDER_PREFERENCE,
-      ...(ctx.sessionId ? { session_id: ctx.sessionId } : {}),
+      ...(this.openRouterRouting
+        ? {
+            reasoning: { effort: this.reasoningEffort },
+            provider: PROVIDER_PREFERENCE,
+            ...(ctx.sessionId ? { session_id: ctx.sessionId } : {}),
+          }
+        : { reasoning_effort: this.directReasoningEffort() }),
     };
   }
 
@@ -389,7 +441,11 @@ export class OpenRouterAssistant implements Assistant {
         model: this.model,
         availabilityChars: ctx.availability?.length ?? 0,
       });
-      const completion = await this.complete({ ...base, messages }, signal);
+      const completion = await this.complete(
+        { ...base, messages },
+        signal,
+        (status, attempt, ms) => ctx.onAssistantEvent?.({ round: roundNo, event: 'http-retry', status, attempt, ms }),
+      );
       const text = completion.message.content ?? '';
       const toolCalls = completion.message.tool_calls ?? [];
       ctx.onAssistantEvent?.({
@@ -447,24 +503,44 @@ export class OpenRouterAssistant implements Assistant {
     });
   }
 
+  /**
+   * One chat request with bounded retry on transient provider statuses
+   * (429/502/503): `onRetry` reports each wait before the attempt it buys.
+   * An aborted signal ends the retrying immediately.
+   */
+  private async postWithRetry(
+    body: Record<string, unknown>,
+    signal: AbortSignal | undefined,
+    onRetry: (status: number, attempt: number, ms: number) => void,
+  ): Promise<Response> {
+    for (let attempt = 1; ; attempt += 1) {
+      const res = await this.fetchFn(`${this.baseUrl}/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal,
+      });
+      if (!RETRYABLE_STATUS.has(res.status) || attempt >= this.retryAttempts || signal?.aborted) return res;
+      const ms = HTTP_RETRY_BACKOFF_MS * attempt;
+      onRetry(res.status, attempt, ms);
+      await this.sleepMs(ms);
+    }
+  }
+
   private async complete(
     body: Record<string, unknown>,
     signal?: AbortSignal,
+    onRetry: (status: number, attempt: number, ms: number) => void = () => {},
   ): Promise<{
     message: ChatMessage;
     finish: string | null;
     usage: StreamUsage | null;
     provider?: string;
   }> {
-    const res = await this.fetchFn(ENDPOINT, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(body),
-      signal,
-    });
+    const res = await this.postWithRetry(body, signal, onRetry);
     if (!res.ok) {
       const detail = await res.text().catch(() => '');
       throw new Error(`openrouter-http-${res.status}${detail ? `: ${clip(detail)}` : ''}`);
@@ -489,16 +565,9 @@ export class OpenRouterAssistant implements Assistant {
     body: Record<string, unknown>,
     trace: RoundTrace,
     signal?: AbortSignal,
+    onRetry: (status: number, attempt: number, ms: number) => void = () => {},
   ): AsyncGenerator<StreamChunk> {
-    const res = await this.fetchFn(ENDPOINT, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${this.apiKey}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ ...body, stream: true }),
-      signal,
-    });
+    const res = await this.postWithRetry(body, signal, onRetry);
     trace.status = res.status;
     trace.requestId = res.headers.get('x-request-id') ?? res.headers.get('x-or-request-id') ?? null;
     if (!res.ok) {
@@ -580,7 +649,12 @@ export class OpenRouterAssistant implements Assistant {
       const toolNames = new Map<number, string>();
       const toolArgs = new Map<number, string>();
       try {
-        for await (const chunk of this.postStream({ ...base, messages }, trace, signal)) {
+        for await (const chunk of this.postStream(
+          { ...base, messages, stream: true },
+          trace,
+          signal,
+          (status, attempt, ms) => ctx.onAssistantEvent?.({ round: roundNo, event: 'http-retry', status, attempt, ms }),
+        )) {
           if (chunk.error) {
             throw new Error(`openrouter-stream-error: ${clip(JSON.stringify(chunk.error))}`);
           }

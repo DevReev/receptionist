@@ -206,9 +206,10 @@ describe('live provider stall guard', () => {
     assert.equal(switchTraces(h.traces)[0]!['mode'], 'hybrid');
     assert.equal(switchTraces(h.traces)[0]!['stalls'], 2);
 
-    // A third Turn needs no provider boundary: the local detector owns it.
+    // A third Turn needs no provider boundary: the local detector owns it at
+    // its no-partials floor (500 ms, 25 frames).
     for (let i = 0; i < 15; i += 1) await h.live.receiveAudio(SPEECH_FRAME);
-    for (let i = 0; i < 15; i += 1) await h.live.receiveAudio(SILENCE_FRAME);
+    for (let i = 0; i < 25; i += 1) await h.live.receiveAudio(SILENCE_FRAME);
     await h.live.flush();
     assert.equal(stt.speechStartCalls, 1, 'the local latch opens the manual utterance');
     assert.equal(stt.finalizeCalls, 1, 'the detector-owned Turn reads the channel final');

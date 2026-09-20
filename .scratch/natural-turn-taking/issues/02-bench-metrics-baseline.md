@@ -4,7 +4,7 @@
 
 **Blocked by:** None (can start immediately).
 
-**Status:** ready-for-agent
+**Status:** done
 
 - [x] Bench reports false-cut rate and reply latency p50/p95, and defines and reports stop latency, Backchannel false-stop, and Echo false-stop (degenerate on the pre-change build — that is the baseline record).
 - [x] Echo-mix generator builds fixtures from captured utterances plus a reference signal, parameterised by delay and attenuation.

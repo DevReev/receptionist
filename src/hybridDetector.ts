@@ -30,6 +30,13 @@ export const HYBRID_DEFAULTS = {
   emergencyMs: 1500,
   /** Floor while the dialogue collects the Patient's name or phone. */
   dialogueFloorMs: 600,
+  /**
+   * Floor when the session has no partial channel: the adaptive pause alone
+   * tracks brief intra-word gaps and can fall near the 150 ms clamp, which
+   * cuts utterances into fragments once no semantic evidence can hold the
+   * boundary. Provider VAD used 500 ms of silence, so this matches it.
+   */
+  noPartialsFloorMs: 500,
 } as const;
 
 /**

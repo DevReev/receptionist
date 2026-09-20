@@ -1,0 +1,73 @@
+{
+  "metrics": {
+    "callSid": "CA4aca1ce458c33a3c334c0fd5532d3efe",
+    "turns": 2,
+    "boundaries": {
+      "provider": 2,
+      "local": 0
+    },
+    "replyLatenciesMs": [],
+    "replyLatencyMs": {
+      "samples": 0,
+      "p50": 0,
+      "p95": 0
+    },
+    "stopLatenciesMs": [],
+    "stopLatencyMs": {
+      "samples": 0,
+      "p50": 0,
+      "p95": 0
+    },
+    "bargeIns": 0,
+    "corroboratedBargeIns": 0,
+    "selfEchoBargeIns": 0,
+    "backchannelAbsorptions": 0,
+    "backchannelFalseStops": 0,
+    "echoGate": {
+      "decisions": 194,
+      "echoFrames": 0,
+      "callerFrames": 11,
+      "silentFrames": 183,
+      "reasons": {
+        "uncorrelated": 11,
+        "silence": 183
+      }
+    },
+    "stalls": 0,
+    "detectorSwitches": 0,
+    "speculation": {
+      "started": 0,
+      "kept": 0,
+      "aborted": 0
+    },
+    "readbackDecisions": 0,
+    "interruptedReadbacks": 0,
+    "bookingAttempts": 0,
+    "bookingsSaved": 0,
+    "bookingsAfterInterruptedReadback": 0,
+    "holdLines": 2,
+    "audioCaptures": [
+      "debug-audio/CA4aca1ce458c33a3c334c0fd5532d3efe-turn1.wav",
+      "debug-audio/CA4aca1ce458c33a3c334c0fd5532d3efe-turn2.wav"
+    ],
+    "openAt": "2026-09-17T09:38:39.371Z",
+    "closeAt": "2026-09-17T09:39:06.637Z",
+    "closeReason": "socket-closed"
+  },
+  "audio": [
+    {
+      "path": "debug-audio/CA4aca1ce458c33a3c334c0fd5532d3efe-turn1.wav",
+      "bytes": 23084,
+      "durationMs": 1440,
+      "rms": 405,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CA4aca1ce458c33a3c334c0fd5532d3efe-turn2.wav",
+      "bytes": 39724,
+      "durationMs": 2480,
+      "rms": 228,
+      "audible": true
+    }
+  ]
+}

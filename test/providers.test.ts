@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { WhisperTranscriber } from '../src/whisper.ts';
 import { OpenRouterAssistant } from '../src/openrouter.ts';
 import { TwilioRecordingFetcher } from '../src/recordings.ts';
+import { twilioCallEnds } from '../src/twilioCalls.ts';
 import type { TraceEvent } from '../src/trace.ts';
 import type { AssistantContext, AssistantEvent, BookingOutcome, ProposedSlot } from '../src/app.ts';
 
@@ -481,7 +482,6 @@ describe('OpenRouterAssistant streaming (ticket 11)', () => {
       messages: { role: string; content?: string | null }[];
       max_tokens?: number;
       reasoning?: { effort?: string };
-      parallel_tool_calls?: boolean;
     } | null = null;
     const fetchFn = (async (_url: string, init: { body: string }) => {
       body = JSON.parse(String(init.body)) as typeof body;
@@ -503,9 +503,8 @@ describe('OpenRouterAssistant streaming (ticket 11)', () => {
       (message) => message.role === 'user' && message.content === 'what are your hours',
     );
     assert.equal(callerMessages.length, 1);
-    assert.equal(body!.max_tokens, 200);
-    assert.deepEqual(body!.reasoning, { effort: 'none' });
-    assert.equal(body!.parallel_tool_calls, false);
+    assert.equal(body!.max_tokens, 512);
+    assert.deepEqual(body!.reasoning, { effort: 'minimal' });
   });
 
   it('ends the prompt with the current caller utterance, never a system message', async () => {
@@ -551,8 +550,89 @@ describe('OpenRouterAssistant streaming (ticket 11)', () => {
     const text = await collectTokens(a.replyStream!(assistantCtx()));
     assert.equal(text, 'We are open Monday to Friday.');
     assert.equal(bodies.length, 1);
-    assert.equal(bodies[0]!['model'], 'deepseek/deepseek-v4-flash-0731');
+    assert.equal(bodies[0]!['model'], 'openai/gpt-5-nano');
     assert.equal(bodies[0]!['stream'], true);
+  });
+
+  it('speaks a direct OpenAI-compatible provider without OpenRouter routing fields', async () => {
+    const calls: { url: string; body: Record<string, unknown> }[] = [];
+    const fetchFn = (async (url: string, init: { body: string }) => {
+      calls.push({ url: String(url), body: JSON.parse(String(init.body)) as Record<string, unknown> });
+      return sseResponse([{ choices: [{ delta: { content: 'Hello.' } }] }]);
+    }) as unknown as typeof fetch;
+    const a = new OpenRouterAssistant({
+      apiKey: 'gsk',
+      baseUrl: 'https://api.groq.com/openai/v1',
+      model: 'openai/gpt-oss-120b',
+      reasoningEffort: 'low',
+      openRouterRouting: false,
+      fetchFn,
+    });
+    const text = await collectTokens(a.replyStream!(assistantCtx({ sessionId: 'CAsession' })));
+    assert.equal(text, 'Hello.');
+    assert.equal(calls[0]!.url, 'https://api.groq.com/openai/v1/chat/completions');
+    assert.equal(calls[0]!.body['model'], 'openai/gpt-oss-120b');
+    assert.equal(calls[0]!.body['reasoning_effort'], 'low');
+    assert.equal(calls[0]!.body['provider'], undefined, 'no OpenRouter provider routing');
+    assert.equal(calls[0]!.body['session_id'], undefined, 'no OpenRouter session id');
+    assert.equal(calls[0]!.body['reasoning'], undefined, 'Groq wants reasoning_effort, not the OpenRouter envelope');
+  });
+
+  it('omits temperature for models that only accept the default', async () => {
+    let body: Record<string, unknown> | null = null;
+    const fetchFn = (async (_url: string, init: { body: string }) => {
+      body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      return sseResponse([{ choices: [{ delta: { content: 'Hi.' } }] }]);
+    }) as unknown as typeof fetch;
+    const a = new OpenRouterAssistant({
+      apiKey: 'sk-openai',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-5.6-luna',
+      openRouterRouting: false,
+      tokenLimitField: 'max_completion_tokens',
+      omitTemperature: true,
+      fetchFn,
+    });
+    await collectTokens(a.replyStream!(assistantCtx()));
+    assert.equal(body!['temperature'], undefined);
+    assert.equal(body!['model'], 'gpt-5.6-luna');
+  });
+
+  it('sends max_completion_tokens when the provider rejects max_tokens', async () => {
+    let body: Record<string, unknown> | null = null;
+    const fetchFn = (async (_url: string, init: { body: string }) => {
+      body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      return sseResponse([{ choices: [{ delta: { content: 'Hi.' } }] }]);
+    }) as unknown as typeof fetch;
+    const a = new OpenRouterAssistant({
+      apiKey: 'sk-openai',
+      baseUrl: 'https://api.openai.com/v1',
+      model: 'gpt-5.6-luna',
+      openRouterRouting: false,
+      tokenLimitField: 'max_completion_tokens',
+      fetchFn,
+    });
+    await collectTokens(a.replyStream!(assistantCtx()));
+    assert.equal(body!['max_completion_tokens'], 512);
+    assert.equal(body!['max_tokens'], undefined);
+  });
+
+  it('maps minimal reasoning effort to the lowest direct-provider effort', async () => {
+    let body: Record<string, unknown> | null = null;
+    const fetchFn = (async (_url: string, init: { body: string }) => {
+      body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      return sseResponse([{ choices: [{ delta: { content: 'Hi.' } }] }]);
+    }) as unknown as typeof fetch;
+    const a = new OpenRouterAssistant({
+      apiKey: 'gsk',
+      baseUrl: 'https://api.groq.com/openai/v1',
+      model: 'openai/gpt-oss-120b',
+      reasoningEffort: 'minimal',
+      openRouterRouting: false,
+      fetchFn,
+    });
+    await collectTokens(a.replyStream!(assistantCtx()));
+    assert.equal(body!['reasoning_effort'], 'low');
   });
 
   it('proposes a booking once then streams the follow-up', async () => {
@@ -619,7 +699,6 @@ describe('OpenRouterAssistant streaming (ticket 11)', () => {
     await collectTokens(a.replyStream!(assistantCtx()));
     assert.deepEqual(bodies[0]!['provider'], {
       sort: 'latency',
-      require_parameters: true,
       preferred_max_latency: { p90: 2.0 },
     });
   });
@@ -866,6 +945,63 @@ describe('OpenRouterAssistant streaming (ticket 11)', () => {
   });
 });
 
+describe('OpenRouterAssistant transient-error retry', () => {
+  it('a 429 rate-limit round retries and recovers mid-call instead of failing the Turn', async () => {
+    let attempts = 0;
+    const events: AssistantEvent[] = [];
+    const fetchFn = (async () => {
+      attempts += 1;
+      if (attempts === 1) return jsonResponse({ error: { message: 'rate-limited upstream' } }, 429);
+      return sseResponse([{ choices: [{ delta: { content: 'We open at nine.' } }] }]);
+    }) as unknown as typeof fetch;
+    const a = new OpenRouterAssistant({ apiKey: 'k', fetchFn, sleepMs: async () => {} });
+    const text = await collectTokens(
+      a.replyStream!({ ...assistantCtx(), onAssistantEvent: (e) => events.push(e) }),
+    );
+    assert.equal(text, 'We open at nine.');
+    assert.equal(attempts, 2);
+    assert.ok(
+      events.some((e) => e['event'] === 'http-retry' && e['status'] === 429 && e['attempt'] === 1),
+      `expected an http-retry event, got: ${JSON.stringify(events)}`,
+    );
+  });
+
+  it('retries are bounded; a persistent 429 still throws with the last status', async () => {
+    let attempts = 0;
+    const fetchFn = (async () => {
+      attempts += 1;
+      return jsonResponse({ error: { message: 'rate-limited upstream' } }, 429);
+    }) as unknown as typeof fetch;
+    const a = new OpenRouterAssistant({ apiKey: 'k', fetchFn, sleepMs: async () => {}, retryAttempts: 2 });
+    await assert.rejects(() => collectTokens(a.replyStream!(assistantCtx())), /openrouter-http-429/);
+    assert.equal(attempts, 2);
+  });
+
+  it('a 401 never retries: auth failures fail fast', async () => {
+    let attempts = 0;
+    const fetchFn = (async () => {
+      attempts += 1;
+      return jsonResponse({ error: { message: 'bad key' } }, 401);
+    }) as unknown as typeof fetch;
+    const a = new OpenRouterAssistant({ apiKey: 'k', fetchFn, sleepMs: async () => {} });
+    await assert.rejects(() => collectTokens(a.replyStream!(assistantCtx())), /openrouter-http-401/);
+    assert.equal(attempts, 1);
+  });
+
+  it('the legacy non-stream reply retries 429 the same way', async () => {
+    let attempts = 0;
+    const fetchFn = (async () => {
+      attempts += 1;
+      if (attempts === 1) return jsonResponse({ error: { message: 'rate-limited upstream' } }, 429);
+      return jsonResponse({ choices: [{ message: { role: 'assistant', content: 'Hi there.' } }] });
+    }) as unknown as typeof fetch;
+    const a = new OpenRouterAssistant({ apiKey: 'k', fetchFn, sleepMs: async () => {} });
+    const out = await a.reply(assistantCtx());
+    assert.equal(out.text, 'Hi there.');
+    assert.equal(attempts, 2);
+  });
+});
+
 describe('TwilioRecordingFetcher', () => {
   it('retries while the recording is not ready, then returns the audio', async () => {
     const requested: string[] = [];
@@ -914,6 +1050,37 @@ describe('TwilioRecordingFetcher', () => {
     const fetchFn = (async () => new Response('denied', { status: 401 })) as unknown as typeof fetch;
     const f = new TwilioRecordingFetcher({ accountSid: 'AC1', authToken: 'bad', fetchFn });
     await assert.rejects(() => f.fetch('https://api.twilio.com/x'));
+  });
+});
+
+describe('twilioCallEnds', () => {
+  it('POSTs Status=completed with Basic auth to the call resource', async () => {
+    let url = '';
+    let auth = '';
+    let body = '';
+    const ends = twilioCallEnds({
+      accountSid: 'AC1',
+      authToken: 'tok',
+      fetchFn: (async (u: string | URL, init: RequestInit) => {
+        url = String(u);
+        auth = String((init.headers as Record<string, string>).Authorization);
+        body = String(init.body);
+        return jsonResponse({ status: 'completed' });
+      }) as typeof fetch,
+    });
+    await ends.hangup('CA123');
+    assert.equal(url, 'https://api.twilio.com/2010-04-01/Accounts/AC1/Calls/CA123.json');
+    assert.equal(auth, `Basic ${btoa('AC1:tok')}`);
+    assert.equal(body, 'Status=completed');
+  });
+
+  it('throws with the HTTP status when Twilio rejects the hangup', async () => {
+    const ends = twilioCallEnds({
+      accountSid: 'AC1',
+      authToken: 'tok',
+      fetchFn: (async () => new Response('call not in progress', { status: 400 })) as typeof fetch,
+    });
+    await assert.rejects(() => ends.hangup('CA123'), /twilio-hangup-http-400/);
   });
 });
 

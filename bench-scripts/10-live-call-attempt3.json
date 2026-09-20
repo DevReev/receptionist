@@ -1,0 +1,93 @@
+{
+  "metrics": {
+    "callSid": "CAc9d8802c8c7eb9c62ccd348c4bd8d08b",
+    "turns": 4,
+    "boundaries": {
+      "provider": 2,
+      "local": 2
+    },
+    "replyLatenciesMs": [
+      2034,
+      2209
+    ],
+    "replyLatencyMs": {
+      "samples": 2,
+      "p50": 2034,
+      "p95": 2209
+    },
+    "stopLatenciesMs": [],
+    "stopLatencyMs": {
+      "samples": 0,
+      "p50": 0,
+      "p95": 0
+    },
+    "bargeIns": 0,
+    "corroboratedBargeIns": 0,
+    "selfEchoBargeIns": 0,
+    "backchannelAbsorptions": 0,
+    "backchannelFalseStops": 0,
+    "echoGate": {
+      "decisions": 638,
+      "echoFrames": 2,
+      "callerFrames": 40,
+      "silentFrames": 596,
+      "reasons": {
+        "uncorrelated": 40,
+        "silence": 596,
+        "echo": 2
+      }
+    },
+    "stalls": 2,
+    "detectorSwitches": 1,
+    "speculation": {
+      "started": 0,
+      "kept": 0,
+      "aborted": 0
+    },
+    "readbackDecisions": 0,
+    "interruptedReadbacks": 0,
+    "bookingAttempts": 0,
+    "bookingsSaved": 0,
+    "bookingsAfterInterruptedReadback": 0,
+    "holdLines": 1,
+    "audioCaptures": [
+      "debug-audio/CAc9d8802c8c7eb9c62ccd348c4bd8d08b-turn1.wav",
+      "debug-audio/CAc9d8802c8c7eb9c62ccd348c4bd8d08b-turn2.wav",
+      "debug-audio/CAc9d8802c8c7eb9c62ccd348c4bd8d08b-turn3.wav",
+      "debug-audio/CAc9d8802c8c7eb9c62ccd348c4bd8d08b-turn4.wav"
+    ],
+    "openAt": "2026-09-17T09:44:58.279Z",
+    "closeAt": "2026-09-17T09:45:51.826Z",
+    "closeReason": "socket-closed"
+  },
+  "audio": [
+    {
+      "path": "debug-audio/CAc9d8802c8c7eb9c62ccd348c4bd8d08b-turn1.wav",
+      "bytes": 19884,
+      "durationMs": 1240,
+      "rms": 337,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CAc9d8802c8c7eb9c62ccd348c4bd8d08b-turn2.wav",
+      "bytes": 25964,
+      "durationMs": 1620,
+      "rms": 453,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CAc9d8802c8c7eb9c62ccd348c4bd8d08b-turn3.wav",
+      "bytes": 17004,
+      "durationMs": 1060,
+      "rms": 915,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CAc9d8802c8c7eb9c62ccd348c4bd8d08b-turn4.wav",
+      "bytes": 16684,
+      "durationMs": 1040,
+      "rms": 715,
+      "audible": true
+    }
+  ]
+}

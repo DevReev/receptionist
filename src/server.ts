@@ -11,12 +11,14 @@ import {
   HOLD_ASSISTANT_LINE,
   NO_RESPONSE_LINE,
   REPROMPT_LINE,
+  type Assistant,
   type BookingOutcome,
   type FailureEvent,
   type ProposedSlot,
   type Transcriber,
   type TurnEvent,
 } from './app.ts';
+import { FallbackAssistant } from './assistantFallback.ts';
 import { AppointmentsClient } from './appointments.ts';
 import { CallStore } from './calls.ts';
 import { deriveSttPrompt, loadClinicGuide, type ClinicGuide } from './clinic.ts';
@@ -30,10 +32,12 @@ import { OpenRouterStt } from './openrouterStt.ts';
 import { TwilioRecordingFetcher } from './recordings.ts';
 import { SarvamTranscriber, SarvamTts } from './sarvam.ts';
 import { SileroVad } from './sileroVad.ts';
-import { SarvamRealtimeStt } from './sarvamRealtime.ts';
+import { SarvamRealtimeStt, type RealtimeStt } from './sarvamRealtime.ts';
+import { OpenAiRealtimeStt } from './openaiRealtime.ts';
 import { SarvamStreamingTts } from './sarvamStreamTts.ts';
 import { attachStreamEndpoint } from './stream.ts';
 import { traceToConsole, type TraceFn } from './trace.ts';
+import { twilioCallEnds } from './twilioCalls.ts';
 import { OpenAiTts, type Tts } from './tts.ts';
 import { WhisperTranscriber } from './whisper.ts';
 
@@ -42,6 +46,15 @@ function createTranscriber(config: Config, trace?: TraceFn): Transcriber {
     const { apiKey, baseUrl, sttModel, sttLanguageCode, sttMode } = config.sarvam;
     return new SarvamTranscriber({
       stt: { apiKey, baseUrl, model: sttModel, languageCode: sttLanguageCode, mode: sttMode },
+      onTrace: trace,
+    });
+  }
+  if (config.sttProvider === 'openrouter') {
+    // OpenRouter transcription is a completed-utterance request: no realtime
+    // channel, so the session's local detector owns boundaries and every Turn
+    // uploads its WAV here.
+    return new OpenRouterStt({
+      stt: { apiKey: config.llmApiKey, model: config.openrouterSttModel },
       onTrace: trace,
     });
   }
@@ -111,7 +124,24 @@ function createTts(config: Config, trace?: TraceFn): Tts {
  * so a Turn reads its transcript at endpointing instead of posting the WAV.
  * Absent when another STT provider is selected, or realtime is turned off.
  */
-function createRealtimeStt(config: Config, trace?: TraceFn, prompt?: string): SarvamRealtimeStt | undefined {
+function createRealtimeStt(config: Config, trace?: TraceFn, prompt?: string): RealtimeStt | undefined {
+  if (config.sttProvider === 'openai-realtime') {
+    // OpenAI's transcription session rejects server turn detection, so the
+    // channel is manual: gated by the local detector, billed on appended audio.
+    return new OpenAiRealtimeStt({
+      config: {
+        apiKey: config.openaiRealtime.apiKey,
+        url: config.openaiRealtime.url,
+        model: config.openaiRealtime.model,
+        delay: config.openaiRealtime.delay,
+        languages: config.openaiRealtime.languages,
+        ...(prompt
+          ? { keywords: prompt.split(',').map((entry) => entry.trim()).filter((entry) => entry.length > 0) }
+          : {}),
+      },
+      onTrace: trace,
+    });
+  }
   if (config.sttProvider !== 'sarvam' || !config.sarvam.sttRealtime) return undefined;
   const {
     apiKey,
@@ -144,6 +174,39 @@ function createRealtimeStt(config: Config, trace?: TraceFn, prompt?: string): Sa
       ...(prompt ? { prompt } : {}),
     },
     onTrace: trace,
+  });
+}
+
+/**
+ * Assistant LLM: Groq's gpt-oss-120b is the primary when a Groq key is
+ * configured, with the OpenRouter model as the pre-token fallback. Without a
+ * Groq key the OpenRouter model is the only assistant.
+ */
+function createAssistant(config: Config, tools: 'legacy' | 'phase'): Assistant {
+  const openrouter = new OpenRouterAssistant({
+    apiKey: config.llmApiKey,
+    model: config.openrouterModel,
+    temperature: config.openrouterTemperature,
+    reasoningEffort: config.openrouterReasoningEffort,
+    tools,
+  });
+  if (config.assistant.primary === 'openrouter') return openrouter;
+  const groq = new OpenRouterAssistant({
+    apiKey: config.assistant.groqApiKey,
+    baseUrl: config.assistant.groqBaseUrl,
+    model: config.assistant.groqModel,
+    temperature: config.openrouterTemperature,
+    reasoningEffort: config.assistant.groqReasoningEffort,
+    openRouterRouting: false,
+    tools,
+  });
+  return new FallbackAssistant({
+    primary: groq,
+    fallback: openrouter,
+    onFallback: (detail) =>
+      console.log(
+        JSON.stringify({ ts: new Date().toISOString(), kind: 'trace', component: 'llm', event: 'fallback', detail }),
+      ),
   });
 }
 
@@ -328,11 +391,7 @@ export async function main(): Promise<void> {
     voiceLoop: config.voiceLoop,
     streamWsUrl: config.streamWsUrl,
     transcriber: createTranscriber(config),
-    assistant: new OpenRouterAssistant({
-      apiKey: config.llmApiKey,
-      model: config.openrouterModel,
-      temperature: config.openrouterTemperature,
-    }),
+    assistant: createAssistant(config, 'legacy'),
     recordingFetcher: new TwilioRecordingFetcher({
       accountSid: config.twilioAccountSid,
       authToken: config.twilioAuthToken,
@@ -349,15 +408,14 @@ export async function main(): Promise<void> {
   if (config.voiceLoop === 'stream') {
     const policy = endpointPolicy(config);
     const calls = new CallStore();
-    const liveAssistant = new OpenRouterAssistant({
-      apiKey: config.llmApiKey,
-      model: config.openrouterModel,
-      temperature: config.openrouterTemperature,
-      tools: 'phase',
-    });
+    const liveAssistant = createAssistant(config, 'phase');
     const streamPrompt = config.sarvam.sttPrompt ?? (guide.raw ? deriveSttPrompt(guide) : undefined);
     const lives = new Map<string, LiveCallSession>();
     const capture = createUtteranceCapture(config.debugAudioDir);
+    const callEnds = twilioCallEnds({
+      accountSid: config.twilioAccountSid,
+      authToken: config.twilioAuthToken,
+    });
     attachStreamEndpoint(
       server,
       {
@@ -399,6 +457,8 @@ export async function main(): Promise<void> {
             bargeInConfirmMs: config.bargeInConfirmMs,
             turnDetection: config.turnDetection,
             stallGraceMs: config.stallGraceMs,
+            sttHedgeMs: config.sttHedgeMs,
+            warmTranscriber: config.sttWarmup,
             echoGate: {
               correlationThreshold: config.echoGateCorrelation,
               levelMarginDb: config.echoGateLevelMarginDb,
@@ -421,6 +481,7 @@ export async function main(): Promise<void> {
             },
             finishPlayback: (generation) => session.finishPlayback(generation),
             clearPlayback: (reason) => session.clearPlayback(reason),
+            hangupCall: (callSid) => callEnds.hangup(callSid),
           });
           lives.set(identity.streamSid, live);
           void live.open().catch((err) => {
@@ -442,6 +503,9 @@ export async function main(): Promise<void> {
           // Feed the Echo gate what actually played; retainReference is cheap
           // and ignores frames after close.
           lives.get(identity.streamSid)?.retainReference(frame);
+        },
+        onDtmf: (identity, digit) => {
+          lives.get(identity.streamSid)?.receiveDtmf(digit);
         },
         onClose: (identity, reason, session) => {
           lives.get(identity.streamSid)?.close('socket-closed');
@@ -471,6 +535,9 @@ export async function main(): Promise<void> {
       event: 'ready',
       voiceLoop: config.voiceLoop,
       turnDetection: config.turnDetection,
+      sttProvider: config.sttProvider,
+      assistantProvider: config.assistant.primary,
+      assistantModel: config.assistant.primary === 'groq' ? config.assistant.groqModel : config.openrouterModel,
     });
   });
 }

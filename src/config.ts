@@ -11,8 +11,29 @@ const STT_PROVIDER_DEFAULTS = {
 
 type WhisperProvider = keyof typeof STT_PROVIDER_DEFAULTS;
 
-export type SttProvider = WhisperProvider | 'sarvam';
+export type SttProvider = WhisperProvider | 'sarvam' | 'openrouter' | 'openai-realtime';
 export type TtsProvider = 'openai' | 'sarvam';
+export type AssistantProvider = 'groq' | 'openrouter';
+
+export interface OpenAiRealtimeEnv {
+  apiKey: string;
+  /** Transcription websocket URL; the `intent=transcription` session. */
+  url: string;
+  model: string;
+  /** Latency/accuracy tradeoff: `minimal` | `low` | `medium` | `high` | `xhigh`. */
+  delay: string;
+  languages: string[];
+}
+
+export interface AssistantEnv {
+  /** Primary assistant provider; `groq` only when a Groq key is configured. */
+  primary: AssistantProvider;
+  groqApiKey: string;
+  groqBaseUrl: string;
+  groqModel: string;
+  /** Groq reasoning is low/medium/high; `minimal`/`none` map to `low`. */
+  groqReasoningEffort: 'low' | 'medium' | 'high';
+}
 
 export type VoiceLoop = 'legacy' | 'stream';
 
@@ -72,6 +93,10 @@ export interface Config {
   turnDetection: TurnDetection;
   /** Local trailing silence that takes a stalled provider boundary. */
   stallGraceMs: number;
+  /** Start the REST STT decode this many ms into a slow realtime final; <=0 disables. */
+  sttHedgeMs: number;
+  /** Warm the REST transcription route on call open to hide provider cold start. */
+  sttWarmup: boolean;
   vadThreshold: number;
   /** Echo gate: correlation needed to classify an inbound frame as Echo. */
   echoGateCorrelation: number;
@@ -100,6 +125,7 @@ export interface Config {
   fixedPrewarmMs: number;
   /** Selective OpenRouter STT second decode for critical fields. */
   openrouterSttFallback: boolean;
+  /** Primary model when `sttProvider` is `openrouter`; second opinion otherwise. */
   openrouterSttModel: string;
   twilioAccountSid: string;
   twilioAuthToken: string;
@@ -108,14 +134,22 @@ export interface Config {
   /** Which speech provider the server constructs. */
   ttsProvider: TtsProvider;
   stt: SttConfig;
+  openaiRealtime: OpenAiRealtimeEnv;
   tts: TtsEnv;
   sarvam: SarvamEnv;
   /** Picktime Tool API the assistant reads Availability from and books through. */
   appointments: AppointmentsEnv;
   llmApiKey: string;
+  /** Assistant primary/fallback routing: Groq gpt-oss first, OpenRouter fallback. */
+  assistant: AssistantEnv;
   openrouterModel: string;
   /** Sampling temperature for the assistant; a little warmer = more conversational. */
   openrouterTemperature: number;
+  /**
+   * Reasoning effort for the assistant LLM. Reasoning-mandatory endpoints
+   * (gpt-5-nano, gpt-oss) refuse `none`; `minimal` keeps TTFT low everywhere.
+   */
+  openrouterReasoningEffort: 'none' | 'minimal' | 'low' | 'medium' | 'high';
   /** Debug-only: when set, each utterance WAV is written here before transcription. */
   debugAudioDir?: string;
 }
@@ -159,16 +193,30 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const twilioAccountSid = required(env, 'TWILIO_ACCOUNT_SID', missing);
   const twilioAuthToken = required(env, 'TWILIO_AUTH_TOKEN', missing);
   const sttProviderRaw = env.STT_PROVIDER;
-  if (sttProviderRaw !== undefined && sttProviderRaw !== 'openai' && sttProviderRaw !== 'groq' && sttProviderRaw !== 'sarvam') {
-    throw new Error(`invalid STT_PROVIDER: ${sttProviderRaw} (expected openai|groq|sarvam)`);
+  if (
+    sttProviderRaw !== undefined &&
+    sttProviderRaw !== 'openai' &&
+    sttProviderRaw !== 'groq' &&
+    sttProviderRaw !== 'sarvam' &&
+    sttProviderRaw !== 'openrouter' &&
+    sttProviderRaw !== 'openai-realtime'
+  ) {
+    throw new Error(`invalid STT_PROVIDER: ${sttProviderRaw} (expected openai|groq|sarvam|openrouter|openai-realtime)`);
   }
   // Sarvam is the default transcriber; an explicit STT_PROVIDER always wins.
   // The Whisper-compatible providers stay selectable (openai|groq) and need
-  // OPENAI_API_KEY or GROQ_API_KEY.
+  // OPENAI_API_KEY or GROQ_API_KEY. `openrouter` uses the OpenRouter
+  // transcriptions endpoint (per-utterance REST, no realtime channel) with the
+  // always-required OPENROUTER_API_KEY.
   const sttProvider: SttProvider = sttProviderRaw ?? 'sarvam';
+  const openaiApiKey = env.OPENAI_API_KEY ?? '';
   const sttApiKey =
-    sttProvider === 'openai' ? (env.OPENAI_API_KEY ?? '') : sttProvider === 'groq' ? (env.GROQ_API_KEY ?? '') : '';
-  if (sttProvider === 'openai' && !sttApiKey) missing.push('OPENAI_API_KEY');
+    sttProvider === 'openai' || sttProvider === 'openai-realtime'
+      ? openaiApiKey
+      : sttProvider === 'groq'
+        ? (env.GROQ_API_KEY ?? '')
+        : '';
+  if ((sttProvider === 'openai' || sttProvider === 'openai-realtime') && !sttApiKey) missing.push('OPENAI_API_KEY');
   if (sttProvider === 'groq' && !sttApiKey) missing.push('GROQ_API_KEY');
   const ttsProviderRaw = optional(env, 'TTS_PROVIDER', 'openai');
   if (ttsProviderRaw !== 'openai' && ttsProviderRaw !== 'sarvam') {
@@ -180,6 +228,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     missing.push('SARVAM_API_KEY');
   }
   const llmApiKey = required(env, 'OPENROUTER_API_KEY', missing);
+  const groqApiKey = env.GROQ_API_KEY ?? '';
+  const assistantProviderRaw = optional(env, 'ASSISTANT_PROVIDER', groqApiKey ? 'groq' : 'openrouter');
+  if (assistantProviderRaw !== 'groq' && assistantProviderRaw !== 'openrouter') {
+    throw new Error(`invalid ASSISTANT_PROVIDER: ${assistantProviderRaw} (expected groq|openrouter)`);
+  }
+  if (assistantProviderRaw === 'groq' && !groqApiKey) missing.push('GROQ_API_KEY');
+  const groqReasoningRaw = optional(env, 'GROQ_ASSISTANT_REASONING_EFFORT', 'low');
+  if (groqReasoningRaw !== 'low' && groqReasoningRaw !== 'medium' && groqReasoningRaw !== 'high') {
+    throw new Error(`invalid GROQ_ASSISTANT_REASONING_EFFORT: ${groqReasoningRaw} (expected low|medium|high)`);
+  }
   const voiceLoopRaw = optional(env, 'VOICE_LOOP', 'stream');
   if (voiceLoopRaw !== 'legacy' && voiceLoopRaw !== 'stream') {
     throw new Error(`invalid VOICE_LOOP: ${voiceLoopRaw} (expected legacy|stream)`);
@@ -202,6 +260,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   if (ttsResponseFormatRaw !== 'wav' && ttsResponseFormatRaw !== 'pcm') {
     throw new Error(`invalid TTS_RESPONSE_FORMAT: ${ttsResponseFormatRaw} (expected wav|pcm)`);
   }
+  // `low` keeps punctuation that `minimal` drops, for ~30 ms more latency.
+  const openaiRealtimeDelay = optional(env, 'OPENAI_REALTIME_DELAY', 'low');
+  if (!['minimal', 'low', 'medium', 'high', 'xhigh'].includes(openaiRealtimeDelay)) {
+    throw new Error(`invalid OPENAI_REALTIME_DELAY: ${openaiRealtimeDelay} (expected minimal|low|medium|high|xhigh)`);
+  }
   const sttStreamType = optional(env, 'SARVAM_STT_STREAM_TYPE', 'fast');
   if (sttStreamType !== 'fast' && sttStreamType !== 'balanced' && sttStreamType !== 'simulated') {
     throw new Error(`invalid SARVAM_STT_STREAM_TYPE: ${sttStreamType} (expected fast|balanced|simulated)`);
@@ -223,6 +286,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     streamWsUrl,
     turnDetection,
     stallGraceMs: int(env, 'STALL_GRACE_MS', STALL_DEFAULTS.graceMs),
+    sttHedgeMs: int(env, 'STT_HEDGE_MS', 400),
+    sttWarmup: bool(env, 'STT_WARMUP', true),
     vadThreshold: float(env, 'VAD_SPEECH_THRESHOLD', 0.1),
     echoGateCorrelation: float(env, 'ECHO_GATE_CORRELATION', 0.7),
     echoGateLevelMarginDb: float(env, 'ECHO_GATE_LEVEL_MARGIN_DB', 6),
@@ -238,7 +303,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     fixedAudioCacheDir: env.FIXED_AUDIO_CACHE_DIR,
     fixedPrewarmMs: int(env, 'FIXED_AUDIO_PREWARM_MS', 8000),
     openrouterSttFallback: bool(env, 'OPENROUTER_STT_FALLBACK', false),
-    openrouterSttModel: optional(env, 'OPENROUTER_STT_MODEL', 'openai/gpt-4o-transcribe'),
+    openrouterSttModel: optional(env, 'OPENROUTER_STT_MODEL', 'openai/gpt-transcribe'),
     twilioAccountSid,
     twilioAuthToken,
     sttProvider,
@@ -247,6 +312,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       apiKey: sttApiKey,
       baseUrl: optional(env, 'WHISPER_BASE_URL', defaults.baseUrl),
       model: optional(env, 'WHISPER_MODEL', defaults.model),
+    },
+    openaiRealtime: {
+      apiKey: openaiApiKey,
+      url: optional(env, 'OPENAI_REALTIME_URL', 'wss://api.openai.com/v1/realtime?intent=transcription'),
+      model: optional(env, 'OPENAI_REALTIME_MODEL', 'gpt-live-transcribe'),
+      delay: openaiRealtimeDelay,
+      languages: optional(env, 'OPENAI_REALTIME_LANGUAGES', 'en')
+        .split(',')
+        .map((entry) => entry.trim())
+        .filter(Boolean),
     },
     appointments: {
       baseUrl: optional(env, 'APPOINTMENTS_API_URL', 'https://receptionist-3r3d.onrender.com'),
@@ -273,7 +348,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       ttsSampleRate: int(env, 'SARVAM_TTS_SAMPLE_RATE', 8000),
       ttsStream: bool(env, 'SARVAM_TTS_STREAM', true),
       ttsStreamIdleTimeoutMs: int(env, 'SARVAM_TTS_STREAM_IDLE_TIMEOUT_MS', 5000),
-      ttsMinBufferSize: int(env, 'SARVAM_TTS_MIN_BUFFER_SIZE', 50),
+      // Sarvam rejects min_buffer_size below 30 with a 422 and closes the
+      // stream, which would take down every reply on a call. Clamp at the
+      // provider floor; the session's voice chunker stays the buffering policy.
+      ttsMinBufferSize: Math.max(30, int(env, 'SARVAM_TTS_MIN_BUFFER_SIZE', 30)),
       ttsMaxChunkLength: int(env, 'SARVAM_TTS_MAX_CHUNK_LENGTH', 150),
     },
     tts: {
@@ -287,8 +365,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
       pcmSampleRate: int(env, 'TTS_PCM_SAMPLE_RATE', 24000),
     },
     llmApiKey,
-    openrouterModel: optional(env, 'OPENROUTER_MODEL', 'deepseek/deepseek-v4-flash-0731'),
+    assistant: {
+      primary: assistantProviderRaw,
+      groqApiKey,
+      groqBaseUrl: optional(env, 'GROQ_ASSISTANT_BASE_URL', 'https://api.groq.com/openai/v1'),
+      groqModel: optional(env, 'GROQ_ASSISTANT_MODEL', 'openai/gpt-oss-120b'),
+      groqReasoningEffort: groqReasoningRaw,
+    },
+    openrouterModel: optional(env, 'OPENROUTER_MODEL', 'deepseek/deepseek-v4.1-flash'),
     openrouterTemperature: float(env, 'OPENROUTER_TEMPERATURE', 0.4),
+    openrouterReasoningEffort: ((): Config['openrouterReasoningEffort'] => {
+      const raw = optional(env, 'OPENROUTER_REASONING_EFFORT', 'minimal');
+      return raw === 'none' || raw === 'low' || raw === 'medium' || raw === 'high'
+        ? raw
+        : 'minimal';
+    })(),
     debugAudioDir: env.DEBUG_AUDIO_DIR,
   };
 }

@@ -2,7 +2,7 @@ import { encodeMulaw } from './audio.ts';
 import { attenuationGain, mixMulaw } from './echoMix.ts';
 import { rms, type EchoReason } from './echoGate.ts';
 import { decodeMulaw } from './mulaw.ts';
-import { percentile } from './benchmark.ts';
+import { latencyText, latencySummary, type Summary } from './benchmark.ts';
 import { CallStore } from './calls.ts';
 import { HYBRID_DEFAULTS } from './hybridDetector.ts';
 import type { Assistant, Transcriber, Transcription } from './app.ts';
@@ -94,12 +94,6 @@ export interface TurnBenchMetrics {
   gate: GateMetrics;
 }
 
-export interface Summary {
-  samples: number;
-  p50: number;
-  p95: number;
-}
-
 interface AggregateCounts {
   scenarios: number;
   utterances: number;
@@ -134,14 +128,6 @@ function toMs(frames: number): number {
 
 function rate(numerator: number, denominator: number): number {
   return denominator > 0 ? numerator / denominator : 0;
-}
-
-function summary(values: number[]): Summary {
-  return {
-    samples: values.length,
-    p50: percentile(values, 50),
-    p95: percentile(values, 95),
-  };
 }
 
 function inSpan(frame: number, span: TurnBenchSpan): boolean {
@@ -237,9 +223,9 @@ export function scenarioMetrics(name: string, obs: ScenarioObservations): TurnBe
     falseCuts,
     falseCutRate: rate(falseCuts, obs.utterances.length),
     replyLatenciesMs,
-    replyLatencyMs: summary(replyLatenciesMs),
+    replyLatencyMs: latencySummary(replyLatenciesMs),
     stopLatenciesMs,
-    stopLatencyMs: { ...summary(stopLatenciesMs), missed: obs.interruptions.length - stoppedInterruptions.size },
+    stopLatencyMs: { ...latencySummary(stopLatenciesMs), missed: obs.interruptions.length - stoppedInterruptions.size },
     backchannels: obs.backchannels.length,
     backchannelFalseStops: stoppedBackchannels.size,
     backchannelFalseStopRate: rate(stoppedBackchannels.size, obs.backchannels.length),
@@ -273,8 +259,8 @@ export function aggregateMetrics(runs: TurnBenchMetrics[]): AggregateMetrics {
     utterances,
     falseCuts,
     falseCutRate: rate(falseCuts, utterances),
-    replyLatencyMs: summary(replyLatenciesMs),
-    stopLatencyMs: { ...summary(stopLatenciesMs), missed },
+    replyLatencyMs: latencySummary(replyLatenciesMs),
+    stopLatencyMs: { ...latencySummary(stopLatenciesMs), missed },
     backchannels,
     backchannelFalseStops,
     backchannelFalseStopRate: rate(backchannelFalseStops, backchannels),
@@ -836,10 +822,6 @@ export const SELF_ECHO_BAR = { selfEchoTurns: 0 } as const;
 
 function percent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
-}
-
-function latencyText(summary: Summary): string {
-  return summary.samples > 0 ? `p50 ${summary.p50}ms p95 ${summary.p95}ms (n=${summary.samples})` : 'none (n=0)';
 }
 
 type MetricLineInput = Pick<
