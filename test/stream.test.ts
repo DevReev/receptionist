@@ -21,6 +21,7 @@ const BASE_ENV = {
   TWILIO_AUTH_TOKEN: 't',
   GROQ_API_KEY: 'g',
   OPENROUTER_API_KEY: 'o',
+  OPENAI_API_KEY: 'sk-openai',
   SARVAM_API_KEY: 'sk-sarvam',
 };
 
@@ -45,7 +46,7 @@ describe('voice loop config', () => {
     const cfg = loadConfig({ ...BASE_ENV, STREAM_WS_URL: 'wss://example.com/stream' });
     assert.equal(cfg.voiceLoop, 'stream');
     assert.equal(cfg.vadThreshold, 0.1);
-    assert.equal(cfg.sttProvider, 'sarvam');
+    assert.equal(cfg.sttProvider, 'openai-realtime');
   });
 
   it('requires the public stream url by default', () => {

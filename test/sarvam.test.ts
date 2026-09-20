@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { SarvamTranscriber, SarvamTts } from '../src/sarvam.ts';
+import { SarvamTts } from '../src/sarvam.ts';
 import type { TraceEvent } from '../src/trace.ts';
 import { encodeWav } from '../src/audio.ts';
 
@@ -10,62 +10,6 @@ function jsonResponse(payload: unknown, status = 200): Response {
     headers: { 'content-type': 'application/json' },
   });
 }
-
-const STT = {
-  apiKey: 'sk-sarvam',
-  baseUrl: 'http://stub-sarvam',
-  model: 'saaras:v3',
-  languageCode: 'en-IN',
-  mode: 'transcribe',
-};
-
-describe('SarvamTranscriber', () => {
-  it('posts multipart to speech-to-text and returns the transcript', async () => {
-    let url = '';
-    let key = '';
-    let model = '';
-    let language = '';
-    let mode = '';
-    let filename = '';
-    const fetchFn = (async (u: string, init: { headers: Record<string, string>; body: FormData }) => {
-      url = String(u);
-      key = init.headers['api-subscription-key'];
-      model = String(init.body.get('model'));
-      language = String(init.body.get('language_code'));
-      mode = String(init.body.get('mode'));
-      const file = init.body.get('file');
-      filename = file instanceof File ? file.name : '';
-      return jsonResponse({ transcript: 'I want to book an appointment.' });
-    }) as unknown as typeof fetch;
-    const t = new SarvamTranscriber({ stt: STT, fetchFn });
-    const out = await t.transcribe(Buffer.from('audio'), 'audio/wav');
-    assert.equal(url, 'http://stub-sarvam/speech-to-text');
-    assert.equal(key, 'sk-sarvam');
-    assert.equal(model, 'saaras:v3');
-    assert.equal(language, 'en-IN');
-    assert.equal(mode, 'transcribe');
-    assert.equal(filename, 'turn.wav');
-    assert.equal(out.text, 'I want to book an appointment.');
-    assert.equal(out.noSpeech, false);
-  });
-
-  it('treats an empty transcript as no-speech', async () => {
-    const t = new SarvamTranscriber({
-      stt: STT,
-      fetchFn: (async () => jsonResponse({ transcript: '' })) as typeof fetch,
-    });
-    const out = await t.transcribe(Buffer.from('audio'), 'audio/mpeg');
-    assert.equal(out.noSpeech, true);
-  });
-
-  it('throws on provider errors', async () => {
-    const t = new SarvamTranscriber({
-      stt: STT,
-      fetchFn: (async () => jsonResponse({ error: 'boom' }, 500)) as typeof fetch,
-    });
-    await assert.rejects(() => t.transcribe(Buffer.from('audio'), 'audio/mpeg'));
-  });
-});
 
 const TTS = {
   apiKey: 'sk-sarvam',
@@ -128,19 +72,7 @@ describe('SarvamTts', () => {
     await assert.rejects(() => tts.synthesize('hello'));
   });
 
-  it('traces REST transcription and speech timing', async () => {
-    const sttEvents: TraceEvent[] = [];
-    const t = new SarvamTranscriber({
-      stt: STT,
-      fetchFn: (async () => jsonResponse({ transcript: 'hello' })) as typeof fetch,
-      onTrace: (e) => sttEvents.push(e),
-    });
-    await t.transcribe(Buffer.from('audio'), 'audio/wav');
-    assert.deepEqual(
-      sttEvents.map((e) => `${e.component}:${e.event}`),
-      ['stt:rest-start', 'stt:rest-done'],
-    );
-
+  it('traces REST speech timing', async () => {
     const ttsEvents: TraceEvent[] = [];
     const b64 = encodeWav(new Int16Array([0, 1000]), 8000).toString('base64');
     const tts = new SarvamTts({

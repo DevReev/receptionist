@@ -1,21 +1,21 @@
 import { benchmarkFixture, loadFixtures, summarize, type BenchmarkResult } from '../src/benchmark.ts';
-import { SarvamRealtimeStt } from '../src/sarvamRealtime.ts';
+import { OpenAiRealtimeStt } from '../src/openaiRealtime.ts';
 
 interface Candidate {
   name: string;
   model: string;
-  streamType: string;
+  delay: string;
 }
 
 function candidates(): Candidate[] {
-  const raw = process.env.BENCH_STT_MODELS ?? 'saaras:v3-realtime:fast,saaras:v3-realtime:balanced';
+  const raw = process.env.BENCH_STT_MODELS ?? 'gpt-live-transcribe:low';
   return raw
     .split(',')
     .map((entry) => entry.trim())
     .filter(Boolean)
     .map((entry) => {
-      const [model, streamType = 'fast'] = entry.split(':');
-      return { name: entry, model: model!, streamType };
+      const [model, delay = 'low'] = entry.split(':');
+      return { name: entry, model: model!, delay };
     });
 }
 
@@ -52,32 +52,29 @@ function printResults(summaries: ReturnType<typeof summarize>[], all: Map<string
 }
 
 export async function main(): Promise<void> {
-  const apiKey = process.env.SARVAM_API_KEY;
-  if (!apiKey) throw new Error('SARVAM_API_KEY is required for live benchmark replay');
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) throw new Error('OPENAI_API_KEY is required for live benchmark replay');
   const dir = process.env.BENCH_FIXTURES ?? './bench-fixtures';
   const fixtures = await loadFixtures(dir);
   if (fixtures.length === 0) throw new Error(`no .mulaw fixtures in ${dir}`);
-  const baseUrl = process.env.SARVAM_BASE_URL ?? 'https://api.sarvam.ai';
-  const languageCode = process.env.SARVAM_STT_LANGUAGE ?? 'en-IN';
-  const prompt = process.env.SARVAM_STT_PROMPT;
+  const url = process.env.OPENAI_REALTIME_URL ?? 'wss://api.openai.com/v1/realtime?intent=transcription';
+  const languages = (process.env.OPENAI_REALTIME_LANGUAGES ?? 'en')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
   const summaries = [];
   const all = new Map<string, BenchmarkResult[]>();
   for (const candidate of candidates()) {
     const results: BenchmarkResult[] = [];
     for (const fixture of fixtures) {
-      const target = new SarvamRealtimeStt({
+      const target = new OpenAiRealtimeStt({
         config: {
           apiKey,
-          baseUrl,
+          url,
           model: candidate.model,
-          languageCode,
-          streamType: candidate.streamType,
-          mode: 'transcribe',
-          endpointing: 'manual',
-          encoding: 'mulaw',
-          sampleRate: 8000,
+          delay: candidate.delay,
+          languages,
           finalTimeoutMs: 4000,
-          ...(prompt ? { prompt } : {}),
         },
       });
       try {

@@ -1,14 +1,18 @@
 # Transcription, LLM, and TTS Latency Design
 
-Status: implemented. Provider/model selection and threshold tuning remain gated
-on the evaluation corpus below.
+Status: **superseded for STT**. This design predates the OpenAI streaming
+transcription channel; speech-to-text is now OpenAI-only (`gpt-live-transcribe`
+with a `whisper-1` REST fallback — see `.scratch/openai-only-stt/spec.md`). The
+LLM and TTS decisions below still hold.
 
 ## Decision
 
 Keep the Twilio bidirectional Media Streams design in `twilio.md` and optimize the
 three modules behind it:
 
-1. Sarvam realtime STT is the latency-first primary path.
+1. ~~Sarvam realtime STT is the latency-first primary path.~~ Superseded:
+   `gpt-live-transcribe` is the primary streaming path, `whisper-1` REST the
+   fallback. Sarvam is TTS-only.
 2. OpenRouter file transcription is a selective fallback and comparison path, not
    the live primary.
 3. The server owns dialogue and Booking state; the LLM produces natural wording

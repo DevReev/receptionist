@@ -4,7 +4,7 @@ import { CallStore } from '../src/calls.ts';
 import { LiveCallSession } from '../src/live.ts';
 import type { Utterance, Vad } from '../src/endpoint.ts';
 import type { Assistant, Transcription } from '../src/app.ts';
-import type { PartialTranscript, RealtimeEndpointing, RealtimeStt } from '../src/sarvamRealtime.ts';
+import type { PartialTranscript, RealtimeEndpointing, RealtimeStt } from '../src/realtimeStt.ts';
 import type { Tts } from '../src/tts.ts';
 
 const FRAME_BYTES = 160; // 20 ms of 8 kHz mulaw.

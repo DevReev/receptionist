@@ -11,7 +11,7 @@ const STT_PROVIDER_DEFAULTS = {
 
 type WhisperProvider = keyof typeof STT_PROVIDER_DEFAULTS;
 
-export type SttProvider = WhisperProvider | 'sarvam' | 'openrouter' | 'openai-realtime';
+export type SttProvider = WhisperProvider | 'openrouter' | 'openai-realtime';
 export type TtsProvider = 'openai' | 'sarvam';
 export type AssistantProvider = 'groq' | 'openrouter';
 
@@ -49,23 +49,6 @@ export interface TtsEnv {
 export interface SarvamEnv {
   apiKey: string;
   baseUrl: string;
-  sttModel: string;
-  sttLanguageCode: string;
-  sttMode: string;
-  /** Use the Realtime WebSocket for live calls instead of per-utterance REST. */
-  sttRealtime: boolean;
-  sttRealtimeModel: string;
-  sttStreamType: string;
-  /** Terminology hint sent with the realtime connection; derived from the guide when unset. */
-  sttPrompt?: string;
-  /** How long a Turn waits for `transcript.final` before falling back to REST. */
-  sttFinalTimeoutMs: number;
-  /** Provider VAD sensitivity (0.0-1.0); provider default 0.3. */
-  sttVadThreshold: number;
-  /** Provider VAD silence in ms marking end-of-turn; provider default 500. */
-  sttVadSilenceMs: number;
-  /** Provider VAD minimum speech in ms to count as an utterance; provider default 250. */
-  sttVadMinSpeechMs: number;
   ttsModel: string;
   ttsSpeaker: string;
   ttsLanguageCode: string;
@@ -197,18 +180,17 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sttProviderRaw !== undefined &&
     sttProviderRaw !== 'openai' &&
     sttProviderRaw !== 'groq' &&
-    sttProviderRaw !== 'sarvam' &&
     sttProviderRaw !== 'openrouter' &&
     sttProviderRaw !== 'openai-realtime'
   ) {
-    throw new Error(`invalid STT_PROVIDER: ${sttProviderRaw} (expected openai|groq|sarvam|openrouter|openai-realtime)`);
+    throw new Error(`invalid STT_PROVIDER: ${sttProviderRaw} (expected openai|groq|openrouter|openai-realtime)`);
   }
-  // Sarvam is the default transcriber; an explicit STT_PROVIDER always wins.
-  // The Whisper-compatible providers stay selectable (openai|groq) and need
+  // OpenAI's realtime transcription channel is the default; the
+  // Whisper-compatible providers stay selectable (openai|groq) and need
   // OPENAI_API_KEY or GROQ_API_KEY. `openrouter` uses the OpenRouter
   // transcriptions endpoint (per-utterance REST, no realtime channel) with the
   // always-required OPENROUTER_API_KEY.
-  const sttProvider: SttProvider = sttProviderRaw ?? 'sarvam';
+  const sttProvider: SttProvider = sttProviderRaw ?? 'openai-realtime';
   const openaiApiKey = env.OPENAI_API_KEY ?? '';
   const sttApiKey =
     sttProvider === 'openai' || sttProvider === 'openai-realtime'
@@ -224,7 +206,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   }
   const ttsProvider: TtsProvider = ttsProviderRaw;
   const sarvamApiKey = env.SARVAM_API_KEY ?? '';
-  if ((sttProvider === 'sarvam' || ttsProvider === 'sarvam') && !sarvamApiKey) {
+  // Sarvam is TTS-only: its key is required only when Sarvam speech is selected.
+  if (ttsProvider === 'sarvam' && !sarvamApiKey) {
     missing.push('SARVAM_API_KEY');
   }
   const llmApiKey = required(env, 'OPENROUTER_API_KEY', missing);
@@ -264,10 +247,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
   const openaiRealtimeDelay = optional(env, 'OPENAI_REALTIME_DELAY', 'low');
   if (!['minimal', 'low', 'medium', 'high', 'xhigh'].includes(openaiRealtimeDelay)) {
     throw new Error(`invalid OPENAI_REALTIME_DELAY: ${openaiRealtimeDelay} (expected minimal|low|medium|high|xhigh)`);
-  }
-  const sttStreamType = optional(env, 'SARVAM_STT_STREAM_TYPE', 'fast');
-  if (sttStreamType !== 'fast' && sttStreamType !== 'balanced' && sttStreamType !== 'simulated') {
-    throw new Error(`invalid SARVAM_STT_STREAM_TYPE: ${sttStreamType} (expected fast|balanced|simulated)`);
   }
   // Working days span more calendar days than they count (5 wd ≈ 7 days), so
   // cap the config below the Tool API's 31-calendar-day window limit.
@@ -330,18 +309,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     sarvam: {
       apiKey: sarvamApiKey,
       baseUrl: optional(env, 'SARVAM_BASE_URL', 'https://api.sarvam.ai'),
-      sttModel: optional(env, 'SARVAM_STT_MODEL', 'saaras:v3'),
-      sttLanguageCode: optional(env, 'SARVAM_STT_LANGUAGE', 'en-IN'),
-      sttMode: optional(env, 'SARVAM_STT_MODE', 'transcribe'),
-      sttRealtime: bool(env, 'SARVAM_STT_REALTIME', true),
-      sttRealtimeModel: optional(env, 'SARVAM_STT_REALTIME_MODEL', 'saaras:v3-realtime'),
-      sttStreamType,
-      sttPrompt: env.SARVAM_STT_PROMPT,
-      sttFinalTimeoutMs: int(env, 'SARVAM_STT_FINAL_TIMEOUT_MS', 2000),
-      // Provider defaults: the provider owns the residual fixed silence wait.
-      sttVadThreshold: float(env, 'SARVAM_VAD_THRESHOLD', 0.3),
-      sttVadSilenceMs: int(env, 'SARVAM_VAD_SILENCE_MS', 500),
-      sttVadMinSpeechMs: int(env, 'SARVAM_VAD_MIN_SPEECH_MS', 250),
       ttsModel: optional(env, 'SARVAM_TTS_MODEL', 'bulbul:v3'),
       ttsSpeaker: optional(env, 'SARVAM_TTS_SPEAKER', 'shubh'),
       ttsLanguageCode: optional(env, 'SARVAM_TTS_LANGUAGE', 'en-IN'),

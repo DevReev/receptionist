@@ -30,10 +30,9 @@ import { formatFailureLine } from './log.ts';
 import { OpenRouterAssistant } from './openrouter.ts';
 import { OpenRouterStt } from './openrouterStt.ts';
 import { TwilioRecordingFetcher } from './recordings.ts';
-import { SarvamTranscriber, SarvamTts } from './sarvam.ts';
+import { SarvamTts } from './sarvam.ts';
 import { SileroVad } from './sileroVad.ts';
 import type { RealtimeStt } from './realtimeStt.ts';
-import { SarvamRealtimeStt } from './sarvamRealtime.ts';
 import { OpenAiRealtimeStt } from './openaiRealtime.ts';
 import { SarvamStreamingTts } from './sarvamStreamTts.ts';
 import { attachStreamEndpoint } from './stream.ts';
@@ -43,13 +42,6 @@ import { OpenAiTts, type Tts } from './tts.ts';
 import { WhisperTranscriber } from './whisper.ts';
 
 function createTranscriber(config: Config, trace?: TraceFn): Transcriber {
-  if (config.sttProvider === 'sarvam') {
-    const { apiKey, baseUrl, sttModel, sttLanguageCode, sttMode } = config.sarvam;
-    return new SarvamTranscriber({
-      stt: { apiKey, baseUrl, model: sttModel, languageCode: sttLanguageCode, mode: sttMode },
-      onTrace: trace,
-    });
-  }
   if (config.sttProvider === 'openrouter') {
     // OpenRouter transcription is a completed-utterance request: no realtime
     // channel, so the session's local detector owns boundaries and every Turn
@@ -121,58 +113,24 @@ function createTts(config: Config, trace?: TraceFn): Tts {
 }
 
 /**
- * Per-call live STT channel: audio streams to Sarvam while the Caller speaks,
- * so a Turn reads its transcript at endpointing instead of posting the WAV.
- * Absent when another STT provider is selected, or realtime is turned off.
+ * Per-call live STT channel: OpenAI's streaming transcription while the Caller
+ * speaks, so a Turn reads its transcript at endpointing instead of posting the
+ * WAV. Absent when another STT provider is selected.
  */
 function createRealtimeStt(config: Config, trace?: TraceFn, prompt?: string): RealtimeStt | undefined {
-  if (config.sttProvider === 'openai-realtime') {
-    // OpenAI's transcription session rejects server turn detection, so the
-    // channel is manual: gated by the local detector, billed on appended audio.
-    return new OpenAiRealtimeStt({
-      config: {
-        apiKey: config.openaiRealtime.apiKey,
-        url: config.openaiRealtime.url,
-        model: config.openaiRealtime.model,
-        delay: config.openaiRealtime.delay,
-        languages: config.openaiRealtime.languages,
-        ...(prompt
-          ? { keywords: prompt.split(',').map((entry) => entry.trim()).filter((entry) => entry.length > 0) }
-          : {}),
-      },
-      onTrace: trace,
-    });
-  }
-  if (config.sttProvider !== 'sarvam' || !config.sarvam.sttRealtime) return undefined;
-  const {
-    apiKey,
-    baseUrl,
-    sttRealtimeModel,
-    sttLanguageCode,
-    sttStreamType,
-    sttMode,
-    sttFinalTimeoutMs,
-    sttVadThreshold,
-    sttVadSilenceMs,
-    sttVadMinSpeechMs,
-  } = config.sarvam;
-  const endpointing = config.turnDetection === 'sarvam' ? 'vad' : 'manual';
-  return new SarvamRealtimeStt({
+  if (config.sttProvider !== 'openai-realtime') return undefined;
+  // OpenAI's transcription session rejects server turn detection, so the
+  // channel is manual: gated by the local detector, billed on appended audio.
+  return new OpenAiRealtimeStt({
     config: {
-      apiKey,
-      baseUrl,
-      model: sttRealtimeModel,
-      languageCode: sttLanguageCode,
-      streamType: sttStreamType,
-      mode: sttMode,
-      encoding: 'mulaw',
-      sampleRate: 8000,
-      endpointing,
-      ...(endpointing === 'vad'
-        ? { vad: { threshold: sttVadThreshold, silenceMs: sttVadSilenceMs, minSpeechMs: sttVadMinSpeechMs } }
+      apiKey: config.openaiRealtime.apiKey,
+      url: config.openaiRealtime.url,
+      model: config.openaiRealtime.model,
+      delay: config.openaiRealtime.delay,
+      languages: config.openaiRealtime.languages,
+      ...(prompt
+        ? { keywords: prompt.split(',').map((entry) => entry.trim()).filter((entry) => entry.length > 0) }
         : {}),
-      finalTimeoutMs: sttFinalTimeoutMs,
-      ...(prompt ? { prompt } : {}),
     },
     onTrace: trace,
   });
@@ -410,7 +368,7 @@ export async function main(): Promise<void> {
     const policy = endpointPolicy(config);
     const calls = new CallStore();
     const liveAssistant = createAssistant(config, 'phase');
-    const streamPrompt = config.sarvam.sttPrompt ?? (guide.raw ? deriveSttPrompt(guide) : undefined);
+    const streamPrompt = guide.raw ? deriveSttPrompt(guide) : undefined;
     const lives = new Map<string, LiveCallSession>();
     const capture = createUtteranceCapture(config.debugAudioDir);
     const callEnds = twilioCallEnds({

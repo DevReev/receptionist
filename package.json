@@ -1,7 +1,7 @@
 {
   "name": "receptionist",
   "version": "0.1.0",
-  "description": "LLM clinic receptionist: Twilio turn-based voice loop, Sarvam STT/TTS, GPT-5 Nano assistant, Picktime booking.",
+  "description": "LLM clinic receptionist: Twilio streaming voice loop, OpenAI STT, Sarvam/OpenAI TTS, assistant, Picktime booking.",
   "type": "module",
   "engines": {
     "node": ">=24"

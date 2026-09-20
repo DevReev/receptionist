@@ -5,7 +5,7 @@ import { LiveCallSession } from '../src/live.ts';
 import type { Vad } from '../src/endpoint.ts';
 import type { Assistant, Transcriber, Transcription, TurnEvent } from '../src/app.ts';
 import { greetingFor } from '../src/app.ts';
-import type { RealtimeEndpointing, RealtimeStt, VadEvent } from '../src/sarvamRealtime.ts';
+import type { RealtimeEndpointing, RealtimeStt, VadEvent } from '../src/realtimeStt.ts';
 import type { Tts } from '../src/tts.ts';
 
 const FRAME_BYTES = 160;

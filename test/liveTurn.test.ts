@@ -5,7 +5,7 @@ import { LiveCallSession } from '../src/live.ts';
 import type { Vad } from '../src/endpoint.ts';
 import type { Assistant, AssistantContext, FailureEvent, Transcriber } from '../src/app.ts';
 import { greetingFor, HOLD_ASSISTANT_LINE, REPROMPT_LINE } from '../src/app.ts';
-import type { RealtimeStt } from '../src/sarvamRealtime.ts';
+import type { RealtimeStt } from '../src/realtimeStt.ts';
 import type { TraceEvent } from '../src/trace.ts';
 import type { PlaybackResult } from '../src/transport.ts';
 import type { Tts } from '../src/tts.ts';

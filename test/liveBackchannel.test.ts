@@ -4,7 +4,7 @@ import { CallStore } from '../src/calls.ts';
 import { LiveCallSession } from '../src/live.ts';
 import type { Vad } from '../src/endpoint.ts';
 import type { Assistant, FailureEvent, Transcription, TurnEvent } from '../src/app.ts';
-import type { PartialTranscript, RealtimeEndpointing, RealtimeStt, VadEvent } from '../src/sarvamRealtime.ts';
+import type { PartialTranscript, RealtimeEndpointing, RealtimeStt, VadEvent } from '../src/realtimeStt.ts';
 import type { PlaybackResult } from '../src/transport.ts';
 import type { TraceEvent } from '../src/trace.ts';
 import type { Tts } from '../src/tts.ts';

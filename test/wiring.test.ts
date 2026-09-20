@@ -7,24 +7,35 @@ import type { FailureEvent } from '../src/app.ts';
 
 describe('config', () => {
   it('fails fast listing every missing credential', () => {
-    assert.throws(() => loadConfig({}), /SARVAM_API_KEY.*OPENROUTER_API_KEY|OPENROUTER_API_KEY.*SARVAM_API_KEY/);
+    assert.throws(() => loadConfig({}), /OPENAI_API_KEY.*OPENROUTER_API_KEY|OPENROUTER_API_KEY.*OPENAI_API_KEY/);
   });
 
-  it('defaults STT to Sarvam without requiring a Whisper key', () => {
+  it('defaults STT to OpenAI realtime, requiring the OpenAI key', () => {
     const cfg = loadConfig({
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
       STREAM_WS_URL: 'wss://example.com/stream',
-      SARVAM_API_KEY: 'sk-sarvam',
     });
-    assert.equal(cfg.sttProvider, 'sarvam');
-    assert.equal(cfg.sarvam.sttModel, 'saaras:v3');
+    assert.equal(cfg.sttProvider, 'openai-realtime');
+    assert.equal(cfg.openaiRealtime.model, 'gpt-live-transcribe');
+    assert.throws(
+      () =>
+        loadConfig({
+          OPENROUTER_API_KEY: 'o',
+          TWILIO_ACCOUNT_SID: 'ACx',
+          TWILIO_AUTH_TOKEN: 't',
+          STREAM_WS_URL: 'wss://example.com/stream',
+        }),
+      /OPENAI_API_KEY/,
+    );
   });
 
   it('prefers explicit whisper overrides when the provider is selected', () => {
     const cfg = loadConfig({
       GROQ_API_KEY: 'g',
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
@@ -85,21 +96,20 @@ describe('config', () => {
     assert.equal(custom.tts.voice, 'some-voice');
   });
 
-  it('selects Sarvam for STT and TTS without requiring a Whisper key', () => {
+  it('selects Sarvam for TTS without a Whisper key', () => {
     const cfg = loadConfig({
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
       STREAM_WS_URL: 'wss://example.com/stream',
       SARVAM_API_KEY: 'sk-sarvam',
-      STT_PROVIDER: 'sarvam',
       TTS_PROVIDER: 'sarvam',
     });
-    assert.equal(cfg.sttProvider, 'sarvam');
+    assert.equal(cfg.sttProvider, 'openai-realtime');
     assert.equal(cfg.ttsProvider, 'sarvam');
     assert.equal(cfg.sarvam.apiKey, 'sk-sarvam');
     assert.equal(cfg.sarvam.baseUrl, 'https://api.sarvam.ai');
-    assert.equal(cfg.sarvam.sttModel, 'saaras:v3');
     assert.equal(cfg.sarvam.ttsModel, 'bulbul:v3');
     assert.equal(cfg.sarvam.ttsSpeaker, 'shubh');
     assert.equal(cfg.sarvam.ttsSampleRate, 8000);
@@ -107,6 +117,7 @@ describe('config', () => {
 
   it('defaults Sarvam streaming TTS on, overridable', () => {
     const base = {
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
@@ -123,6 +134,7 @@ describe('config', () => {
 
   it('defaults the Echo-gate margins, overridable', () => {
     const base = {
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
@@ -144,33 +156,9 @@ describe('config', () => {
     assert.equal(tuned.echoGateMaxDelayMs, 450);
   });
 
-  it('defaults live STT to the Sarvam realtime websocket, overridable', () => {
-    const base = {
-      OPENROUTER_API_KEY: 'o',
-      TWILIO_ACCOUNT_SID: 'ACx',
-      TWILIO_AUTH_TOKEN: 't',
-      STREAM_WS_URL: 'wss://example.com/stream',
-      SARVAM_API_KEY: 'sk-sarvam',
-    };
-    const cfg = loadConfig(base);
-    assert.equal(cfg.sarvam.sttRealtime, true);
-    assert.equal(cfg.sarvam.sttRealtimeModel, 'saaras:v3-realtime');
-    assert.equal(cfg.sarvam.sttStreamType, 'fast');
-    assert.equal(cfg.sarvam.sttFinalTimeoutMs, 2000);
-    const tuned = loadConfig({
-      ...base,
-      SARVAM_STT_REALTIME: 'false',
-      SARVAM_STT_STREAM_TYPE: 'balanced',
-      SARVAM_STT_FINAL_TIMEOUT_MS: '1500',
-    });
-    assert.equal(tuned.sarvam.sttRealtime, false);
-    assert.equal(tuned.sarvam.sttStreamType, 'balanced');
-    assert.equal(tuned.sarvam.sttFinalTimeoutMs, 1500);
-    assert.throws(() => loadConfig({ ...base, SARVAM_STT_STREAM_TYPE: 'warp' }), /SARVAM_STT_STREAM_TYPE/);
-  });
-
   it('defaults the Sarvam TTS text buffer to the provider floor, clamped', () => {
     const base = {
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
@@ -186,6 +174,7 @@ describe('config', () => {
 
   it('selects OpenAI Realtime transcription when asked, requiring its key', () => {
     const base = {
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
@@ -199,7 +188,10 @@ describe('config', () => {
     assert.equal(cfg.openaiRealtime.delay, 'low');
     assert.equal(cfg.openaiRealtime.url, 'wss://api.openai.com/v1/realtime?intent=transcription');
     assert.deepEqual(cfg.openaiRealtime.languages, ['en']);
-    assert.throws(() => loadConfig({ ...base, STT_PROVIDER: 'openai-realtime' }), /OPENAI_API_KEY/);
+    assert.throws(
+      () => loadConfig({ ...base, STT_PROVIDER: 'openai-realtime', OPENAI_API_KEY: undefined }),
+      /OPENAI_API_KEY/,
+    );
     assert.throws(
       () => loadConfig({ ...base, STT_PROVIDER: 'openai-realtime', OPENAI_API_KEY: 'k', OPENAI_REALTIME_DELAY: 'warp' }),
       /OPENAI_REALTIME_DELAY/,
@@ -208,6 +200,7 @@ describe('config', () => {
 
   it('warms the REST STT route by default, overridable', () => {
     const base = {
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
@@ -220,6 +213,7 @@ describe('config', () => {
 
   it('defaults the assistant to Groq gpt-oss-120b with the OpenRouter model as fallback', () => {
     const base = {
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
@@ -251,6 +245,7 @@ describe('config', () => {
 
   it('selects OpenRouter STT as the primary transcriber, overridable', () => {
     const base = {
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
@@ -269,6 +264,7 @@ describe('config', () => {
 
   it('defaults the STT hedge to 400 ms and lets the operator tune or disable it', () => {
     const base = {
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
@@ -280,8 +276,9 @@ describe('config', () => {
     assert.equal(loadConfig({ ...base, STT_HEDGE_MS: '0' }).sttHedgeMs, 0);
   });
 
-  it('defaults turn boundaries to provider VAD with provider-default knobs, all tunable', () => {
+  it('defaults turn boundaries to provider VAD, tunable', () => {
     const base = {
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
@@ -290,25 +287,14 @@ describe('config', () => {
     };
     const cfg = loadConfig(base);
     assert.equal(cfg.turnDetection, 'sarvam');
-    assert.equal(cfg.sarvam.sttVadThreshold, 0.3);
-    assert.equal(cfg.sarvam.sttVadSilenceMs, 500);
-    assert.equal(cfg.sarvam.sttVadMinSpeechMs, 250);
-    const tuned = loadConfig({
-      ...base,
-      TURN_DETECTION: 'hybrid',
-      SARVAM_VAD_THRESHOLD: '0.45',
-      SARVAM_VAD_SILENCE_MS: '620',
-      SARVAM_VAD_MIN_SPEECH_MS: '260',
-    });
+    const tuned = loadConfig({ ...base, TURN_DETECTION: 'hybrid' });
     assert.equal(tuned.turnDetection, 'hybrid');
-    assert.equal(tuned.sarvam.sttVadThreshold, 0.45);
-    assert.equal(tuned.sarvam.sttVadSilenceMs, 620);
-    assert.equal(tuned.sarvam.sttVadMinSpeechMs, 260);
     assert.throws(() => loadConfig({ ...base, TURN_DETECTION: 'local' }), /TURN_DETECTION/);
   });
 
   it('defaults the stall grace to 1200 ms and lets the operator tune it', () => {
     const base = {
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
@@ -321,6 +307,7 @@ describe('config', () => {
 
   it('no longer carries the fixed silence and max-utterance knobs', () => {
     const cfg = loadConfig({
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
@@ -335,6 +322,7 @@ describe('config', () => {
 
   it('names the Barge-in candidate knobs and drops the Barge-in boolean', () => {
     const base = {
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
@@ -383,6 +371,7 @@ describe('config', () => {
   it('defaults the appointments API to the Render deploy with a 5-working-day window', () => {
     const cfg = loadConfig({
       GROQ_API_KEY: 'g',
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
@@ -396,6 +385,7 @@ describe('config', () => {
   it('defaults the spoken hold, no-response watch, and availability deadline, all tunable', () => {
     const base = {
       GROQ_API_KEY: 'g',
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
@@ -415,6 +405,7 @@ describe('config', () => {
   it('overrides the appointments URL and validates the working-day window', () => {
     const base = {
       GROQ_API_KEY: 'g',
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
@@ -432,22 +423,26 @@ describe('config', () => {
     assert.throws(() => loadConfig({ ...base, APPOINTMENTS_WINDOW_WORKING_DAYS: '22' }), /APPOINTMENTS_WINDOW_WORKING_DAYS/);
   });
 
-  it('requires SARVAM_API_KEY when a Sarvam provider is selected', () => {
+  it('rejects Sarvam STT and requires SARVAM_API_KEY only for Sarvam TTS', () => {
+    const base = {
+      OPENAI_API_KEY: 'sk-openai',
+      OPENROUTER_API_KEY: 'o',
+      TWILIO_ACCOUNT_SID: 'ACx',
+      TWILIO_AUTH_TOKEN: 't',
+      STREAM_WS_URL: 'wss://example.com/stream',
+    };
     assert.throws(
-      () =>
-        loadConfig({
-          OPENROUTER_API_KEY: 'o',
-          TWILIO_ACCOUNT_SID: 'ACx',
-          TWILIO_AUTH_TOKEN: 't',
-          STREAM_WS_URL: 'wss://example.com/stream',
-          STT_PROVIDER: 'sarvam',
-        }),
-      /SARVAM_API_KEY/,
+      () => loadConfig({ ...base, STT_PROVIDER: 'sarvam' }),
+      /invalid STT_PROVIDER: sarvam \(expected openai\|groq\|openrouter\|openai-realtime\)/,
     );
+    assert.equal(loadConfig(base).sttProvider, 'openai-realtime', 'STT never needs a Sarvam key');
+    assert.throws(() => loadConfig({ ...base, TTS_PROVIDER: 'sarvam' }), /SARVAM_API_KEY/);
+    assert.doesNotThrow(() => loadConfig({ ...base, TTS_PROVIDER: 'sarvam', SARVAM_API_KEY: 'sk-sarvam' }));
   });
 
   it('rejects unknown providers', () => {
     const base = {
+      OPENAI_API_KEY: 'sk-openai',
       OPENROUTER_API_KEY: 'o',
       TWILIO_ACCOUNT_SID: 'ACx',
       TWILIO_AUTH_TOKEN: 't',
@@ -462,6 +457,7 @@ describe('config', () => {
     assert.throws(
       () =>
         loadConfig({
+      OPENAI_API_KEY: 'sk-openai',
           OPENROUTER_API_KEY: 'o',
           TWILIO_ACCOUNT_SID: 'ACx',
           TWILIO_AUTH_TOKEN: 't',

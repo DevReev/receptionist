@@ -1,67 +1,6 @@
-import type { Transcriber, Transcription } from './app.ts';
 import { wavToMulaw } from './audio.ts';
 import type { TraceFn } from './trace.ts';
 import type { SynthesizedAudio, Tts } from './tts.ts';
-
-/** Sarvam STT (`POST {baseUrl}/speech-to-text`) — Saarika/Saaras dialect. */
-export interface SarvamSttConfig {
-  apiKey: string;
-  baseUrl: string;
-  model: string;
-  languageCode: string;
-  mode: string;
-}
-
-export class SarvamTranscriber implements Transcriber {
-  private readonly stt: SarvamSttConfig;
-  private readonly fetchFn: typeof fetch;
-  private readonly onTrace?: TraceFn;
-
-  constructor(opts: { stt: SarvamSttConfig; fetchFn?: typeof fetch; onTrace?: TraceFn }) {
-    this.stt = opts.stt;
-    this.fetchFn = opts.fetchFn ?? fetch;
-    this.onTrace = opts.onTrace;
-  }
-
-  async transcribe(audio: Buffer, contentType: string): Promise<Transcription> {
-    const started = Date.now();
-    this.onTrace?.({ component: 'stt', event: 'rest-start', bytes: audio.length, model: this.stt.model });
-    try {
-      const bytes = new Uint8Array(audio);
-      const form = new FormData();
-      const type = contentType || 'audio/mpeg';
-      const filename = type.toLowerCase().includes('wav') ? 'turn.wav' : 'turn.mp3';
-      form.append('file', new Blob([bytes.buffer as ArrayBuffer], { type }), filename);
-      form.append('model', this.stt.model);
-      form.append('language_code', this.stt.languageCode);
-      form.append('mode', this.stt.mode);
-      const res = await this.fetchFn(`${this.stt.baseUrl}/speech-to-text`, {
-        method: 'POST',
-        headers: { 'api-subscription-key': this.stt.apiKey },
-        body: form,
-      });
-      if (!res.ok) throw new Error(`sarvam-stt-http-${res.status}`);
-      const data = (await res.json()) as { transcript?: unknown };
-      const text = typeof data.transcript === 'string' ? data.transcript : '';
-      this.onTrace?.({
-        component: 'stt',
-        event: 'rest-done',
-        ms: Date.now() - started,
-        chars: text.length,
-        noSpeech: text.trim().length === 0,
-      });
-      return { text, noSpeech: text.trim().length === 0 };
-    } catch (err) {
-      this.onTrace?.({
-        component: 'stt',
-        event: 'rest-error',
-        ms: Date.now() - started,
-        detail: err instanceof Error ? err.message : String(err),
-      });
-      throw err;
-    }
-  }
-}
 
 /** Sarvam TTS (`POST {baseUrl}/text-to-speech`) — Bulbul dialect. */
 export interface SarvamTtsConfig {
