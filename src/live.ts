@@ -33,7 +33,7 @@ import { type BargeInEvent, type EndpointPolicy, type Utterance, type Vad } from
 import type { EchoGateOptions } from './echoGate.ts';
 import type { FixedAudioCache } from './fixedAudio.ts';
 import { STALL_DEFAULTS } from './hybridDetector.ts';
-import type { RealtimeStt } from './sarvamRealtime.ts';
+import type { RealtimeStt } from './realtimeStt.ts';
 import {
   classifySpeculation,
   guideBookingNames,

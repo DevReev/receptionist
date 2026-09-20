@@ -8,7 +8,7 @@ import { HYBRID_DEFAULTS } from './hybridDetector.ts';
 import type { Assistant, Transcriber, Transcription } from './app.ts';
 import type { EndpointPolicy, Vad } from './endpoint.ts';
 import { LiveCallSession } from './live.ts';
-import type { PartialTranscript, RealtimeStt } from './sarvamRealtime.ts';
+import type { PartialTranscript, RealtimeStt } from './realtimeStt.ts';
 import type { PlaybackResult } from './transport.ts';
 import type { Tts } from './tts.ts';
 

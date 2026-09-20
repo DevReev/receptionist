@@ -1,5 +1,5 @@
 import type { Transcription } from './app.ts';
-import type { RealtimeStt } from './sarvamRealtime.ts';
+import type { RealtimeStt } from './realtimeStt.ts';
 import type { TraceFn } from './trace.ts';
 import { defaultSocket, type RealtimeSocket, type RealtimeSocketFactory } from './ws.ts';
 
