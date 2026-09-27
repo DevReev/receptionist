@@ -169,7 +169,7 @@ describe('hybrid detector boundaries', () => {
   it('holds grouped digits past the pause while collecting the Patient phone', async () => {
     const h = harness();
     await h.feed(Array<Mark>(15).fill('speech'));
-    h.turnTaking.observeDialogueState(true, true);
+    h.turnTaking.observeDialogueState({ collecting: true, collectingPhone: true });
     h.turnTaking.observePartial('98765');
     // 800 ms of silence: past the 600 ms dialogue floor, held by the open grouping.
     await h.feed(Array<Mark>(40).fill('silence'));
@@ -184,7 +184,7 @@ describe('hybrid detector boundaries', () => {
     const h = harness();
     await h.feed(Array<Mark>(15).fill('speech'));
     // Name collection: the longer floor only, no grouping hold.
-    h.turnTaking.observeDialogueState(true);
+    h.turnTaking.observeDialogueState({ collecting: true });
     h.turnTaking.observePartial('John Smith');
     const emittedAt = await framesToEmit(h, 'silence', 100);
     assert.equal(emittedAt, 30, 'name collection keeps the 600 ms floor');
@@ -207,7 +207,7 @@ describe('hybrid detector boundaries', () => {
   it('raises the floor to 600 ms while collecting the Patient name or phone', async () => {
     const h = harness();
     await h.feed(Array<Mark>(15).fill('speech'));
-    h.turnTaking.observeDialogueState(true);
+    h.turnTaking.observeDialogueState({ collecting: true });
     const emittedAt = await framesToEmit(h, 'silence', 100);
     assert.equal(emittedAt, 30, 'the dialogue floor holds a 300 ms pause open');
     assert.equal(h.utterances.length, 1);
@@ -216,8 +216,8 @@ describe('hybrid detector boundaries', () => {
   it('returns to the adaptive floor when field collection ends', async () => {
     const h = harness();
     await h.feed(Array<Mark>(15).fill('speech'));
-    h.turnTaking.observeDialogueState(true);
-    h.turnTaking.observeDialogueState(false);
+    h.turnTaking.observeDialogueState({ collecting: true });
+    h.turnTaking.observeDialogueState({ collecting: false });
     const emittedAt = await framesToEmit(h, 'silence', 100);
     assert.equal(emittedAt, 15);
   });

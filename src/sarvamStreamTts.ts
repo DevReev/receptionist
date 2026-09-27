@@ -1,4 +1,4 @@
-import { BufferQueue, type SpeechOptions, type SpeechResponse, type SynthesizedAudio, type Tts } from './tts.ts';
+import { bindAbortSignal, BufferQueue, type SpeechOptions, type SpeechResponse, type SynthesizedAudio, type Tts } from './tts.ts';
 import { clip, type TraceFn } from './trace.ts';
 import { defaultSocket, type RealtimeSocket, type RealtimeSocketFactory } from './ws.ts';
 
@@ -152,19 +152,7 @@ export class SarvamStreamingTts implements Tts {
       cancelled: false,
     };
     this.response = response;
-    const signal = options.signal;
-    let onAbort: (() => void) | null = null;
-    if (signal) {
-      if (signal.aborted) {
-        this.cancelResponse(response, 'aborted');
-      } else {
-        onAbort = () => this.cancelResponse(response, 'aborted');
-        signal.addEventListener('abort', onAbort, { once: true });
-      }
-    }
-    const detach = (): void => {
-      if (signal && onAbort) signal.removeEventListener('abort', onAbort);
-    };
+    const detach = bindAbortSignal(options.signal, () => this.cancelResponse(response, 'aborted'));
     const trackedCancel = (reason: string): void => {
       detach();
       this.cancelResponse(response, reason);

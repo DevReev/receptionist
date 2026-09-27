@@ -97,6 +97,28 @@ export class BufferQueue {
 }
 
 /**
+ * Shared abort binding for the streaming-speech implementations: invokes
+ * `onAbort` with the signal's reason when it is already aborted or when it
+ * aborts, and returns a detach that removes the listener. Callers that settle
+ * (queue end/fail, cancel) invoke the detach so a later abort of a reused
+ * controller cannot cancel a subsequent response.
+ */
+export function bindAbortSignal(signal: AbortSignal | undefined, onAbort: (reason: unknown) => void): () => void {
+  if (!signal) return () => {};
+  if (signal.aborted) {
+    onAbort(signal.reason);
+    return () => {};
+  }
+  const handler = (): void => {
+    onAbort(signal.reason);
+  };
+  signal.addEventListener('abort', handler, { once: true });
+  return () => {
+    signal.removeEventListener('abort', handler);
+  };
+}
+
+/**
  * Response session for a provider without a persistent incremental socket:
  * each pushed phrase is synthesized in order (streaming when the provider
  * supports it, request/response otherwise) and its audio queues immediately.
@@ -109,27 +131,30 @@ export function bufferedSpeech(tts: Tts, options: SpeechOptions): SpeechResponse
   let finished = false;
   let cancelled = false;
   const speechAbort = new AbortController();
-  if (options.signal?.aborted) {
+  const onSpeechAbort = (reason: unknown): void => {
     cancelled = true;
-    speechAbort.abort(options.signal.reason);
-    // Settle immediately: pushText/finishText are no-ops once cancelled, so
-    // without this the audio reader would wait forever.
+    try {
+      speechAbort.abort(reason);
+    } catch {
+      // Already aborted; the queue end below settles readers.
+    }
     queue.end();
-  } else if (options.signal) {
-    options.signal.addEventListener(
-      'abort',
-      () => {
-        cancelled = true;
-        try {
-          speechAbort.abort(options.signal!.reason);
-        } catch {
-          // Already aborted; the queue end below settles readers.
-        }
-        queue.end();
-      },
-      { once: true },
-    );
-  }
+  };
+  // Shared binding: already-aborted settles immediately (pushText/finishText
+  // are no-ops once cancelled, so without this the reader would wait
+  // forever); otherwise the listener detaches on settle so a later abort of a
+  // reused controller cannot cancel a subsequent response.
+  const detachAbort = bindAbortSignal(options.signal, onSpeechAbort);
+  const originalEnd = queue.end.bind(queue);
+  const originalFail = queue.fail.bind(queue);
+  queue.end = (): void => {
+    detachAbort();
+    originalEnd();
+  };
+  queue.fail = (err: Error): void => {
+    detachAbort();
+    originalFail(err);
+  };
 
   const oneShot = async function* oneShot(text: string): AsyncGenerator<Buffer> {
     yield (await tts.synthesize(text, speechAbort.signal)).audio;

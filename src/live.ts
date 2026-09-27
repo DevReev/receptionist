@@ -43,6 +43,7 @@ import type { PlaybackResult } from './transport.ts';
 import type { StreamIdentity } from './stream.ts';
 import type { TraceFn } from './trace.ts';
 import { TurnTaking, type UtteranceSpeechStats } from './turnTaking.ts';
+import type { FieldCollection } from './hybridDetector.ts';
 import { bufferedSpeech, type SpeechResponse, type Tts } from './tts.ts';
 import type { FailureEvent, TurnEvent } from './app.ts';
 
@@ -803,6 +804,16 @@ export class LiveCallSession {
     return this.generation;
   }
 
+  /**
+   * Shared alive guard for the model-response pipeline: a generation may only
+   * play while the call is open, its speech was not cancelled, and no barge-in
+   * or speculation abort cancelled through it. A null speech covers the
+   * pre-speech check, where only the call and the generation decide.
+   */
+  private speechAlive(speech: { cancelled: boolean } | null, generation: number): boolean {
+    return !this.closed && (speech === null || !speech.cancelled) && generation > this.cancelledThrough;
+  }
+
   private errorText(err: unknown): string {
     return err instanceof Error ? err.message : String(err);
   }
@@ -898,7 +909,7 @@ export class LiveCallSession {
     text: string | null,
     opts: { kind: 'response' | 'readback'; fixed: boolean; commit: boolean },
   ): Promise<void> {
-    if (this.closed || generation <= this.cancelledThrough) return;
+    if (!this.speechAlive(null, generation)) return;
     const question = text ? lastQuestionIn(text) : null;
     if (question) this.lastQuestion = question;
     const fixedBytes = opts.fixed && text ? this.fixedCache?.get(text) : undefined;
@@ -928,12 +939,12 @@ export class LiveCallSession {
         const audioDrain = (async () => {
           try {
             for await (const chunk of response.audio()) {
-              if (this.closed || speech.cancelled || generation <= this.cancelledThrough) return;
+              if (!this.speechAlive(speech, generation)) return;
               this.sendResponseAudio(generation, chunk);
               if (collect) chunks.push(chunk);
             }
           } catch (err) {
-            if (speech.cancelled || generation <= this.cancelledThrough) return;
+            if (!this.speechAlive(speech, generation)) return;
             throw err;
           }
         })();
@@ -942,7 +953,7 @@ export class LiveCallSession {
         await audioDrain;
         if (collect && chunks.length > 0) this.fixedCache?.set(text, Buffer.concat(chunks));
       }
-      if (speech.cancelled || this.closed || generation <= this.cancelledThrough) return;
+      if (!this.speechAlive(speech, generation)) return;
       const result = await this.finishPlayback(generation);
       if (result.outcome === 'cleared') {
         this.onCleared(speech, result.reason);
@@ -990,6 +1001,45 @@ export class LiveCallSession {
     if (speech.kind === 'readback') {
       this.setDialogue(this.reducer.clearReadback(this.dialogue));
     }
+  }
+
+  /**
+   * Shared completion for a spoken model reply: the playback-barrier outcome,
+   * the playback-complete trace, the assistant/tts phase logs, the history
+   * commit, and the reply capture. Serves the normal tail and the
+   * deadline-recovery buffered prefix alike; a cleared playback commits
+   * nothing and reports a null deadline either way. Deliberately synchronous:
+   * the single `await finishPlayback` stays at the call sites, because routing
+   * it through an async helper would add a microtask before the method's
+   * `finally` (`beginListening`) and shift the audio-frame interleaving the
+   * turn benches pin.
+   */
+  private finishSpokenReply(
+    speech: ActiveSpeech,
+    outcome: PlaybackResult,
+    generation: number,
+    turn: number,
+    startedAt: number,
+    reply: string,
+    assistantChars: number,
+    deadline: 'completed-buffered' | null,
+    commitHistory: boolean | undefined,
+  ): { text: string; generation: number; deadline: 'completed-buffered' | null } {
+    if (outcome.outcome === 'cleared') {
+      this.onCleared(speech, outcome.reason);
+      return { text: reply, generation, deadline: null };
+    }
+    this.trace?.({ component: 'twilio', event: 'playback-complete', generation });
+    this.onPlaybackComplete?.(speech.text);
+    this.logPhase('assistant', 'done', { turn, ms: Date.now() - startedAt, chars: assistantChars });
+    this.logPhase('tts', 'done', { generation, chars: speech.text.length });
+    // A speculative reply's text commits in the keep path, in history
+    // order behind the final Caller utterance.
+    if (commitHistory !== false && speech.text) {
+      this.calls.pushHistory(this.identity.callSid, { role: 'receptionist', text: speech.text });
+    }
+    if (this.activeTurn) this.activeTurn.replySoFar = reply;
+    return { text: reply, generation, deadline };
   }
 
   /**
@@ -2144,7 +2194,7 @@ export class LiveCallSession {
         const pushedPhrases: string[] = [];
         const audioDrain = (async () => {
           for await (const chunk of response.audio()) {
-            if (this.closed || speech.cancelled || generation <= this.cancelledThrough) return;
+            if (!this.speechAlive(speech, generation)) return;
             this.sendResponseAudio(generation, chunk);
           }
         })();        let streamError: Error | undefined;
@@ -2155,7 +2205,7 @@ export class LiveCallSession {
         try {
           let next = first;
           while (!next.done) {
-            if (this.closed || speech.cancelled || generation <= this.cancelledThrough) break;
+            if (!this.speechAlive(speech, generation)) break;
             const token = next.value;
             if (token) {
               if (!firstToken) {
@@ -2177,12 +2227,7 @@ export class LiveCallSession {
         } catch (err) {
           if (!isAbortError(err, controller.signal) && !speech.cancelled) {
             streamError = err instanceof Error ? err : new Error(String(err));
-          } else if (
-            controller.signal.aborted &&
-            !this.closed &&
-            !speech.cancelled &&
-            generation > this.cancelledThrough
-          ) {
+          } else if (controller.signal.aborted && this.speechAlive(speech, generation)) {
             // The abort stopped token flow but speech is still live and owned
             // by this Turn (barge-in and close cancel the speech above), so
             // this is the Turn deadline: recover exactly once below.
@@ -2212,28 +2257,14 @@ export class LiveCallSession {
           } catch (err) {
             throw new Error(ttsDetail(err));
           }
-          if (this.closed || speech.cancelled || generation <= this.cancelledThrough) {
+          if (!this.speechAlive(speech, generation)) {
             response.cancel('generation-cancelled');
             return { text: played, generation, deadline: null };
           }
           const outcome = await this.finishPlayback(generation);
-          if (outcome.outcome === 'cleared') {
-            this.onCleared(speech, outcome.reason);
-            return { text: played, generation, deadline: null };
-          }
-          this.trace?.({ component: 'twilio', event: 'playback-complete', generation });
-          this.onPlaybackComplete?.(speech.text);
-          this.logPhase('assistant', 'done', { turn, ms: Date.now() - startedAt, chars: played.length });
-          this.logPhase('tts', 'done', { generation, chars: speech.text.length });
-          // A speculative reply's text commits in the keep path, in history
-          // order behind the final Caller utterance.
-          if (opts.commitHistory !== false && speech.text) {
-            this.calls.pushHistory(this.identity.callSid, { role: 'receptionist', text: speech.text });
-          }
-          if (this.activeTurn) this.activeTurn.replySoFar = played;
-          return { text: played, generation, deadline: 'completed-buffered' as const };
+          return this.finishSpokenReply(speech, outcome, generation, turn, startedAt, played, played.length, 'completed-buffered', opts.commitHistory);
         }
-        if (this.closed || speech.cancelled || generation <= this.cancelledThrough) {
+        if (!this.speechAlive(speech, generation)) {
           response.cancel('generation-cancelled');
           return { text: fullReply, generation, deadline: null };
         }
@@ -2247,23 +2278,9 @@ export class LiveCallSession {
           throw new Error(ttsDetail(err));
         }
         if (streamError) throw streamError;
-        if (this.closed || speech.cancelled || generation <= this.cancelledThrough) return { text: fullReply, generation, deadline: null };
+        if (!this.speechAlive(speech, generation)) return { text: fullReply, generation, deadline: null };
         const result = await this.finishPlayback(generation);
-        if (result.outcome === 'cleared') {
-          this.onCleared(speech, result.reason);
-          return { text: fullReply, generation, deadline: null };
-        }
-        this.trace?.({ component: 'twilio', event: 'playback-complete', generation });
-        this.onPlaybackComplete?.(speech.text);
-        this.logPhase('assistant', 'done', { turn, ms: Date.now() - startedAt, chars: fullReply.length });
-        this.logPhase('tts', 'done', { generation, chars: speech.text.length });
-        // A speculative reply's text commits in the keep path, in history
-        // order behind the final Caller utterance.
-        if (opts.commitHistory !== false && speech.text) {
-          this.calls.pushHistory(this.identity.callSid, { role: 'receptionist', text: speech.text });
-        }
-        if (this.activeTurn) this.activeTurn.replySoFar = fullReply;
-        return { text: fullReply, generation, deadline: null };
+        return this.finishSpokenReply(speech, result, generation, turn, startedAt, fullReply, fullReply.length, null, opts.commitHistory);
       } finally {
         if (this.turnAbort === controller) this.turnAbort = null;
         this.activeSpeech = null;
