@@ -4,6 +4,8 @@
  * authorization gate that no LLM output may bypass.
  */
 
+import { tokenize } from './backchannel.ts';
+
 export interface SlotOption {
   service: string;
   location: string;
@@ -373,6 +375,133 @@ function extractPhone(transcript: string): string | undefined {
     if (cleaned.length >= 10 && cleaned.length <= 13 && (!best || cleaned.length > best.length)) best = cleaned;
   }
   return best;
+}
+
+/**
+ * Synchronous language judgement over a phone-dictation partial: do the
+ * digits dictated so far form a complete callable number? Owns the Turn
+ * boundary's phone question, tolerant of regroups and repeats, so the old
+ * digit ceiling (any dictation over 13 digits is "complete") cannot split a
+ * real number mid-dictation.
+ *
+ * The boundary consults this verdict on every silence frame, so it must stay
+ * synchronous and pure: no assistant round-trip per frame. The resolver
+ * signature is the seam a future async LLM precompute can fill — the boundary
+ * keeps a cached sync verdict per partial text and only re-asks when the
+ * partial changes — while this deterministic judgement is the default.
+ */
+export type PhoneCompletenessResolver = (text: string) => boolean;
+
+/** Spoken digits that count toward a dictated phone number. Mirrors the detector's grouping. */
+const PHONE_DIGIT_WORDS: Readonly<Record<string, string>> = {
+  zero: '0',
+  oh: '0',
+  o: '0',
+  one: '1',
+  two: '2',
+  three: '3',
+  four: '4',
+  five: '5',
+  six: '6',
+  seven: '7',
+  eight: '8',
+  nine: '9',
+};
+
+/** Framing words around a dictated number; everything else is content. Mirrors the detector. */
+const PHONE_FIELD_WORDS: ReadonlySet<string> = new Set([
+  'my',
+  'number',
+  'phone',
+  'mobile',
+  'cell',
+  'is',
+  'its',
+  'it',
+  'the',
+  'a',
+  'an',
+  'uh',
+  'um',
+  'er',
+  'please',
+  'call',
+  'called',
+]);
+
+/** A dictated number is 10-13 digits; over-long dictations hold, never force-complete. */
+const PHONE_COMPLETE_MIN_DIGITS = 10;
+const PHONE_COMPLETE_MAX_DIGITS = 13;
+
+/** Extension cue: more digits are coming (bare) or the extension just finished (with digits). */
+const PHONE_EXTENSION_CUE = /\b(ext|x|extension)\b/i;
+
+/** Minimum length of an adjacent repeated digit block that marks a regroup in progress. */
+const PHONE_REPEAT_BLOCK = 4;
+
+/** Digits of one span, in order: digit characters plus spoken number words. */
+function phoneDigitsOf(span: string): string {
+  let digits = '';
+  for (const token of tokenize(span)) {
+    const word = PHONE_DIGIT_WORDS[token];
+    if (word !== undefined) digits += word;
+    else for (const ch of token) {
+      if (ch >= '0' && ch <= '9') digits += ch;
+    }
+  }
+  return digits;
+}
+
+/**
+ * Collapse one copy out of every adjacent identical digit block (a regrouped
+ * repeat: "98765 98765" is one group said twice, not ten distinct digits), so
+ * the repeat never fakes a complete count. Blocks shorter than a regroup
+ * ("555 555") are left alone: genuine exchanges repeat.
+ */
+function dedupeRegroupedDigits(core: string): string {
+  let deduped = core;
+  for (;;) {
+    let merged = false;
+    for (let length = Math.floor(deduped.length / 2); length >= PHONE_REPEAT_BLOCK; length -= 1) {
+      for (let i = 0; i + 2 * length <= deduped.length; i += 1) {
+        if (deduped.slice(i, i + length) === deduped.slice(i + length, i + 2 * length)) {
+          deduped = deduped.slice(0, i + length) + deduped.slice(i + 2 * length);
+          merged = true;
+          break;
+        }
+      }
+      if (merged) break;
+    }
+    if (!merged) return deduped;
+  }
+}
+
+export function isPhoneDictationComplete(text: string): boolean {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return true;
+  // A trailing separator is an open grouping ("9876543210 - ..."): more coming.
+  if (/[\s\-–—,(\[]$/.test(text)) return false;
+  const lower = trimmed.toLowerCase();
+  const cueAt = lower.search(PHONE_EXTENSION_CUE);
+  const head = cueAt >= 0 ? trimmed.slice(0, cueAt) : trimmed;
+  const tail = cueAt >= 0 ? trimmed.slice(cueAt) : '';
+  // A bare extension cue ("... ext", "... extension") is still dictating; a
+  // finished extension ("... ext 123") judges by the number core instead.
+  if (cueAt >= 0 && phoneDigitsOf(tail) === '') return false;
+  let contentWords = 0;
+  for (const token of tokenize(head)) {
+    if (PHONE_DIGIT_WORDS[token] !== undefined) continue;
+    if (/\d/.test(token)) continue;
+    if (!PHONE_FIELD_WORDS.has(token)) contentWords += 1;
+  }
+  const core = dedupeRegroupedDigits(phoneDigitsOf(head));
+  if (core === '') return true;
+  // A digit inside a content-bearing sentence ("I have 2 kids") is not a
+  // dictated number unless the digits dominate or nothing else is said.
+  if (contentWords > 0 && core.length + phoneDigitsOf(tail).length < 3) return true;
+  if (core.length < PHONE_COMPLETE_MIN_DIGITS) return false;
+  if (core.length > PHONE_COMPLETE_MAX_DIGITS) return false;
+  return true;
 }
 
 function sameSlot(a: SlotOption | undefined, b: SlotOption | undefined): boolean {

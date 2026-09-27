@@ -1,7 +1,8 @@
 import { decodeMulaw } from './mulaw.ts';
 import { classifyPartial, type PartialClass } from './backchannel.ts';
 import { EchoGate, type EchoDecision, type EchoGateOptions } from './echoGate.ts';
-import { AdaptivePause, HYBRID_DEFAULTS, hasListContinuationCue, isSemanticallyComplete } from './hybridDetector.ts';
+import { isPhoneDictationComplete, type PhoneCompletenessResolver } from './dialogue.ts';
+import { AdaptivePause, HYBRID_DEFAULTS, hasListContinuationCue, isSemanticallyComplete, type FieldCollection } from './hybridDetector.ts';
 import {
   BARGE_IN_DEFAULTS,
   type BackchannelEvent,
@@ -151,6 +152,14 @@ export class TurnTaking {
   private lastPartialAtSamples = 0;
   /** While the Patient phone (not name) is collected, open groupings hold. */
   private collectingPhone = false;
+  /**
+   * The dialogue layer's phone-completeness judgement. Consulted
+   * synchronously and cached per partial text, so the boundary never blocks
+   * on a network call no matter how many silence frames it consults.
+   */
+  private phoneComplete: PhoneCompletenessResolver = isPhoneDictationComplete;
+  private phoneVerdictText: string | null = null;
+  private phoneVerdict: boolean | null = null;
   /** Raised floor from dialogue field state; 0 unless collecting name or phone. */
   private dialogueFloorMs = 0;
   private speechAnnounced = false;
@@ -243,11 +252,31 @@ export class TurnTaking {
    * collects the Patient's name or phone the boundary floor rises so dictated
    * names and grouped digits are not split across Turns. `collectingPhone`
    * marks the phone half of that state, where an open digit grouping holds
-   * the boundary past the pause; name collection keeps the floor alone.
+   * the boundary past the pause; name collection keeps the floor alone. The
+   * phone verdict arrives with the state and is re-asked at most once per
+   * partial text; a resolver swap invalidates the cache.
    */
-  observeDialogueState(collecting: boolean, collectingPhone = false): void {
+  observeDialogueState(field: FieldCollection): void {
+    const collecting = field.collecting === true;
     this.dialogueFloorMs = collecting ? HYBRID_DEFAULTS.dialogueFloorMs : 0;
-    this.collectingPhone = collecting && collectingPhone;
+    this.collectingPhone = collecting && field.collectingPhone === true;
+    this.phoneComplete = field.phoneComplete ?? isPhoneDictationComplete;
+    this.phoneVerdictText = null;
+    this.phoneVerdict = null;
+  }
+
+  /**
+   * Cached phone verdict for the boundary: the resolver runs at most once per
+   * partial text, so forty silence frames on one partial consult it once. The
+   * call is synchronous by type — a resolver returning a promise cannot
+   * satisfy `PhoneCompletenessResolver` — so the boundary never awaits.
+   */
+  private phoneCompleteVerdict(text: string): boolean {
+    if (this.phoneVerdict === null || this.phoneVerdictText !== text) {
+      this.phoneVerdictText = text;
+      this.phoneVerdict = this.phoneComplete(text);
+    }
+    return this.phoneVerdict;
   }
 
   /**
@@ -483,7 +512,12 @@ export class TurnTaking {
     if (trailingMs < holdMs) return false;
     if (trailingMs >= HYBRID_DEFAULTS.emergencyMs) return true;
     if (toMs(this.processedSamples - this.lastPartialAtSamples) > HYBRID_DEFAULTS.stalePartialMs) return true;
-    return isSemanticallyComplete(this.lastPartialText, { collectingPhone: this.collectingPhone });
+    // The phone verdict is the cached sync judgement: "incomplete" holds the
+    // boundary exactly like any other continuation evidence.
+    return isSemanticallyComplete(this.lastPartialText, {
+      collectingPhone: this.collectingPhone,
+      phoneComplete: (text) => this.phoneCompleteVerdict(text),
+    });
   }
 
   private bufferedMs(): number {
@@ -647,6 +681,8 @@ export class TurnTaking {
     this.trailingSilenceSamples = 0;
     this.lastPartialText = '';
     this.lastPartialAtSamples = this.processedSamples;
+    this.phoneVerdictText = null;
+    this.phoneVerdict = null;
     this.clearCandidate();
   }
 }

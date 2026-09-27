@@ -11,6 +11,7 @@
  */
 
 import { tokenize } from './backchannel.ts';
+import { isPhoneDictationComplete, type PhoneCompletenessResolver } from './dialogue.ts';
 
 export const HYBRID_DEFAULTS = {
   /** Multiplier over the Caller's p90 pause. */
@@ -362,16 +363,22 @@ const PHONE_PREAMBLE: ReadonlySet<string> = new Set([
   'called',
 ]);
 
-/** A dictated UK-style mobile is 10-13 digits; anything shorter is still open. */
+/** A dictated UK-style mobile is at least 10 digits; short of that it is still open. */
 const PHONE_MIN_DIGITS = 10;
-const PHONE_MAX_DIGITS = 13;
 
 /**
  * Whether a phone-collection partial is still inside an open digit grouping:
- * mostly digits whose count is short of a plausible number, or a complete
- * count with a trailing separator or extension cue ("9876543210 - ...").
+ * mostly digits whose count is short of a plausible number, or any dictation
+ * the dialogue verdict does not yet call a complete callable number. There is
+ * deliberately no digit ceiling: an over-long dictation (country code plus
+ * regrouped repeats plus extension cues) stays open until the dialogue layer
+ * judges it complete, instead of a count forcing "complete" mid-number.
  */
-function isOpenPhoneGrouping(trimmed: string, raw: string): boolean {
+function isOpenPhoneGrouping(
+  trimmed: string,
+  raw: string,
+  phoneComplete: PhoneCompletenessResolver = isPhoneDictationComplete,
+): boolean {
   const digitChars = (trimmed.match(/\d/g) ?? []).length;
   let wordDigits = 0;
   let contentWords = 0;
@@ -386,7 +393,7 @@ function isOpenPhoneGrouping(trimmed: string, raw: string): boolean {
   // dictated number unless the digits dominate or nothing else is said.
   if (contentWords > 0 && digits < 3) return false;
   if (digits < PHONE_MIN_DIGITS) return true;
-  if (digits > PHONE_MAX_DIGITS) return false;
+  if (!phoneComplete(trimmed)) return true;
   return /[\s\-–—,(\[]$/.test(raw) || /\b(ext|x|extension)\.?$/i.test(trimmed);
 }
 
@@ -478,6 +485,12 @@ export function hasListContinuationCue(text: string): boolean {
 export interface FieldCollection {
   collecting?: boolean;
   collectingPhone?: boolean;
+  /**
+   * The dialogue layer's language judgement over a phone-dictation partial.
+   * Defaults to the dialogue verdict; injectable so tests can count consults
+   * and prove the boundary never blocks on a network call.
+   */
+  phoneComplete?: PhoneCompletenessResolver;
 }
 
 /**
@@ -489,7 +502,7 @@ export interface FieldCollection {
  * all is complete: without evidence the adaptive pause alone owns the
  * boundary.
  */
-export function isSemanticallyComplete(text: string, opts: { collectingPhone?: boolean } = {}): boolean {
+export function isSemanticallyComplete(text: string, opts: FieldCollection = {}): boolean {
   const trimmed = text.trim();
   if (trimmed.length === 0) return true;
   const tokens = tokenize(trimmed);
@@ -504,7 +517,7 @@ export function isSemanticallyComplete(text: string, opts: { collectingPhone?: b
     if (key === 'no' && tokens.length > 1) return false;
     return true;
   }
-  if (opts.collectingPhone === true && isOpenPhoneGrouping(trimmed, text)) return false;
+  if (opts.collectingPhone === true && isOpenPhoneGrouping(trimmed, text, opts.phoneComplete)) return false;
   const last = tokens[tokens.length - 1]!;
   if (CONTINUATION_TOKENS.has(last)) return false;
   if (tokens.length >= 2) {

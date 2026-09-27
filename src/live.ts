@@ -22,6 +22,7 @@ import {
   DialogueReducer,
   emptyDialogueState,
   isAvailabilityIntent,
+  isPhoneDictationComplete,
   parseAvailabilityBlock,
   spokenDate,
   spokenTime,
@@ -771,10 +772,15 @@ export class LiveCallSession {
   private setDialogue(state: DialogueState): void {
     this.dialogue = state;
     const collecting = state.phase === 'collecting-patient';
-    this.turnTaking.observeDialogueState(
+    const field: FieldCollection = {
       collecting,
-      collecting && state.patient.name !== undefined && state.patient.phone === undefined,
-    );
+      collectingPhone: collecting && state.patient.name !== undefined && state.patient.phone === undefined,
+      // The boundary's phone question is the dialogue layer's language
+      // judgement, consulted synchronously from its per-partial cache: no
+      // assistant round-trip ever happens on the silence-frame path.
+      phoneComplete: isPhoneDictationComplete,
+    };
+    this.turnTaking.observeDialogueState(field);
   }
 
   /** Queue a whole logical response behind whatever is already playing. */
