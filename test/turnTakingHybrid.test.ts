@@ -229,4 +229,42 @@ describe('hybrid detector boundaries', () => {
     const emittedAt = await framesToEmit(h, 'silence', 100);
     assert.equal(emittedAt, 15);
   });
+
+  it('holds a complete sentence with list cues past the floor and resumes as one Turn', async () => {
+    const h = harness();
+    await h.feed(Array<Mark>(15).fill('speech'));
+    h.turnTaking.observePartial('I also wanted to ask about the fee');
+    // A 400 ms pause, past the 300 ms floor: the list cue ("also") holds the
+    // boundary for one extra bounded beat instead of endpointing mid-list.
+    await h.feed(Array<Mark>(20).fill('silence'));
+    assert.equal(h.utterances.length, 0, 'a mid-list sentence pause does not cut');
+    await h.feed(Array<Mark>(10).fill('speech'));
+    h.turnTaking.observePartial('I also wanted to ask about the fee and whether you have parking');
+    const emittedAt = await framesToEmit(h, 'silence', 100);
+    // The resumed finish still carries "also", so it endpoints at the bounded
+    // window (floor 300 ms + 800 ms): this is the measured one-beat cost of a
+    // finished list-cued sentence.
+    assert.equal(emittedAt, 55, 'the finished list-cued sentence costs one bounded beat');
+    assert.equal(h.utterances.length, 1, 'both speech runs belong to one Turn');
+  });
+
+  it('endpoints a list-cued sentence when the continuation never comes', async () => {
+    const h = harness();
+    await h.feed(Array<Mark>(15).fill('speech'));
+    h.turnTaking.observePartial('I also wanted to ask about the fee');
+    // Floor 300 ms + the 800 ms list window = 1100 ms = 55 frames: the hold
+    // is bounded, so a finished list costs one short beat, never an open hold.
+    const emittedAt = await framesToEmit(h, 'silence', 200);
+    assert.equal(emittedAt, 55, 'the list hold releases at the bounded window');
+    assert.equal(h.utterances.length, 1);
+  });
+
+  it('endpoints a complete sentence without list cues at the floor', async () => {
+    const h = harness();
+    await h.feed(Array<Mark>(15).fill('speech'));
+    h.turnTaking.observePartial('I wanted to ask about the fee');
+    const emittedAt = await framesToEmit(h, 'silence', 100);
+    assert.equal(emittedAt, 15, 'no list cue, no extra hold');
+    assert.equal(h.utterances.length, 1);
+  });
 });

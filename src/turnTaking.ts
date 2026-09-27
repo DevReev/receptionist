@@ -1,7 +1,7 @@
 import { decodeMulaw } from './mulaw.ts';
 import { classifyPartial, type PartialClass } from './backchannel.ts';
 import { EchoGate, type EchoDecision, type EchoGateOptions } from './echoGate.ts';
-import { AdaptivePause, HYBRID_DEFAULTS, isSemanticallyComplete } from './hybridDetector.ts';
+import { AdaptivePause, HYBRID_DEFAULTS, hasListContinuationCue, isSemanticallyComplete } from './hybridDetector.ts';
 import {
   BARGE_IN_DEFAULTS,
   type BackchannelEvent,
@@ -417,9 +417,11 @@ export class TurnTaking {
    * Whether the utterance under capture should end here. The local detector
    * waits out the Caller-adaptive pause plus the dialogue floor, with the
    * partial's semantic evidence holding it open only until the emergency cap.
-   * A partial that stopped updating is provider lag, not a mid-thought pause:
-   * past the staleness budget it counts as no evidence, so the adaptive pause
-   * owns the boundary instead of pinning it near the cap.
+   * A complete sentence that frames a larger list or question pair holds one
+   * extra bounded beat past the floor for the continuation. A partial that
+   * stopped updating is provider lag, not a mid-thought pause: past the
+   * staleness budget it counts as no evidence, so the adaptive pause owns
+   * the boundary instead of pinning it near the cap.
    */
   private listeningBoundaryDue(): boolean {
     const trailingMs = toMs(this.trailingSilenceSamples);
@@ -430,7 +432,13 @@ export class TurnTaking {
       this.semanticBoundaries ? this.adaptivePause.floorMs : HYBRID_DEFAULTS.noPartialsFloorMs,
       this.dialogueFloorMs,
     );
-    if (trailingMs < floorMs) return false;
+    // A mid-list pause lands on a complete sentence, so completeness alone
+    // would cut it; the list hold keeps it one Turn. Incomplete partials
+    // already hold via the completeness check below, and the emergency and
+    // stale caps still bound this hold above.
+    const holdMs =
+      floorMs + (hasListContinuationCue(this.lastPartialText) ? HYBRID_DEFAULTS.listContinuationMs : 0);
+    if (trailingMs < holdMs) return false;
     if (trailingMs >= HYBRID_DEFAULTS.emergencyMs) return true;
     if (toMs(this.processedSamples - this.lastPartialAtSamples) > HYBRID_DEFAULTS.stalePartialMs) return true;
     return isSemanticallyComplete(this.lastPartialText, { collectingPhone: this.collectingPhone });

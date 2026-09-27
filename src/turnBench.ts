@@ -292,6 +292,12 @@ export interface CallerPause {
   afterMs: number;
   /** Pause length in milliseconds. */
   ms: number;
+  /**
+   * The provider's partial up to this pause: mid-utterance only the prefix
+   * has been heard, so the boundary must see the prefix rather than the full
+   * sentence while the pause is held. Defaults to the full text.
+   */
+  partial?: string;
 }
 
 export interface CallerTurnOptions {
@@ -613,12 +619,16 @@ class ScenarioRunner implements TurnBenchContext {
     const start = this.frame;
     const pauses = [...(opts.pauses ?? [])].sort((a, b) => a.afterMs - b.afterMs);
     let spoken = 0;
-    this.declarations.push({ startFrame: start, text });
-    for (const pause of pauses) {
+    // The provider's partial mid-utterance covers only the words so far: each
+    // pause stages its prefix so the boundary sees what the live channel
+    // would have shown, not the full sentence up front.
+    this.declarations.push({ startFrame: start, text: pauses[0]?.partial ?? text });
+    for (const [index, pause] of pauses.entries()) {
       const before = Math.max(0, Math.round(pause.afterMs / FRAME_MS) - spoken);
       await this.feed('speech', before);
       await this.feed('silence', Math.round(pause.ms / FRAME_MS));
       spoken += before;
+      this.declarations.push({ startFrame: this.frame, text: pauses[index + 1]?.partial ?? text });
     }
     await this.feed('speech', Math.max(0, frames - spoken));
     this.observations.utterances.push({ span: { startFrame: start, endFrame: this.frame }, text });
@@ -868,7 +878,7 @@ export function formatTurnBenchReport(
   const lines = [
     `turn-taking bench  build ${meta.build}  fixtures ${meta.fixtures}`,
     `policy: silence ${meta.policy.silenceMs}ms (Barge-in candidate reset)  min-speech ${meta.policy.minSpeechMs}ms  max-utterance ${meta.policy.maxUtteranceMs}ms  threshold ${meta.policy.threshold}  dip ${meta.policy.latchDipMs}ms`,
-    `detector: hybrid local  adaptive pause ${HYBRID_DEFAULTS.minPauseMs}-${HYBRID_DEFAULTS.maxPauseMs}ms (default ${HYBRID_DEFAULTS.defaultPauseMs}ms, emergency ${HYBRID_DEFAULTS.emergencyMs}ms)  field floor ${HYBRID_DEFAULTS.dialogueFloorMs}ms`,
+    `detector: hybrid local  adaptive pause ${HYBRID_DEFAULTS.minPauseMs}-${HYBRID_DEFAULTS.maxPauseMs}ms (default ${HYBRID_DEFAULTS.defaultPauseMs}ms, emergency ${HYBRID_DEFAULTS.emergencyMs}ms)  field floor ${HYBRID_DEFAULTS.dialogueFloorMs}ms  list-hold ${HYBRID_DEFAULTS.listContinuationMs}ms`,
     `barge-in: min-speech ${meta.bargeInMinSpeechMs}ms  dip-tolerance ${meta.bargeInDipToleranceMs}ms  confirm ${meta.bargeInConfirmMs}ms`,
     `speculation: ${meta.speculation ? 'on (clearly non-booking partials answer early)' : 'off (every reply waits for its final)'}`,
   ];
@@ -998,6 +1008,22 @@ export function defaultTurnBenchScenarios(echoVariants: EchoVariant[] = DEFAULT_
         await callerTurn(ctx);
         await ctx.interrupt('no wait', 40, { echo: doubleTalkVariant });
         await ctx.silence(160);
+      },
+    },
+    {
+      // Live call CA132… turns 2/3 (ticket 12): a ~1 s pause lands on a
+      // complete sentence inside a two-question list ("I also wanted to ask
+      // about the fee — [pause] — and whether you have parking"). The
+      // list-continuation hold keeps the pause inside one Turn; without it
+      // the boundary endpoints mid-list and the reply is a false cut.
+      // Appended last so the fixture-indexed scenarios above keep their audio.
+      name: 'mid-list-sentence-pause',
+      run: async (ctx) => {
+        await ctx.call('I also wanted to ask about the fee and whether you have parking', 80, {
+          pauses: [{ afterMs: 700, ms: 1000, partial: 'I also wanted to ask about the fee' }],
+        });
+        await ctx.awaitReply();
+        await ctx.silence(120);
       },
     },
   ];

@@ -30,6 +30,15 @@ export const HYBRID_DEFAULTS = {
   /** Floor while the dialogue collects the Patient's name or phone. */
   dialogueFloorMs: 600,
   /**
+   * Extra hold past the adaptive floor when a complete sentence carries
+   * list/question-pair cues ("I also wanted to ask about the fee — [pause]
+   * — and whether you have parking"): the pause may be mid-list, not a Turn
+   * end. Bounded well under the stale budget, so a finished list costs one
+   * short beat, never an open hold; incomplete partials already hold via
+   * completeness, and the emergency and stale caps still bound this above.
+   */
+  listContinuationMs: 800,
+  /**
    * A partial older than this is provider lag, not a mid-thought pause: the
    * boundary treats it as no evidence instead of holding to the emergency
    * cap. It must clear the longest mid-utterance pause the bench holds open
@@ -379,6 +388,50 @@ function isOpenPhoneGrouping(trimmed: string, raw: string): boolean {
   if (digits < PHONE_MIN_DIGITS) return true;
   if (digits > PHONE_MAX_DIGITS) return false;
   return /[\s\-–—,(\[]$/.test(raw) || /\b(ext|x|extension)\.?$/i.test(trimmed);
+}
+
+/**
+ * Words that frame a partial as one item of a larger list or question pair:
+ * additives ("also", "another", "both", "plus"), enumerators ("first",
+ * "second", "third"), and the plural ("questions"). Deliberately narrow:
+ * single-question phrasing ("I wanted to ask about the fee", "do you have
+ * parking") carries none of these and endpoints at the floor. Bare "and" is
+ * excluded on purpose: mid-list it arrives with the continuation ("... and
+ * whether ..."), so it cannot predict one, and elsewhere it joins single
+ * items ("the fee and parking").
+ */
+const LIST_CONTINUATION_TOKENS: ReadonlySet<string> = new Set([
+  'also',
+  'additionally',
+  'another',
+  'both',
+  'plus',
+  'questions',
+  'first',
+  'second',
+  'third',
+]);
+
+/** Multi-word additive framing ("as well") that single tokens miss. */
+const LIST_CONTINUATION_PHRASES: ReadonlyArray<readonly string[]> = [['as', 'well']];
+
+/**
+ * Whether the partial frames itself as one item of a larger list or question
+ * pair. A hold cue only, never completeness evidence: a complete sentence
+ * with one of these holds the boundary one extra bounded beat past the floor
+ * so a mid-list pause ("I also wanted to ask about the fee — [pause] — and
+ * whether you have parking") stays one Turn. Empty text carries no cue.
+ */
+export function hasListContinuationCue(text: string): boolean {
+  const tokens = tokenize(text);
+  if (tokens.some((token) => LIST_CONTINUATION_TOKENS.has(token))) return true;
+  return LIST_CONTINUATION_PHRASES.some((phrase) => {
+    if (phrase.length > tokens.length) return false;
+    for (let i = 0; i + phrase.length <= tokens.length; i++) {
+      if (phrase.every((word, index) => tokens[i + index] === word)) return true;
+    }
+    return false;
+  });
 }
 
 /**

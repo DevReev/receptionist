@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { AdaptivePause, adaptivePauseMs, isSemanticallyComplete } from '../src/hybridDetector.ts';
+import { AdaptivePause, adaptivePauseMs, hasListContinuationCue, isSemanticallyComplete } from '../src/hybridDetector.ts';
 
 describe('adaptive pause math', () => {
   it('defaults to 300 ms until three pauses are observed', () => {
@@ -133,5 +133,33 @@ describe('semantic completeness from partials', () => {
     assert.equal(isSemanticallyComplete('John Smith', { collectingPhone: true }), true);
     // A digit inside a content sentence is not a dictated number.
     assert.equal(isSemanticallyComplete('I have 2 kids', { collectingPhone: true }), true);
+  });
+});
+
+describe('list-continuation cues (ticket 12)', () => {
+  it('flags only partials that frame a larger list or question pair', () => {
+    const cued = [
+      'I also wanted to ask about the fee',
+      'I have another question about parking',
+      'my first question is about the fee',
+      'my second question is about parking',
+      'do you have parking as well',
+      'I have two questions about the visit',
+    ];
+    for (const text of cued) {
+      assert.equal(hasListContinuationCue(text), true, `cued: ${text}`);
+    }
+    const uncued = [
+      '',
+      'what are your hours',
+      'I wanted to ask about the fee',
+      'I wanted to ask about the fee and parking',
+      'do you have parking',
+      'my name is John Smith',
+      'we are open on Saturday',
+    ];
+    for (const text of uncued) {
+      assert.equal(hasListContinuationCue(text), false, `uncued: ${text}`);
+    }
   });
 });

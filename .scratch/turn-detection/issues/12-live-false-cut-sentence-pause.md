@@ -17,8 +17,43 @@ explicit.
 
 **Blocked by:** None (report and capture retained; analysis in ticket 11).
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] The bench gains a mid-list sentence-pause case with the decided outcome pinned.
-- [ ] Implementation or scenario/gate fix per the decision, with rationale recorded.
-- [ ] `npm run turn-bench` false-cut and reply-latency bars hold; `npm test` passes.
+- [x] The bench gains a mid-list sentence-pause case with the decided outcome pinned.
+- [x] Implementation or scenario/gate fix per the decision, with rationale recorded.
+- [x] `npm run turn-bench` false-cut and reply-latency bars hold; `npm test` passes.
+
+## Comments
+
+Decision: bounded (a) — hold the boundary one extra short beat after a
+complete sentence ONLY when the partial frames a larger list/question pair.
+No merge-repair (b): joining Turns after the endpoint would delay the first
+reply and complicate transcription commit, while the hold costs nothing when
+the caller keeps talking.
+
+Implementation: `hasListContinuationCue` (`src/hybridDetector.ts`) flags
+additives (`also`, `additionally`, `another`, `both`, `plus`), enumerators
+(`first`, `second`, `third`), the plural (`questions`), and the phrase `as
+well`. Bare `and` is excluded: mid-list it arrives with the continuation,
+so it cannot predict one. `listeningBoundaryDue` (`src/turnTaking.ts`)
+extends the floor by `listContinuationMs` (800 ms) on a cued partial;
+emergency (1500 ms) and stale-partial (1300 ms) caps still bound it above,
+and incomplete partials already hold via completeness. Single-question
+phrasing without cues (`I wanted to ask about the fee`) still endpoints at
+the floor — pinned by test.
+
+Timing evidence (ticket pointer): the capture has no per-partial text
+timeline, only endpoint traces (turn 2: speech 1680 ms, trailing 900 ms;
+turn 1/4/5 endpoint at 300/200/200 ms). The 900 ms trailing over a ~1 s
+wall pause is consistent with speakerphone VAD flicker: noisy pause frames
+scored as speech reset the trailing counter (stretching wall time) while
+training the adaptive floor upward mid-pause. Either reading (complete
+sentence endpointed at a flicker-raised floor, or an incomplete mid-pause
+revision released by the stale clock) is covered by the same bounded hold:
+floor + 800 ms (1100–1400 ms trailing) spans the ~1 s live pause, while a
+finished list costs exactly one short beat.
+
+Measured cost: new bench scenario `mid-list-sentence-pause` replies at
+1080 ms (≈ floor + window); aggregate reply p50 280 / p95 1300 ms and all
+other bars unchanged. Bench: false-cut 0/13, echo-gate PASS, self-echo 0.
+`npm test`: 526 pass, 0 fail.
