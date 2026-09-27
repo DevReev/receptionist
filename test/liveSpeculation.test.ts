@@ -69,6 +69,7 @@ function scriptedAssistant(replyFor: (ctx: AssistantContext) => string): {
 
 /** Scripted realtime channel whose finalize can be held open by the test. */
 class FakeSpecStt implements RealtimeStt {
+  readonly partials = true;
   private partialHandler: ((partial: PartialTranscript) => void) | null = null;
   private pending: ((tx: { text: string; noSpeech: boolean }) => void) | null = null;
   private readonly finals: { text: string; noSpeech: boolean }[];
@@ -264,6 +265,31 @@ describe('live speculative replies (ticket 09)', () => {
       ['caller:what are your hours', 'receptionist:We are open Monday to Friday.'],
     );
     assert.equal(speculationEvents(h.traces, 'speculation-kept').length, 1);
+    h.live.close('test');
+  });
+
+  it('traces partial counts and latency, never raw partial text', async () => {
+    const stt = new FakeSpecStt();
+    const { assistant } = scriptedAssistant(() => 'We are open Monday to Friday.');
+    const h = liveSession('CAspec10', { stt, assistant });
+
+    await speak(h, 'what are your hours');
+    await waitFor(() => h.texts.length > 0, 'speculative reply audio');
+    stt.resolveFinal('what are your hours');
+    await h.live.flush();
+    await waitFor(() => h.live.currentPhase === 'LISTENING', 'listening after the reply');
+
+    assert.equal(
+      JSON.stringify(h.traces).includes('what are your hours'),
+      false,
+      'raw partial text never reaches traces',
+    );
+    const started = speculationEvents(h.traces, 'speculation-start');
+    assert.equal(started.length, 1);
+    assert.equal(started[0]!['chars'], 'what are your hours'.length, 'the start trace carries the partial size');
+    const kept = speculationEvents(h.traces, 'speculation-kept');
+    assert.equal(kept.length, 1);
+    assert.equal(typeof kept[0]!['ms'], 'number', 'the kept trace carries the latency');
     h.live.close('test');
   });
 

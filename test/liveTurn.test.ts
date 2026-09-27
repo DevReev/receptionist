@@ -745,6 +745,7 @@ describe('live full Turn (ticket 11)', () => {
     const { tts } = stubTts();
     const events: string[] = [];
     const realtime: RealtimeStt = {
+      partials: false,
       pushAudio: () => events.push('push'),
       speechStart: () => events.push('start'),
       finalize: async () => {
@@ -830,6 +831,7 @@ describe('live full Turn (ticket 11)', () => {
     let open = false;
     const events: string[] = [];
     const realtime: RealtimeStt = {
+      partials: false,
       pushAudio: () => {},
       speechStart: () => {
         open = true;
@@ -878,6 +880,7 @@ describe('live full Turn (ticket 11)', () => {
     const { tts } = stubTts();
     const phases: Record<string, unknown>[] = [];
     const realtime: RealtimeStt = {
+      partials: false,
       pushAudio: () => {},
       speechStart: () => {},
       finalize: async () => {

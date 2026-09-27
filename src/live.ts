@@ -460,15 +460,17 @@ export class LiveCallSession {
       (opts.waitForPlayback
         ? () => opts.waitForPlayback!().then((): PlaybackResult => ({ outcome: 'played', mark: '' }))
         : undefined);
+    const realtimePartials = opts.realtime?.partials === true;
     this.turnTaking = new TurnTaking({
       vad: opts.vad,
       policy: opts.policy,
       bargeInMinSpeechMs: opts.bargeInMinSpeechMs,
       bargeInDipToleranceMs: opts.bargeInDipToleranceMs,
-      partialSemantics: opts.partialSemantics ?? typeof opts.realtime?.onPartial === 'function',
+      // The provider's declaration, never the presence of a callback, decides
+      // whether partials feed the semantic boundary and Backchannel semantics.
+      partialSemantics: opts.partialSemantics ?? realtimePartials,
       bargeInConfirmMs: opts.bargeInConfirmMs,
-      // Only a channel that exposes partials can feed the semantic boundary.
-      semanticBoundaries: typeof opts.realtime?.onPartial === 'function',
+      semanticBoundaries: realtimePartials,
       echoGate: opts.echoGate,
       observer: {
         onUtterance: (utterance, stats) => {
@@ -476,12 +478,13 @@ export class LiveCallSession {
         },
         onBargeIn: (event) => this.handleBargeIn(event),
         onBackchannel: (event) => {
-          // Absorbed and traced only: no Turn, no history, no reply.
+          // Absorbed and traced only: no Turn, no history, no reply. The trace
+          // carries the evidence's size, never the Patient-sensitive text.
           this.trace?.({
             component: 'call',
             event: 'backchannel',
             durationMs: event.durationMs,
-            text: event.text,
+            chars: event.text.length,
           });
         },
         onSpeechStart: () => {
@@ -529,10 +532,13 @@ export class LiveCallSession {
     // A stable booking partial may start a read-only availability prefetch
     // before the Caller finishes; it can never write a Booking. The same
     // partials feed Backchannel classification while the floor is watched.
-    opts.realtime?.onPartial?.((partial) => {
-      this.turnTaking.observePartial(partial.text);
-      this.handlePartial(partial.text);
-    });
+    // Only a provider that declares its partial channel is subscribed.
+    if (realtimePartials) {
+      opts.realtime?.onPartial?.((partial) => {
+        this.turnTaking.observePartial(partial.text);
+        this.handlePartial(partial.text);
+      });
+    }
   }
 
   get isClosed(): boolean {
@@ -949,9 +955,9 @@ export class LiveCallSession {
     const decision = classifySpeculation(text, { names: this.cueNames });
     if (this.speculation) {
       if (!decision.speculative) {
-        this.abortSpeculation(this.speculation, 'booking-cue', text, decision.cue);
+        this.abortSpeculation(this.speculation, 'booking-cue', decision.cue);
       } else if (!partialAgrees(this.speculation.partial, text)) {
-        this.abortSpeculation(this.speculation, 'rewritten', text);
+        this.abortSpeculation(this.speculation, 'rewritten');
         if (this.canSpeculate()) this.startSpeculation(text, decision);
       }
     } else if (decision.speculative && this.canSpeculate()) {
@@ -995,7 +1001,6 @@ export class LiveCallSession {
     this.trace?.({
       component: 'call',
       event: 'speculation-start',
-      partial,
       reason: decision.reason,
       chars: partial.length,
     });
@@ -1029,15 +1034,10 @@ export class LiveCallSession {
 
   /**
    * Discard a speculation: abort its model stream, clear any audio it already
-   * played, and make sure its text can never reach history. `finalText` is the
-   * final that defeated it, when there was one.
+   * played, and make sure its text can never reach history. The trace keeps a
+   * count and latency, never the Patient-sensitive partial itself.
    */
-  private abortSpeculation(
-    spec: PendingSpeculation,
-    reason: SpeculationAbort,
-    finalText?: string,
-    cue?: string,
-  ): void {
+  private abortSpeculation(spec: PendingSpeculation, reason: SpeculationAbort, cue?: string): void {
     if (this.speculation === spec) this.speculation = null;
     spec.controller.abort(reason);
     if (this.turnAbort === spec.controller) this.turnAbort = null;
@@ -1054,8 +1054,7 @@ export class LiveCallSession {
       event: 'speculation-aborted',
       reason,
       cue,
-      partial: spec.partial,
-      final: finalText,
+      chars: spec.partial.length,
       ms: Date.now() - spec.startedAt,
     });
     this.logPhase('speculation', 'aborted', { reason, chars: spec.partial.length });
@@ -1077,7 +1076,7 @@ export class LiveCallSession {
         component: 'call',
         event: 'speculation-aborted',
         reason: 'generation-error',
-        partial: spec.partial,
+        chars: spec.partial.length,
         detail: err instanceof Error ? err.message : String(err),
         ms: Date.now() - spec.startedAt,
       });
@@ -1464,7 +1463,6 @@ export class LiveCallSession {
           component: 'call',
           event: 'speculation-kept',
           turn,
-          partial: speculation.partial,
           chars: text.length,
           ms: Date.now() - speculation.startedAt,
         });
@@ -1474,7 +1472,6 @@ export class LiveCallSession {
         this.abortSpeculation(
           speculation,
           !agrees ? 'final-mismatch' : finalDecision.speculative ? 'deterministic-turn' : 'booking-final',
-          text,
           finalDecision.speculative ? undefined : finalDecision.cue,
         );
       }

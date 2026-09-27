@@ -5,6 +5,8 @@ import { LiveCallSession } from '../src/live.ts';
 import type { Utterance } from '../src/endpoint.ts';
 import type { Assistant, Transcription } from '../src/app.ts';
 import type { PartialTranscript, RealtimeStt } from '../src/realtimeStt.ts';
+import { OpenAiRealtimeStt } from '../src/openaiRealtime.ts';
+import type { RealtimeSocket } from '../src/ws.ts';
 import { FRAME_BYTES, SILENCE_FRAME, SPEECH_FRAME, byteVad } from './fakeStream.ts';
 import type { Tts } from '../src/tts.ts';
 
@@ -42,13 +44,19 @@ const assistant: Assistant = {
 
 /** Channel with scripted partials; the local detector owns the boundaries. */
 class FakeHybridStt implements RealtimeStt {
+  readonly partials: boolean;
   finalizeCalls = 0;
   speechStartCalls = 0;
   private partialHandler: ((partial: PartialTranscript) => void) | null = null;
   private readonly finals: Transcription[];
 
-  constructor(opts: { finals?: Transcription[] } = {}) {
+  constructor(opts: { finals?: Transcription[]; partials?: boolean } = {}) {
     this.finals = opts.finals ?? [];
+    this.partials = opts.partials ?? true;
+  }
+
+  get partialsRegistered(): boolean {
+    return this.partialHandler !== null;
   }
 
   pushAudio(): void {}
@@ -74,9 +82,52 @@ class FakeHybridStt implements RealtimeStt {
   close(): void {}
 }
 
+/** Socket fake for the real adapter: drives deltas from the test, no network. */
+class ScriptedSocket implements RealtimeSocket {
+  readonly sent: string[] = [];
+  private openCb: (() => void) | null = null;
+  private messageCb: ((data: string) => void) | null = null;
+  private closeCb: ((code: number, reason: string) => void) | null = null;
+  private errorCb: ((err: Error) => void) | null = null;
+
+  send(data: string): void {
+    this.sent.push(data);
+  }
+
+  close(): void {}
+
+  onOpen(cb: () => void): void {
+    this.openCb = cb;
+  }
+
+  onMessage(cb: (data: string) => void): void {
+    this.messageCb = cb;
+  }
+
+  onClose(cb: (code: number, reason: string) => void): void {
+    this.closeCb = cb;
+  }
+
+  onError(cb: (err: Error) => void): void {
+    this.errorCb = cb;
+  }
+
+  peerOpen(): void {
+    this.openCb?.();
+  }
+
+  peerMessage(payload: unknown): void {
+    this.messageCb?.(JSON.stringify(payload));
+  }
+
+  commits(): number {
+    return this.sent.filter((entry) => (JSON.parse(entry) as { type?: string }).type === 'input_audio_buffer.commit').length;
+  }
+}
+
 function liveSession(opts: {
   callSid: string;
-  stt: FakeHybridStt;
+  stt: RealtimeStt;
   transcriberText?: string;
 }): { live: LiveCallSession; texts: string[] } {
   const { tts, texts } = stubTts();
@@ -105,6 +156,7 @@ describe('live hybrid detector (ticket 07)', () => {
 
     for (let i = 0; i < 15; i += 1) await live.receiveAudio(SPEECH_FRAME);
     stt.partial('what are your hours');
+    assert.equal(stt.partialsRegistered, true, 'the declared partial channel is subscribed');
     for (let i = 0; i < 14; i += 1) await live.receiveAudio(SILENCE_FRAME);
     assert.equal(stt.speechStartCalls, 1, 'the local latch opens the utterance');
     assert.equal(stt.finalizeCalls, 0, '280 ms of trailing silence is still inside the floor');
@@ -156,6 +208,82 @@ describe('live hybrid detector (ticket 07)', () => {
     await live.receiveAudio(SILENCE_FRAME);
     await live.flush();
     assert.equal(stt.finalizeCalls, 1, '1500 ms of trailing silence emits regardless');
+    live.close('test');
+  });
+
+  it('uses the declared partial channel, never the onPartial callback, to pick the floor', async () => {
+    // The provider exposes an onPartial method but declares no partial channel:
+    // the session must not subscribe to it or trust partial evidence.
+    const stt = new FakeHybridStt({
+      partials: false,
+      finals: [{ text: 'what are your hours', noSpeech: false }],
+    });
+    const { live } = liveSession({ callSid: 'CAhyb4', stt });
+
+    for (let i = 0; i < 15; i += 1) await live.receiveAudio(SPEECH_FRAME);
+    stt.partial('what are your hours');
+    assert.equal(stt.partialsRegistered, false, 'a declared-no-partials provider is never subscribed');
+    for (let i = 0; i < 24; i += 1) await live.receiveAudio(SILENCE_FRAME);
+    assert.equal(stt.finalizeCalls, 0, '480 ms of trailing silence is inside the no-partials floor');
+    await live.receiveAudio(SILENCE_FRAME);
+    await live.flush();
+    assert.equal(stt.finalizeCalls, 1, 'the fixed no-partials floor owns the boundary');
+    live.close('test');
+  });
+
+  it('holds an incomplete partial past the adaptive floor until it completes', async () => {
+    const stt = new FakeHybridStt({
+      finals: [{ text: 'I would like to book an appointment for Monday', noSpeech: false }],
+    });
+    const { live } = liveSession({ callSid: 'CAhyb5', stt });
+
+    for (let i = 0; i < 15; i += 1) await live.receiveAudio(SPEECH_FRAME);
+    stt.partial('I would like to book an appointment for');
+    for (let i = 0; i < 19; i += 1) await live.receiveAudio(SILENCE_FRAME);
+    assert.equal(stt.finalizeCalls, 0, 'the continuation cue holds past the 300 ms adaptive floor');
+    for (let i = 0; i < 10; i += 1) await live.receiveAudio(SPEECH_FRAME);
+    stt.partial('I would like to book an appointment for Monday');
+    for (let i = 0; i < 14; i += 1) await live.receiveAudio(SILENCE_FRAME);
+    assert.equal(stt.finalizeCalls, 0, '280 ms of trailing silence is still inside the floor');
+    await live.receiveAudio(SILENCE_FRAME);
+    await live.flush();
+    assert.equal(stt.finalizeCalls, 1, 'the completed thought fires at the adaptive floor');
+    live.close('test');
+  });
+
+  it('runs semantic boundaries for a session built on the OpenAI Realtime adapter', async () => {
+    const socket = new ScriptedSocket();
+    const stt = new OpenAiRealtimeStt({
+      config: {
+        apiKey: 'sk-openai',
+        url: 'wss://api.openai.com/v1/realtime?intent=transcription',
+        model: 'gpt-live-transcribe',
+        delay: 'minimal',
+      },
+      connect: () => socket,
+    });
+    socket.peerOpen();
+    const { live } = liveSession({ callSid: 'CAoai1', stt });
+
+    for (let i = 0; i < 15; i += 1) await live.receiveAudio(SPEECH_FRAME);
+    socket.peerMessage({
+      type: 'conversation.item.input_audio_transcription.delta',
+      item_id: 'item_1',
+      delta: 'what are your hours',
+    });
+    for (let i = 0; i < 14; i += 1) await live.receiveAudio(SILENCE_FRAME);
+    assert.equal(socket.commits(), 0, '280 ms of trailing silence is inside the adaptive floor');
+    await live.receiveAudio(SILENCE_FRAME);
+    await waitFor(() => socket.commits() === 1, 'the adapter commit');
+    socket.peerMessage({ type: 'input_audio_buffer.committed', item_id: 'item_1' });
+    socket.peerMessage({
+      type: 'conversation.item.input_audio_transcription.completed',
+      item_id: 'item_1',
+      transcript: 'what are your hours',
+    });
+    await live.flush();
+    assert.equal(socket.commits(), 1, 'the adapter declaration puts the semantic boundary in charge');
+    await waitFor(() => live.currentPhase === 'LISTENING', 'the reply');
     live.close('test');
   });
 });

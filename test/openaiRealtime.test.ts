@@ -90,6 +90,10 @@ function completions(socket: FakeSocket, transcript: string): void {
   socket.peerMessage({ type: 'conversation.item.input_audio_transcription.completed', item_id: 'item_1', transcript });
 }
 
+function delta(socket: FakeSocket, itemId: string, text: string): void {
+  socket.peerMessage({ type: 'conversation.item.input_audio_transcription.delta', item_id: itemId, delta: text });
+}
+
 describe('OpenAiRealtimeStt', () => {
   it('connects to the transcription endpoint and configures pcmu with no turn detection', () => {
     const h = harness({ keywords: ['Bobby Clinic', 'Bobby Hospital'], languages: ['en'] });
@@ -137,6 +141,84 @@ describe('OpenAiRealtimeStt', () => {
     h.socket.peerMessage({ type: 'conversation.item.input_audio_transcription.delta', item_id: 'item_1', delta: ' your hours?' });
     completions(h.socket, 'What are your hours?');
     assert.deepEqual(await final, { text: 'What are your hours?', noSpeech: false });
+  });
+
+  it('resolves the final from a stream of deltas after the commit lands', async () => {
+    const h = harness();
+    assert.equal(h.stt.partials, true, 'the adapter declares its partial channel');
+    h.socket.peerOpen();
+    const partials: string[] = [];
+    h.stt.onPartial((partial) => partials.push(partial.text));
+    h.stt.pushAudio(Buffer.from([1, 2, 3, 4]));
+    h.stt.speechStart();
+    const final = h.stt.finalize();
+    h.socket.peerMessage({ type: 'input_audio_buffer.committed', item_id: 'item_1' });
+    delta(h.socket, 'item_1', 'What are');
+    delta(h.socket, 'item_1', ' your hours?');
+    assert.deepEqual(partials, ['What are', 'What are your hours?'], 'deltas emit cumulative text');
+    completions(h.socket, 'What are your hours?');
+    assert.deepEqual(await final, { text: 'What are your hours?', noSpeech: false });
+    const traced = h.traces.find((event) => event.component === 'stt' && event.event === 'final');
+    assert.equal(traced?.['partials'], 2, 'the final trace carries the partial count');
+    assert.equal(JSON.stringify(h.traces).includes('What are'), false, 'no raw partial text reaches traces');
+  });
+
+  it('emits partials from the live model before the commit event lands', async () => {
+    const h = harness();
+    h.socket.peerOpen();
+    const partials: string[] = [];
+    h.stt.onPartial((partial) => partials.push(partial.text));
+    h.stt.pushAudio(Buffer.from([1, 2, 3, 4]));
+    h.stt.speechStart();
+    delta(h.socket, 'item_1', 'What are');
+    delta(h.socket, 'item_1', ' your hours?');
+    assert.deepEqual(partials, ['What are', 'What are your hours?']);
+    const final = h.stt.finalize();
+    h.socket.peerMessage({ type: 'input_audio_buffer.committed', item_id: 'item_1' });
+    completions(h.socket, 'What are your hours?');
+    assert.deepEqual(await final, { text: 'What are your hours?', noSpeech: false });
+  });
+
+  it('never lets a finished item leak deltas into the next utterance', async () => {
+    const h = harness();
+    h.socket.peerOpen();
+    const partials: string[] = [];
+    h.stt.onPartial((partial) => partials.push(partial.text));
+    h.stt.pushAudio(Buffer.from([1, 2]));
+    h.stt.speechStart();
+    const first = h.stt.finalize();
+    h.socket.peerMessage({ type: 'input_audio_buffer.committed', item_id: 'item_1' });
+    delta(h.socket, 'item_1', 'what are');
+    delta(h.socket, 'item_1', ' your hours?');
+    completions(h.socket, 'what are your hours?');
+    assert.deepEqual(await first, { text: 'what are your hours?', noSpeech: false });
+
+    // The next utterance: late deltas from the finished item are dropped, and
+    // only the new item's deltas emit.
+    h.stt.pushAudio(Buffer.from([3, 4]));
+    h.stt.speechStart();
+    const second = h.stt.finalize();
+    h.socket.peerMessage({ type: 'input_audio_buffer.committed', item_id: 'item_2' });
+    delta(h.socket, 'item_1', ' STALE');
+    delta(h.socket, 'item_2', 'book ');
+    delta(h.socket, 'item_1', ' STALE AGAIN');
+    delta(h.socket, 'item_2', 'Wednesday');
+    assert.deepEqual(partials, ['what are', 'what are your hours?', 'book ', 'book Wednesday']);
+    completions(h.socket, 'book Wednesday');
+    assert.deepEqual(await second, { text: 'book Wednesday', noSpeech: false });
+  });
+
+  it('drops deltas for an item whose final already landed', () => {
+    const h = harness();
+    h.socket.peerOpen();
+    const partials: string[] = [];
+    h.stt.onPartial((partial) => partials.push(partial.text));
+    h.stt.speechStart();
+    h.stt.pushAudio(Buffer.from([1]));
+    delta(h.socket, 'item_1', 'hello');
+    completions(h.socket, 'hello');
+    delta(h.socket, 'item_1', ' again');
+    assert.deepEqual(partials, ['hello'], 'a finished item never emits again');
   });
 
   it('rejects without committing when the utterance held no audio', async () => {

@@ -13,13 +13,24 @@ export interface RealtimeStt {
   speechStart(): void;
   /** Our endpoint fired: finalize the utterance and resolve its transcript. */
   finalize(): Promise<Transcription>;
+  /**
+   * Explicit partial-channel capability. Declared, never inferred from the
+   * presence of an `onPartial` callback: the session wires semantic Turn
+   * boundaries and Backchannel classification only when the provider says it
+   * has a partial channel, and uses the no-partials floor otherwise.
+   */
+  readonly partials: boolean;
   /** Subscribe to partials for read-only speculation and Backchannel semantics. */
   onPartial?(handler: (partial: PartialTranscript) => void): void;
   /** Session over: release the socket. */
   close(): void;
 }
 
-/** Streaming partial for read-only speculation and early barge-in signals. */
+/**
+ * Streaming partial for read-only speculation, early barge-in signals, and the
+ * semantic Turn boundary. Providers that accumulate per conversation item emit
+ * cumulative text: each partial extends the previous one.
+ */
 export interface PartialTranscript {
   text: string;
 }

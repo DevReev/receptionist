@@ -1,5 +1,5 @@
 import type { Transcription } from './app.ts';
-import type { RealtimeStt } from './realtimeStt.ts';
+import type { PartialTranscript, RealtimeStt } from './realtimeStt.ts';
 import type { TraceFn } from './trace.ts';
 import { defaultSocket, type RealtimeSocket, type RealtimeSocketFactory } from './ws.ts';
 
@@ -25,21 +25,38 @@ const DEFAULT_PRE_ROLL_BYTES = 8000;
 /** 8 kHz mulaw: 8 bytes per millisecond. */
 const BYTES_PER_MS = 8;
 
+/** Read a non-empty string field off a parsed event; null when absent or mistyped. */
+function stringField(record: object, field: string): string | null {
+  const value = (record as Record<string, unknown>)[field];
+  return typeof value === 'string' && value.length > 0 ? value : null;
+}
+
 /**
  * One call's streaming transcription channel over OpenAI's Realtime API.
  *
  * The model rejects server turn detection, so the channel is manual: audio is
  * appended only between the local detector's speech start and its boundary,
- * keeping the billed audio close to the speech itself. `finalize` commits the
- * buffer and resolves on `conversation.item.input_audio_transcription.completed`.
+ * keeping the billed audio close to the speech itself. Transcription deltas
+ * stream while the Caller speaks; they accumulate per conversation item and
+ * emit through the partial channel, while `finalize` commits the buffer and
+ * resolves on `conversation.item.input_audio_transcription.completed`.
  */
 export class OpenAiRealtimeStt implements RealtimeStt {
+  /** The live transcription model streams deltas as speech arrives. */
+  readonly partials = true;
   private readonly socket: RealtimeSocket;
   private readonly finalTimeoutMs: number;
   private readonly preRollBytes: number;
   private readonly onTrace?: TraceFn;
   private readonly pendingAudio: Buffer[] = [];
   private readonly outbox: string[] = [];
+  /** Cumulative transcript per conversation item, emitted as deltas arrive. */
+  private readonly itemTexts = new Map<string, string>();
+  /** Item ids whose deltas must never emit again: completed or superseded. */
+  private readonly staleItems = new Set<string>();
+  /** The conversation item currently receiving transcription deltas. */
+  private activeItemId: string | null = null;
+  private partialHandler: ((partial: PartialTranscript) => void) | null = null;
   private pendingBytes = 0;
   private ready = false;
   private failed = false;
@@ -49,7 +66,8 @@ export class OpenAiRealtimeStt implements RealtimeStt {
   private utteranceBytes = 0;
   /** Audio appended over the whole call, for the cost trace. */
   private totalBytes = 0;
-  private partials = 0;
+  /** Admitted partials for the utterance under capture, for the final trace. */
+  private partialCount = 0;
   private speechStartedAt = 0;
   private waiting: {
     resolve: (tx: Transcription) => void;
@@ -120,14 +138,22 @@ export class OpenAiRealtimeStt implements RealtimeStt {
     if (typeof parsed !== 'object' || parsed === null) return;
     const event = (parsed as { type?: unknown }).type;
     if (event === 'input_audio_buffer.committed') {
-      this.onTrace?.({ component: 'stt', event: 'committed', itemId: (parsed as { item_id?: unknown }).item_id });
+      // The commit confirms which item is being transcribed; the live model
+      // may already have streamed deltas for it, so its accumulation is kept.
+      const itemId = stringField(parsed, 'item_id');
+      if (itemId !== null) this.adoptItem(itemId);
+      this.onTrace?.({ component: 'stt', event: 'committed', itemId });
       return;
     }
     if (event === 'conversation.item.input_audio_transcription.delta') {
-      this.partials += 1;
+      const itemId = stringField(parsed, 'item_id');
+      const text = stringField(parsed, 'delta');
+      if (itemId === null || text === null) return;
+      this.emitPartial(itemId, text);
       return;
     }
     if (event === 'conversation.item.input_audio_transcription.completed') {
+      this.finishItem(stringField(parsed, 'item_id'));
       const raw = (parsed as { transcript?: unknown }).transcript;
       const text = typeof raw === 'string' ? raw : '';
       const waiting = this.waiting;
@@ -139,7 +165,7 @@ export class OpenAiRealtimeStt implements RealtimeStt {
         event: 'final',
         ms: this.speechStartedAt > 0 ? Date.now() - this.speechStartedAt : undefined,
         chars: text.length,
-        partials: this.partials,
+        partials: this.partialCount,
         noSpeech: text.trim().length === 0,
       });
       waiting.resolve({ text, noSpeech: text.trim().length === 0 });
@@ -160,6 +186,43 @@ export class OpenAiRealtimeStt implements RealtimeStt {
       this.onTrace?.({ component: 'stt', event: 'error', detail });
       this.fail(new Error(detail));
     }
+  }
+
+  /** The committed item becomes the only item still allowed to emit partials. */
+  private adoptItem(itemId: string): void {
+    if (this.staleItems.has(itemId)) return;
+    if (this.activeItemId !== null && this.activeItemId !== itemId) this.retire(this.activeItemId);
+    this.activeItemId = itemId;
+  }
+
+  /**
+   * One delta for `itemId`: accumulate per conversation item and emit the
+   * cumulative text. A delta for a finished or superseded item is dropped, so a
+   * late delta can never surface as the next utterance's partial.
+   */
+  private emitPartial(itemId: string, delta: string): void {
+    if (this.closed || this.failed || this.staleItems.has(itemId)) return;
+    if (this.activeItemId !== itemId) {
+      if (this.activeItemId !== null) this.retire(this.activeItemId);
+      this.activeItemId = itemId;
+    }
+    const text = (this.itemTexts.get(itemId) ?? '') + delta;
+    this.itemTexts.set(itemId, text);
+    this.partialCount += 1;
+    this.partialHandler?.({ text });
+  }
+
+  /** Stop emitting for an item and forget its accumulation. */
+  private retire(itemId: string): void {
+    this.staleItems.add(itemId);
+    this.itemTexts.delete(itemId);
+  }
+
+  /** A completed item is finished: its late deltas are never emitted again. */
+  private finishItem(itemId: string | null): void {
+    if (itemId === null) return;
+    this.retire(itemId);
+    if (this.activeItemId === itemId) this.activeItemId = null;
   }
 
   private fail(err: Error): void {
@@ -199,11 +262,21 @@ export class OpenAiRealtimeStt implements RealtimeStt {
     }
   }
 
+  /** Subscribe the session's partial consumer: cumulative text per item. */
+  onPartial(handler: (partial: PartialTranscript) => void): void {
+    this.partialHandler = handler;
+  }
+
   speechStart(): void {
     if (this.closed || this.failed || this.speechOpen) return;
     this.speechOpen = true;
     this.speechStartedAt = Date.now();
-    this.partials = 0;
+    this.partialCount = 0;
+    // The previous item's late deltas must never surface as this utterance's
+    // partials; only a new item's deltas may emit from here on.
+    for (const itemId of this.itemTexts.keys()) this.staleItems.add(itemId);
+    this.itemTexts.clear();
+    this.activeItemId = null;
     const bufferedBytes = this.pendingBytes;
     const buffered = this.pendingAudio.splice(0);
     this.pendingBytes = 0;

@@ -69,6 +69,7 @@ function delay(ms: number): Promise<void> {
 
 /** Realtime channel whose final is scripted per test. */
 class FakeRealtime implements RealtimeStt {
+  readonly partials = false;
   private readonly finalizeFn: () => Promise<Transcription>;
   constructor(finalizeFn: () => Promise<Transcription>) {
     this.finalizeFn = finalizeFn;
@@ -83,6 +84,7 @@ class FakeRealtime implements RealtimeStt {
 
 /** Realtime channel handing out one scripted final per Turn. */
 class ScriptRealtime implements RealtimeStt {
+  readonly partials = false;
   private readonly script: (() => Promise<Transcription>)[];
   constructor(script: (() => Promise<Transcription>)[]) {
     this.script = script;

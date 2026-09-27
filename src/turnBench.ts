@@ -49,7 +49,7 @@ export interface ScenarioObservations {
   backchannels: DeclaredSpan[];
   echos: DeclaredEcho[];
   /** Every Backchannel the session absorbed, traced back to its frame. */
-  backchannelAbsorptions: { frame: number; text: string }[];
+  backchannelAbsorptions: { frame: number; chars: number }[];
   /** Every Echo-gate classification, in inbound order. */
   gateDecisions: GateDecisionObservation[];
   /** Frame of each reply's first outbound audio, in run order, greeting excluded. */
@@ -536,6 +536,7 @@ class ScenarioRunner implements TurnBenchContext {
     // channel's partials; this scripted stand-in supplies one per declared
     // speech frame while the bench keeps local boundaries.
     const realtime: RealtimeStt = {
+      partials: true,
       pushAudio: () => {},
       speechStart: () => {},
       finalize: () =>
@@ -587,7 +588,7 @@ class ScenarioRunner implements TurnBenchContext {
           });
         }
         if (event.component === 'call' && event.event === 'backchannel') {
-          this.observations.backchannelAbsorptions.push({ frame: this.frame, text: String(event.text ?? '') });
+          this.observations.backchannelAbsorptions.push({ frame: this.frame, chars: Number(event.chars ?? 0) });
         }
         if (options.debug) console.error('[trace]', JSON.stringify(event));
       },

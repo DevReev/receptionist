@@ -371,7 +371,7 @@ describe('turn bench behavior scenarios', () => {
     assert.equal(run.observations.clears.length, 0, 'the Receptionist is not stopped');
     assert.equal(run.metrics.backchannelFalseStops, 0);
     assert.equal(run.metrics.backchannelAbsorptions, 1, 'the Backchannel is absorbed');
-    assert.equal(run.observations.backchannelAbsorptions[0]!.text, 'mm-hmm');
+    assert.equal(run.observations.backchannelAbsorptions[0]!.chars, 'mm-hmm'.length);
     assert.equal(run.metrics.selfEchoTurns, 0);
   });
 

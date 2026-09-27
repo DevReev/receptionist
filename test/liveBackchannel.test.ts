@@ -65,6 +65,7 @@ function stubTts(): { tts: Tts; texts: string[] } {
  * carrier of Backchannel semantics).
  */
 class FakePartialStt implements RealtimeStt {
+  readonly partials = true;
   finalizeCalls = 0;
   private partialHandler: ((partial: PartialTranscript) => void) | null = null;
   private readonly finals: Transcription[];
@@ -133,8 +134,9 @@ describe('live Backchannel absorption', () => {
     assert.equal(texts.length, 1, 'no acknowledgement reply is spoken');
     const absorptions = traces.filter((event) => event.component === 'call' && event.event === 'backchannel');
     assert.equal(absorptions.length, 1, 'the absorption is traced exactly once');
-    assert.equal(absorptions[0]!.text, 'mm-hmm');
+    assert.equal(absorptions[0]!.chars, 'mm-hmm'.length, 'the trace carries the partial size');
     assert.ok(Number(absorptions[0]!.durationMs) >= 200, 'the trace carries the candidate duration');
+    assert.equal(JSON.stringify(traces).includes('mm-hmm'), false, 'raw partial text never reaches traces');
     live.close('test');
   });
 
