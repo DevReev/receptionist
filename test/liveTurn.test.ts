@@ -901,7 +901,7 @@ describe('live full Turn (ticket 11)', () => {
     assert.ok(events.includes('close'));
   });
 
-  it('stops accepting a second utterance as soon as the first one endpoints', async () => {
+  it('speech during transcription becomes the next Turn via the mid-decode barge-in (ticket 16)', async () => {
     const calls = new CallStore();
     const { tts } = stubTts();
     let releaseFirst!: () => void;
@@ -935,8 +935,20 @@ describe('live full Turn (ticket 11)', () => {
     for (let i = 0; i < 100; i += 1) await live.receiveAudio(Buffer.alloc(FRAME_BYTES, 0xff));
     releaseFirst();
     await live.flush();
-    assert.equal(transcriptions, 1);
-    assert.equal(calls.get('CAsingleturn').turn, 1);
+    // The mid-decode Barge-in aborts the gated first decode through the
+    // audio path, so the second utterance is a Turn instead of dropped audio.
+    const deadline = Date.now() + 2000;
+    while (calls.get('CAsingleturn').turn < 2 && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 10));
+      await live.flush();
+    }
+    assert.equal(transcriptions, 2);
+    assert.equal(calls.get('CAsingleturn').turn, 2);
+    assert.deepEqual(
+      calls.get('CAsingleturn').history.filter((entry) => entry.role === 'caller').map((entry) => entry.text),
+      ['hello'],
+      'the interrupting speech becomes the next Turn intact; the aborted decode never lands',
+    );
   });
 
   it('opens the live STT utterance for a short latched utterance instead of falling back', async () => {

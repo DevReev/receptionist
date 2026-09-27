@@ -88,7 +88,7 @@ export interface TurnTakingOptions {
   echoGate?: EchoGateOptions;
 }
 
-type Floor = 'listening' | 'watching-barge-in' | 'idle';
+type Floor = 'listening' | 'watching-barge-in' | 'transcribing' | 'idle';
 
 /** Partial-transcript evidence for the speech burst under the current candidate. */
 interface PartialEvidence {
@@ -283,9 +283,13 @@ export class TurnTaking {
       this.observer.onUpstreamFrame?.(mulaw);
       return;
     }
-    if (this.mode === 'idle') {
-      // A Turn is in flight; its audio is not part of a new utterance.
-      this.observer.onUpstreamFrame?.(mulaw);
+    if (this.mode === 'idle' || this.mode === 'transcribing') {
+      // A Turn is in flight (transcription/planning, no reply playing yet):
+      // frames are plain Caller audio, so they are VAD-scored for a fast
+      // energy-only Barge-in candidate without opening an utterance. A stuck
+      // decode is already dead air, so the candidate fires at the energy
+      // pre-trigger with no confirm/lag hold for partial semantics.
+      await this.processTranscribing(mulaw);
       return;
     }
     const pcm = decodeMulaw(mulaw);
@@ -414,6 +418,44 @@ export class TurnTaking {
   }
 
   /**
+   * Frames heard while a Turn is in flight. No reply plays, so there is no
+   * Echo reference to gate against: audio streams upstream as-is (listening-
+   * like) and feeds the gate history, while VAD scores a fast energy-only
+   * Barge-in candidate. The candidate never opens an utterance and never
+   * waits for partial semantics; on the energy pre-trigger it fires
+   * `onBargeIn`, whose retained audio the session adopts as the next
+   * utterance's head via `acceptBargeIn`.
+   */
+  private async processTranscribing(mulaw: Buffer): Promise<void> {
+    const pcm = decodeMulaw(mulaw);
+    this.observer.onUpstreamFrame?.(mulaw);
+    this.echoGate.observe(pcm);
+    if (this.bargeInPending) return;
+    const score = await this.vad.score(pcm);
+    this.observer.onScore?.(score, this.speaking);
+    const isSpeech = score >= this.policy.threshold;
+    if (!isSpeech) {
+      if (this.candidateSamples === 0) {
+        this.pushPreRoll(pcm);
+        return;
+      }
+      this.candidateSamples += pcm.length;
+      this.dipSamples += pcm.length;
+      this.chunks.push(pcm);
+      this.bufferedSamples += pcm.length;
+      // A dip past tolerance means the noise burst is over: drop it all.
+      if (toMs(this.dipSamples) >= this.bargeInDipToleranceMs) this.clearCandidate();
+      return;
+    }
+    if (this.candidateSamples === 0) this.adoptPreRoll();
+    this.candidateSamples += pcm.length;
+    this.dipSamples = 0;
+    this.chunks.push(pcm);
+    this.bufferedSamples += pcm.length;
+    if (toMs(this.candidateSamples) >= this.bargeInMinSpeechMs) this.fireBargeIn();
+  }
+
+  /**
    * Whether the utterance under capture should end here. The local detector
    * waits out the Caller-adaptive pause plus the dialogue floor, with the
    * partial's semantic evidence holding it open only until the emergency cap.
@@ -512,7 +554,7 @@ export class TurnTaking {
   }
 
   private emit(): void {
-    this.mode = 'idle';
+    this.mode = 'transcribing';
     const utterance = this.speechAudio();
     utterance.trailingSilenceMs = Math.round(toMs(this.trailingSilenceSamples));
     const stats = this.takeStats();
