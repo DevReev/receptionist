@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { createApp, type AppDeps, type FailureEvent } from '../src/app.ts';
+import { CallStore } from '../src/calls.ts';
 
 const AUTH_TOKEN = 'test-auth-token-123';
 
@@ -44,6 +45,7 @@ before(() => {
     sayLanguage: 'en-IN',
     voiceLoop: 'legacy',
     streamWsUrl: '',
+    calls: new CallStore(),
     twilioAuthToken: AUTH_TOKEN,
     transcriber: { transcribe: async () => ({ text: 'hi', noSpeech: false }) },
     assistant: { reply: async () => ({ text: 'Hello.', endCall: false }) },

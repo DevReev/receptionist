@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { createApp, type AppDeps, type FailureEvent, type TurnEvent } from '../src/app.ts';
+import { CallStore } from '../src/calls.ts';
 
 const GUIDE_V1 = `# Clinic Guide — Maple Clinic
 
@@ -25,6 +26,7 @@ function stubDeps(overrides: Partial<AppDeps> = {}): { deps: AppDeps; failures: 
     sayLanguage: 'en-IN',
     voiceLoop: 'legacy',
     streamWsUrl: '',
+    calls: new CallStore(),
     transcriber: {
       transcribe: async () => ({ text: 'what are your hours', noSpeech: false }),
     },

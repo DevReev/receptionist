@@ -16,7 +16,7 @@ import {
   type Transcription,
 } from './app.ts';
 import { encodeWav } from './audio.ts';
-import type { CallStore } from './calls.ts';
+import type { CallState, CallStore } from './calls.ts';
 import type { ClinicGuide } from './clinic.ts';
 import {
   DialogueReducer,
@@ -25,7 +25,6 @@ import {
   parseAvailabilityBlock,
   spokenDate,
   spokenTime,
-  type DialogueDecision,
   type DialogueState,
   type SlotOption,
 } from './dialogue.ts';
@@ -606,17 +605,20 @@ export class LiveCallSession {
       this.trace?.({ component: 'call', event: 'dtmf-rejected', digits: digits.length });
       return;
     }
-    this.cancelNoResponse();
-    this.noResponsePrompts = 0;
-    const state = this.calls.get(this.identity.callSid);
-    state.turn += 1;
-    const turn = state.turn;
-    this.setPhase('FINALIZING');
-    this.trace?.({ component: 'call', event: 'dtmf-submit', turn, digits: digits.length });
     const text = `my number is ${digits}`;
-    this.calls.pushHistory(this.identity.callSid, { role: 'caller', text });
+    // The keyed Turn enters the same serialized queue as a spoken utterance,
+    // so it opens only after the previous Turn (and its reply) has settled and
+    // never steals the active Turn's reply capture.
     this.pending = this.pending
-      .then(() => this.reduceAndAnswer(text, turn, null, null))
+      .then(() => {
+        if (this.closed) return;
+        const { turn, state } = this.beginTurn(text);
+        state.misses = 0;
+        this.setPhase('FINALIZING');
+        this.trace?.({ component: 'call', event: 'dtmf-submit', turn, digits: digits.length });
+        this.calls.pushHistory(this.identity.callSid, { role: 'caller', text });
+        return this.reduceAndAnswer(text, turn, null, null);
+      })
       .catch(() => {});
   }
 
@@ -633,11 +635,6 @@ export class LiveCallSession {
   /** Test seam: wait for queued utterance handlers. */
   async flush(): Promise<void> {
     await this.pending;
-  }
-
-  /** Text in, audio out, plus the playback-completion the endpoint timer keys off. */
-  async speak(text: string): Promise<void> {
-    await this.enqueueResponse(text, { kind: 'response', fixed: false, commit: false });
   }
 
   /** Fixed-phrase speech: cache hits never touch the provider. */
@@ -1301,13 +1298,24 @@ export class LiveCallSession {
     );
   }
 
-  private async handleUtterance(utterance: Utterance, stats: UtteranceSpeechStats): Promise<void> {
-    if (this.closed) return;
+  /**
+   * Open the moving Turn: bump the shared counter, arm the reply-capture
+   * record, and clear the no-response watch. Speech and keypad entry share
+   * this, so a keyed number is a Turn like any other.
+   */
+  private beginTurn(excerpt: string): { turn: number; state: CallState } {
     this.cancelNoResponse();
     this.noResponsePrompts = 0;
     const state = this.calls.get(this.identity.callSid);
     state.turn += 1;
     const turn = state.turn;
+    this.activeTurn = { turn, excerpt, replySoFar: '' };
+    return { turn, state };
+  }
+
+  private async handleUtterance(utterance: Utterance, stats: UtteranceSpeechStats): Promise<void> {
+    if (this.closed) return;
+    const { turn, state } = this.beginTurn('');
     this.setPhase('FINALIZING');
     this.onUtteranceLog?.({
       callSid: this.identity.callSid,
@@ -1324,7 +1332,6 @@ export class LiveCallSession {
       maxScore: stats.maxScore,
       meanScore: stats.meanScore,
     });
-    this.activeTurn = { turn, excerpt: '', replySoFar: '' };
     // The partial-started generation becomes this Turn's.
     const speculation = this.speculation;
     this.speculation = null;
@@ -1432,7 +1439,7 @@ export class LiveCallSession {
       return;
     }
     state.misses = 0;
-    this.activeTurn.excerpt = text;
+    if (this.activeTurn) this.activeTurn.excerpt = text;
     // The final landed: keep the speculative reply only when it agrees with
     // the final AND the final's own dialogue decision is the model path. Any
     // deterministic decision aborts the speculation and regenerates.
@@ -1721,7 +1728,6 @@ export class LiveCallSession {
       return false;
     }
     if (!result.text.trim() || this.agreesWithPrimary(excerpt, result.text, state)) return false;
-    this.trace?.({ component: 'stt', event: 'second-opinion-disagree', turn });
     this.trace?.({ component: 'stt', event: 'second-opinion-disagree', turn });
     const line = "Sorry, I want to make sure I have that exactly right. Could you repeat that for me?";
     this.logTurn?.({
@@ -2045,23 +2051,6 @@ export class LiveCallSession {
       return 'Answer the caller about availability using only the live Slots in context.';
     }
     return undefined;
-  }
-
-  private scheduleHold(phase: string, text: string): () => void {
-    if (this.holdAfterMs <= 0) return () => {};
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled || this.closed) return;
-      settled = true;
-      this.logPhase(phase, 'hold', { text });
-      void this.enqueueResponse(text, { kind: 'response', fixed: true, commit: false }).catch(() => {});
-    }, this.holdAfterMs);
-    timer.unref?.();
-    return () => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-    };
   }
 
   /** One phase transition of a Turn; the handoff channel for where time went. */

@@ -5,8 +5,12 @@ import type { Server } from 'node:http';
 import { connectStream } from '../src/twiml.ts';
 import { loadConfig } from '../src/config.ts';
 import { createApp } from '../src/app.ts';
+import { CallStore } from '../src/calls.ts';
+import { LiveCallSession } from '../src/live.ts';
 import { attachStreamSocket, attachStreamEndpoint, type StreamIdentity } from '../src/stream.ts';
+import { LOCAL_ENDPOINT_FALLBACKS, type Vad } from '../src/endpoint.ts';
 import type { TraceEvent } from '../src/trace.ts';
+import type { Tts } from '../src/tts.ts';
 import {
   FakeSocket,
   recordingObserver,
@@ -89,6 +93,7 @@ describe('incoming call routing', () => {
       sayLanguage: 'en-IN',
       voiceLoop: 'stream',
       streamWsUrl: 'wss://example.com/stream',
+      calls: new CallStore(),
       transcriber: { transcribe: async () => ({ text: '', noSpeech: true }) },
       assistant: { reply: async () => ({ text: '', endCall: true }) },
       recordingFetcher: { fetch: async () => null },
@@ -118,6 +123,7 @@ describe('incoming call routing', () => {
       sayLanguage: 'en-IN',
       voiceLoop: 'stream',
       streamWsUrl: 'wss://example.com/stream',
+      calls: new CallStore(),
       transcriber: { transcribe: async () => ({ text: '', noSpeech: true }) },
       assistant: { reply: async () => ({ text: '', endCall: true }) },
       recordingFetcher: { fetch: async () => null },
@@ -139,6 +145,56 @@ describe('incoming call routing', () => {
     }
   });
 
+  it('shares one call-state store between the webhook and the live session', async () => {
+    const calls = new CallStore();
+    // State left behind by an earlier connection on the same CallSid.
+    calls.get('CAshare1').turn = 4;
+    calls.pushHistory('CAshare1', { role: 'caller', text: 'stale words' });
+    const app = createApp({
+      guidePath: './clinic.md',
+      sayVoice: 'alice',
+      sayLanguage: 'en-IN',
+      voiceLoop: 'stream',
+      streamWsUrl: 'wss://example.com/stream',
+      calls,
+      transcriber: { transcribe: async () => ({ text: '', noSpeech: true }) },
+      assistant: { reply: async () => ({ text: '', endCall: true }) },
+      recordingFetcher: { fetch: async () => null },
+      logFailure: () => {},
+      onProposeBooking: async () => ({ ok: false as const, reason: 'unused' }),
+    });
+    const server = app.listen(0);
+    try {
+      const addr = server.address() as AddressInfo;
+      const res = await fetch(`http://127.0.0.1:${addr.port}/voice/incoming`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ CallSid: 'CAshare1', From: '+919840950950' }),
+      });
+      assert.equal(res.status, 200);
+    } finally {
+      server.close();
+    }
+    assert.equal(calls.get('CAshare1').turn, 0, 'the webhook resets the injected store');
+    assert.deepEqual(calls.get('CAshare1').history, []);
+
+    const vad: Vad = { score: async () => 0.05, reset: () => {} };
+    const tts: Tts = { synthesize: async () => ({ audio: Buffer.from([0xff]) }) };
+    const live = new LiveCallSession({
+      identity: { callSid: 'CAshare1', streamSid: 'MZCAshare1' },
+      sendAudio: () => {},
+      vad,
+      policy: { ...LOCAL_ENDPOINT_FALLBACKS, threshold: 0.5 },
+      transcriber: { transcribe: async () => ({ text: '', noSpeech: true }) },
+      tts,
+      guide: { raw: '# Clinic Guide — Maple Clinic\n', name: 'Maple Clinic' },
+      calls,
+    });
+    for (const digit of '9876543210#') live.receiveDtmf(digit);
+    await live.flush();
+    assert.equal(calls.get('CAshare1').turn, 1, 'the session writes to the same store');
+  });
+
   it('reports readiness separately from liveness', async () => {
     let ready = false;
     const app = createApp({
@@ -147,6 +203,7 @@ describe('incoming call routing', () => {
       sayLanguage: 'en-IN',
       voiceLoop: 'stream',
       streamWsUrl: 'wss://example.com/stream',
+      calls: new CallStore(),
       transcriber: { transcribe: async () => ({ text: '', noSpeech: true }) },
       assistant: { reply: async () => ({ text: '', endCall: true }) },
       recordingFetcher: { fetch: async () => null },
@@ -328,6 +385,7 @@ describe('streaming endpoint', () => {
       sayLanguage: 'en-IN',
       voiceLoop: 'legacy',
       streamWsUrl: '',
+      calls: new CallStore(),
       transcriber: { transcribe: async () => ({ text: '', noSpeech: true }) },
       assistant: { reply: async () => ({ text: '', endCall: true }) },
       recordingFetcher: { fetch: async () => null },

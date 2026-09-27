@@ -11,9 +11,6 @@ export interface TraceEvent {
 
 export type TraceFn = (event: TraceEvent) => void;
 
-/** No-op sink: components built outside a call (or in tests) fall back to this. */
-export const noTrace: TraceFn = () => {};
-
 /**
  * Clip long payloads for logs while keeping both ends, so provider error
  * bodies and raw stream chunks stay diagnosable without flooding a line.

@@ -341,8 +341,12 @@ export async function main(): Promise<void> {
     return outcome;
   };
   const readiness = { ready: config.voiceLoop !== 'stream' };
+  // One call-state store for the whole process: the inbound-call webhook, the
+  // legacy record loop, and every Stream session observe the same instance.
+  const calls = new CallStore();
   const app = createApp({
     guidePath: config.guidePath,
+    calls,
     sayVoice: config.sayVoice,
     sayLanguage: config.sayLanguage,
     recordTimeout: config.recordTimeout,
@@ -366,7 +370,6 @@ export async function main(): Promise<void> {
   const server = createServer(app);
   if (config.voiceLoop === 'stream') {
     const policy = endpointPolicy(config);
-    const calls = new CallStore();
     const liveAssistant = createAssistant(config, 'phase');
     const streamPrompt = guide.raw ? deriveSttPrompt(guide) : undefined;
     const lives = new Map<string, LiveCallSession>();

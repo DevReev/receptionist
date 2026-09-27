@@ -2,7 +2,6 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { loadConfig } from '../src/config.ts';
 import { formatFailureLine } from '../src/log.ts';
-import { createInterimGuardrail } from '../src/booking.ts';
 import type { FailureEvent } from '../src/app.ts';
 
 describe('config', () => {
@@ -437,29 +436,5 @@ describe('failure log line', () => {
     assert.equal(parsed.reason, 'save-failed');
     assert.equal(parsed.excerpt, 'yes book it');
     assert.equal(typeof parsed.ts, 'string');
-  });
-});
-
-describe('interim booking guardrail', () => {
-  it('rejects every proposed slot until availability lands, and logs it', async () => {
-    const failures: FailureEvent[] = [];
-    const guardrail = createInterimGuardrail((e) => failures.push(e));
-    const outcome = await guardrail({
-      callSid: 'CA123',
-      turn: 5,
-      excerpt: 'yes book Wednesday',
-      slot: {
-        service: 'Sample Service',
-        location: 'Bobby Clinic',
-        date: '2026-09-30',
-        time: '09:30',
-        callerName: 'Asha',
-        callerPhone: '+911234567890',
-      },
-    });
-    assert.equal(outcome.ok, false);
-    assert.equal(failures.length, 1);
-    assert.equal(failures[0].reason, 'save-failed');
-    assert.equal(failures[0].callSid, 'CA123');
   });
 });

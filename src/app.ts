@@ -160,6 +160,12 @@ export interface AppDeps {
   guidePath: string;
   sayVoice: string;
   sayLanguage: string;
+  /**
+   * Call state shared by every loop that can observe a call: the inbound-call
+   * webhook resets it, the legacy record loop reads it, and the Stream session
+   * receives the same instance. One store per process, never one per loop.
+   */
+  calls: CallStore;
   recordTimeout?: number;
   recordMaxLength?: number;
   /** Selects the voice loop: legacy record-based Turns, or a live Stream session. */
@@ -235,7 +241,7 @@ export function createApp(deps: AppDeps): Express {
   const app = express();
   app.set('trust proxy', true);
   app.use(express.urlencoded({ extended: false }));
-  const calls = new CallStore();
+  const calls = deps.calls;
 
   if (deps.twilioAuthToken) {
     const authToken = deps.twilioAuthToken;

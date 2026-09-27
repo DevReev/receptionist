@@ -360,12 +360,6 @@ export class StreamingPcmToMulaw {
   }
 }
 
-function interpolate(input: Int16Array, pos: number): number {
-  const lo = Math.floor(pos);
-  const frac = pos - lo;
-  return Math.round(input[lo]! * (1 - frac) + input[lo + 1]! * frac);
-}
-
 function concatSamples(a: Int16Array, b: Int16Array): Int16Array {
   const out = new Int16Array(a.length + b.length);
   out.set(a, 0);

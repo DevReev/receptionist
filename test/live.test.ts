@@ -220,7 +220,7 @@ describe('playback tracking (ticket 10)', () => {
       calls,
       onPlaybackComplete: (t) => completions.push(t),
     });
-    const speaking = live.speak('blocked reply');
+    const speaking = live.speakFixed('blocked reply');
     // Inbound audio during playback stays below the Barge-in threshold: no
     // utterance can complete and the reply is not interrupted.
     for (let i = 0; i < 100; i++) {
@@ -259,7 +259,7 @@ describe('playback tracking (ticket 10)', () => {
       waitForPlayback: () => session.waitForPlayback(),
     });
     assert.equal(texts.length, 0);
-    const speaking = live.speak('hello there');
+    const speaking = live.speakFixed('hello there');
     await waitFor(() => socket.sentJson().some((frame) => (frame as { event?: string }).event === 'mark'), 'playback mark');
     assert.deepEqual(completions, []);
     const mark = (socket.sentJson() as { event: string; mark?: { name?: string } }[]).find((frame) => frame.event === 'mark');

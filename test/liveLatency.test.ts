@@ -354,6 +354,7 @@ describe('live commit-time STT hedge', () => {
       async () => ({ text: 'my number is 9876543210', noSpeech: false }),
     ]);
     const calls = new CallStore();
+    const traces: TraceEvent[] = [];
     const turns: { excerpt: string; reply: string; miss: boolean }[] = [];
     const { tts } = stubTts();
     const live = new LiveCallSession({
@@ -368,6 +369,7 @@ describe('live commit-time STT hedge', () => {
       guide: GUIDE,
       availability: AVAILABILITY_SLOT,
       calls,
+      trace: (e) => traces.push(e),
       logTurn: (e) => turns.push({ excerpt: e.excerpt, reply: e.reply, miss: e.miss }),
     });
     await feed(live, 100);
@@ -377,6 +379,7 @@ describe('live commit-time STT hedge', () => {
     assert.equal(turns.length, 2);
     assert.equal(turns[1]!.miss, true);
     assert.match(turns[1]!.reply, /make sure/);
+    assert.equal(traced(traces, 'stt', 'second-opinion-disagree').length, 1, 'one disagreement logs one line');
     assert.deepEqual(callerHistory(calls, 'CAsecond2'), ['book Wednesday', 'my number is 9876543210']);
   });
 
@@ -549,13 +552,13 @@ describe('live latency instrumentation', () => {
       calls: new CallStore(),
       trace: (e) => traces.push(e),
     });
-    await live.speak('hello there');
+    await live.speakFixed('hello there');
     const first = traced(traces, 'call', 'first-outbound');
     assert.equal(first.length, 1);
     assert.equal(first[0]!.generation, 1);
     assert.equal(chunks.length, 3, 'every synthesized chunk still reaches the transport');
 
-    await live.speak('second reply');
+    await live.speakFixed('second reply');
     const all = traced(traces, 'call', 'first-outbound');
     assert.equal(all.length, 2);
     assert.equal(all[1]!.generation, 2);
