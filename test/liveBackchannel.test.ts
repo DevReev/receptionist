@@ -228,11 +228,132 @@ describe('live Backchannel absorption', () => {
     void live.open().catch(() => {});
     await waitFor(() => live.currentPhase === 'SPEAKING', 'the greeting to start');
     // No partial arrives, so the energy candidate waits out the confirm hold
-    // (200 ms pre-trigger + 300 ms) instead of firing at the pre-trigger.
-    for (let i = 0; i < 24; i++) await live.receiveAudio(SPEECH_FRAME);
+    // plus the live-partial lag allowance (200 ms pre-trigger + 300 ms
+    // confirm + 300 ms lag) instead of firing at the pre-trigger. The extra
+    // 300 ms is the ticket-13 stop-latency cost, paid only by unknown speech:
+    // classified partials still decide at the pre-trigger.
+    for (let i = 0; i < 39; i++) await live.receiveAudio(SPEECH_FRAME);
     assert.equal(cleared, 0, 'unknown speech does not fire before the confirm hold ends');
     await live.receiveAudio(SPEECH_FRAME);
     assert.equal(cleared, 1, 'unknown speech still takes the floor');
+    live.close('test');
+  });
+
+  it('absorbs a Backchannel whose partials lag past the confirm window', async () => {
+    // Live speakerphone shape (ticket 13, call CA132… turn 6 "Mhm okay"):
+    // energy leads ~600 ms while the provider's partials lag. The candidate
+    // must hold past the old 500 ms expiry for the lagging classification
+    // instead of taking the floor on energy alone.
+    const calls = new CallStore();
+    const { tts, texts } = stubTts();
+    const traces: TraceEvent[] = [];
+    let cleared = 0;
+    const stt = new FakePartialStt();
+    const live = new LiveCallSession({
+      identity: { callSid: 'CAbc7', streamSid: 'MZbc7' },
+      sendAudio: () => {},
+      vad: scriptVad(speech(200)),
+      policy: POLICY,
+      transcriber: queueTranscriber(['mhm okay']),
+      realtime: stt,
+      tts,
+      guide: GUIDE,
+      calls,
+      trace: (event) => traces.push(event),
+      finishPlayback: () => new Promise<PlaybackResult>(() => {}),
+      clearPlayback: () => {
+        cleared += 1;
+      },
+    });
+    void live.open().catch(() => {});
+    await waitFor(() => live.currentPhase === 'SPEAKING', 'the greeting to start');
+    // 600 ms of energy with no partials: past the old 200 + 300 ms expiry,
+    // inside the 300 ms lag allowance.
+    for (let i = 0; i < 30; i++) await live.receiveAudio(SPEECH_FRAME);
+    assert.equal(cleared, 0, 'lagging unknown speech holds past the old confirm expiry');
+    stt.partial('mhm okay');
+    await live.flush();
+    for (let i = 0; i < 5; i++) await live.receiveAudio(SPEECH_FRAME);
+    await live.flush();
+
+    assert.equal(cleared, 0, 'a lagging Backchannel never stops the Receptionist');
+    assert.equal(live.currentPhase, 'SPEAKING', 'the Receptionist keeps speaking with no gap');
+    assert.equal(calls.get('CAbc7').turn, 0, 'a lagging Backchannel is never a Turn');
+    assert.equal(calls.get('CAbc7').history.length, 0, 'a lagging Backchannel never enters history');
+    assert.equal(texts.length, 1, 'no acknowledgement reply is spoken');
+    assert.equal(
+      traces.filter((event) => event.component === 'call' && event.event === 'barge-in').length,
+      0,
+      'no barge-in fires for the lagging burst',
+    );
+    const absorptions = traces.filter((event) => event.component === 'call' && event.event === 'backchannel');
+    assert.equal(absorptions.length, 1, 'the lagging absorption is traced exactly once');
+    assert.equal(absorptions[0]!.chars, 'mhm okay'.length, 'the trace carries the partial size');
+    assert.ok(Number(absorptions[0]!.durationMs) >= 600, 'the trace carries the held candidate duration');
+    assert.equal(JSON.stringify(traces).includes('mhm okay'), false, 'raw partial text never reaches traces');
+    live.close('test');
+  });
+
+  it('takes the floor on arrival when a lagging partial carries content', async () => {
+    // Same lag shape, content-bearing words: the classification fires the
+    // pending candidate the moment it arrives instead of waiting out the lag
+    // allowance, so interruptions stay fast.
+    const calls = new CallStore();
+    const { tts } = stubTts();
+    const turns: TurnEvent[] = [];
+    const traces: TraceEvent[] = [];
+    let cleared = 0;
+    let resolveFinish: ((result: PlaybackResult) => void) | null = null;
+    const stt = new FakePartialStt({
+      finals: [{ text: 'wait, I meant tomorrow', noSpeech: false }],
+    });
+    const live = new LiveCallSession({
+      identity: { callSid: 'CAbc8', streamSid: 'MZbc8' },
+      sendAudio: () => {},
+      vad: byteVad,
+      policy: POLICY,
+      transcriber: queueTranscriber(['rest transcript']),
+      realtime: stt,
+      tts,
+      guide: GUIDE,
+      assistant: {
+        reply: async () => ({ text: '', endCall: false }),
+        replyStream: async function* () {
+          yield 'Sure, let me check that. ';
+        },
+      },
+      calls,
+      trace: (event) => traces.push(event),
+      logTurn: (event) => turns.push(event),
+      finishPlayback: () =>
+        cleared === 0
+          ? new Promise<PlaybackResult>((resolve) => {
+              resolveFinish = resolve;
+            })
+          : Promise.resolve({ outcome: 'played', mark: '' }),
+      clearPlayback: (reason) => {
+        cleared += 1;
+        resolveFinish?.({ outcome: 'cleared', mark: '', reason });
+      },
+    });
+    void live.open().catch(() => {});
+    await waitFor(() => live.currentPhase === 'SPEAKING', 'the greeting to start');
+    for (let i = 0; i < 30; i++) await live.receiveAudio(SPEECH_FRAME);
+    assert.equal(cleared, 0, 'unknown speech still holds inside the lag allowance');
+    stt.partial('wait, I meant tomorrow');
+    assert.equal(cleared, 1, 'classified content takes the floor on arrival');
+    assert.equal(
+      traces.filter((event) => event.component === 'call' && event.event === 'backchannel').length,
+      0,
+      'content-bearing speech is never absorbed as a Backchannel',
+    );
+    // The local detector closes the interrupted utterance with its final.
+    for (let i = 0; i < 15; i++) await live.receiveAudio(SILENCE_FRAME);
+    await live.flush();
+
+    assert.equal(calls.get('CAbc8').turn, 1, 'the interruption becomes a Turn');
+    assert.equal(calls.get('CAbc8').history[0]!.text, 'wait, I meant tomorrow');
+    assert.ok(turns.some((event) => event.excerpt === 'wait, I meant tomorrow'));
     live.close('test');
   });
 

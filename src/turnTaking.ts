@@ -63,6 +63,15 @@ export interface TurnTakingOptions {
   /** How long the energy pre-trigger waits for partial semantics before taking the floor. */
   bargeInConfirmMs?: number;
   /**
+   * Extra hold past the confirm window for an unknown candidate while partial
+   * semantics are expected but silent. Live speakerphone partials can trail
+   * energy by 300-600 ms, so the candidate waits this much longer for a
+   * Backchannel classification instead of taking the floor on energy alone.
+   * Classified partials still decide at the pre-trigger; only unknown speech
+   * pays the extra hold.
+   */
+  bargeInLagMs?: number;
+  /**
    * Post-reply window where returning Echo is still gated in listening mode.
    * Playback has ended but the last reference frames are still in the air;
    * Echo-classified frames here are suppressed from the utterance candidate
@@ -116,6 +125,7 @@ export class TurnTaking {
   private readonly bargeInDipToleranceMs: number;
   private readonly partialSemantics: boolean;
   private readonly bargeInConfirmMs: number;
+  private readonly bargeInLagMs: number;
   private readonly semanticBoundaries: boolean;
   private readonly echoGate: EchoGate;
   /** Post-reply window where returning Echo is still gated, in milliseconds. */
@@ -162,6 +172,7 @@ export class TurnTaking {
     this.bargeInDipToleranceMs = opts.bargeInDipToleranceMs ?? BARGE_IN_DEFAULTS.dipToleranceMs;
     this.partialSemantics = opts.partialSemantics ?? false;
     this.bargeInConfirmMs = opts.bargeInConfirmMs ?? BARGE_IN_DEFAULTS.confirmMs;
+    this.bargeInLagMs = opts.bargeInLagMs ?? BARGE_IN_DEFAULTS.lagMs;
     this.semanticBoundaries = opts.semanticBoundaries ?? true;
     this.echoGate = new EchoGate(opts.echoGate);
     this.echoTailMs = opts.echoTailMs ?? 300;
@@ -512,12 +523,15 @@ export class TurnTaking {
    * Decide a watching floor's candidate at `speechMs`. Before the energy
    * pre-trigger nothing happens; past it, partial semantics decide (Backchannel
    * absorbed, content takes the floor), and unknown text holds until the
-   * confirm window ends and then takes the floor. Returns true when handled.
+   * confirm window plus the live-partial lag allowance ends and then takes
+   * the floor. Only unknown speech pays the lag allowance: a classified
+   * partial decides at the pre-trigger however late it arrives. Returns true
+   * when handled.
    */
   private evaluateCandidate(speechMs: number): boolean {
     if (speechMs < this.bargeInMinSpeechMs) return false;
     if (this.resolveBargeInCandidate()) return true;
-    if (speechMs < this.bargeInMinSpeechMs + this.bargeInConfirmMs) return false;
+    if (speechMs < this.bargeInMinSpeechMs + this.bargeInConfirmMs + this.bargeInLagMs) return false;
     this.fireBargeIn();
     return true;
   }

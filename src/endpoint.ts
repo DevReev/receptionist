@@ -18,10 +18,11 @@ export const LOCAL_ENDPOINT_FALLBACKS = {
 
 /**
  * Shipped Barge-in candidate defaults: sustained non-Echo speech, dip
- * tolerance, and the wait for partial semantics that confirms a Backchannel
- * rather than a content-bearing interruption.
+ * tolerance, the wait for partial semantics that confirms a Backchannel
+ * rather than a content-bearing interruption, and the extra lag allowance
+ * past that wait for live partials that trail energy.
  */
-export const BARGE_IN_DEFAULTS = { minSpeechMs: 200, dipToleranceMs: 200, confirmMs: 300 } as const;
+export const BARGE_IN_DEFAULTS = { minSpeechMs: 200, dipToleranceMs: 200, confirmMs: 300, lagMs: 300 } as const;
 
 export interface EndpointPolicy {
   silenceMs: number;
