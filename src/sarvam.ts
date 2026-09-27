@@ -23,10 +23,11 @@ export class SarvamTts implements Tts {
     this.onTrace = opts.onTrace;
   }
 
-  async synthesize(text: string): Promise<SynthesizedAudio> {
+  async synthesize(text: string, signal?: AbortSignal): Promise<SynthesizedAudio> {
     const started = Date.now();
     this.onTrace?.({ component: 'tts', event: 'rest-start', chars: text.length });
     try {
+      signal?.throwIfAborted();
       const res = await this.fetchFn(`${this.cfg.baseUrl}/text-to-speech`, {
         method: 'POST',
         headers: {
@@ -41,6 +42,7 @@ export class SarvamTts implements Tts {
           speech_sample_rate: this.cfg.sampleRate,
           output_audio_codec: 'mulaw',
         }),
+        ...(signal ? { signal } : {}),
       });
       if (!res.ok) throw new Error(`sarvam-tts-http-${res.status}`);
       const data = (await res.json()) as { audios?: unknown };

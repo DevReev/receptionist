@@ -22,20 +22,22 @@ export interface SpeechResponse {
 export interface SpeechOptions {
   generation: number;
   language?: string;
+  /** Aborts in-flight provider requests; cancellation ends the queue without failing it. */
+  signal?: AbortSignal;
   /** Notified when a streaming phrase falls back to the request/response path. */
   onFallback?: (text: string, detail: string) => void;
 }
 
 /** Text in, playable audio out. Mirrors the Transcriber/Assistant injection seams. */
 export interface Tts {
-  synthesize(text: string): Promise<SynthesizedAudio>;
+  synthesize(text: string, signal?: AbortSignal): Promise<SynthesizedAudio>;
   /**
    * Optional live path: yields playable mu-law chunks as the provider
    * generates them, so the first words reach the Caller before the whole
    * sentence is synthesized. The session falls back to `synthesize` when this
    * is absent, or when it fails before playing any chunk.
    */
-  synthesizeStream?(text: string): AsyncIterable<Buffer>;
+  synthesizeStream?(text: string, signal?: AbortSignal): AsyncIterable<Buffer>;
   /**
    * Incremental response path: one logical response accepts phrase-sized text
    * and streams provider audio as it arrives. Preferred over the whole-string
@@ -106,9 +108,31 @@ export function bufferedSpeech(tts: Tts, options: SpeechOptions): SpeechResponse
   let pending: Promise<void> = Promise.resolve();
   let finished = false;
   let cancelled = false;
+  const speechAbort = new AbortController();
+  if (options.signal?.aborted) {
+    cancelled = true;
+    speechAbort.abort(options.signal.reason);
+    // Settle immediately: pushText/finishText are no-ops once cancelled, so
+    // without this the audio reader would wait forever.
+    queue.end();
+  } else if (options.signal) {
+    options.signal.addEventListener(
+      'abort',
+      () => {
+        cancelled = true;
+        try {
+          speechAbort.abort(options.signal!.reason);
+        } catch {
+          // Already aborted; the queue end below settles readers.
+        }
+        queue.end();
+      },
+      { once: true },
+    );
+  }
 
   const oneShot = async function* oneShot(text: string): AsyncGenerator<Buffer> {
-    yield (await tts.synthesize(text)).audio;
+    yield (await tts.synthesize(text, speechAbort.signal)).audio;
   };
 
   const speakPhrase = (phrase: string): void => {
@@ -118,14 +142,14 @@ export function bufferedSpeech(tts: Tts, options: SpeechOptions): SpeechResponse
         if (tts.synthesizeStream) {
           let chunks = 0;
           try {
-            for await (const chunk of tts.synthesizeStream(phrase)) {
+            for await (const chunk of tts.synthesizeStream(phrase, speechAbort.signal)) {
               if (cancelled) return;
               chunks += 1;
               queue.push(chunk);
             }
             return;
           } catch (err) {
-            if (cancelled) return;
+            if (cancelled || speechAbort.signal.aborted) return;
             if (chunks > 0) throw err;
             options.onFallback?.(phrase, err instanceof Error ? err.message : String(err));
           }
@@ -136,7 +160,7 @@ export function bufferedSpeech(tts: Tts, options: SpeechOptions): SpeechResponse
         }
       })
       .catch((err: unknown) => {
-        if (!cancelled) queue.fail(err instanceof Error ? err : new Error(String(err)));
+        if (!cancelled && !speechAbort.signal.aborted) queue.fail(err instanceof Error ? err : new Error(String(err)));
       });
   };
 
@@ -153,7 +177,13 @@ export function bufferedSpeech(tts: Tts, options: SpeechOptions): SpeechResponse
     },
     audio: () => queue.drain(),
     cancel(): void {
+      if (cancelled) return;
       cancelled = true;
+      try {
+        speechAbort.abort(new Error('speech-cancelled'));
+      } catch {
+        // Already aborted; the queue end below settles readers.
+      }
       queue.end();
     },
   };
@@ -216,7 +246,7 @@ export class OpenAiTts implements Tts {
     };
   }
 
-  private request(text: string): Promise<Response> {
+  private request(text: string, signal?: AbortSignal): Promise<Response> {
     return this.fetchFn(`${this.baseUrl}/audio/speech`, {
       method: 'POST',
       headers: {
@@ -224,16 +254,19 @@ export class OpenAiTts implements Tts {
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({ model: this.model, voice: this.voice, input: text, response_format: this.responseFormat }),
+      ...(signal ? { signal } : {}),
     });
   }
 
-  async synthesize(text: string): Promise<SynthesizedAudio> {
+  async synthesize(text: string, signal?: AbortSignal): Promise<SynthesizedAudio> {
     const started = Date.now();
     this.onTrace?.({ component: 'tts', event: 'rest-start', chars: text.length, model: this.model });
     try {
-      const res = await this.request(text);
+      signal?.throwIfAborted();
+      const res = await this.request(text, signal);
       if (!res.ok) throw new Error(`tts-http-${res.status}`);
       const raw = Buffer.from(await res.arrayBuffer());
+      signal?.throwIfAborted();
       const audio =
         this.responseFormat === 'pcm'
           ? wavToMulaw(encodeWav(new Int16Array(raw.buffer, raw.byteOffset, (raw.length - (raw.length % 2)) / 2), this.pcmSampleRate))
@@ -256,12 +289,14 @@ export class OpenAiTts implements Tts {
    * arrive instead of waiting for the full response body. WAV responses still
    * need the complete body (header + trailer), so they yield once.
    */
-  async *synthesizeStream(text: string): AsyncGenerator<Buffer> {
+  async *synthesizeStream(text: string, signal?: AbortSignal): AsyncGenerator<Buffer> {
     const started = Date.now();
     this.onTrace?.({ component: 'tts', event: 'rest-start', chars: text.length, model: this.model, stream: true });
     try {
-      const res = await this.request(text);
+      signal?.throwIfAborted();
+      const res = await this.request(text, signal);
       if (!res.ok) throw new Error(`tts-http-${res.status}`);
+      if (signal?.aborted) signal.throwIfAborted();
       if (this.responseFormat === 'wav' || !res.body) {
         const raw = Buffer.from(await res.arrayBuffer());
         const audio = this.responseFormat === 'pcm' ? wavToMulaw(encodeWav(new Int16Array(raw.buffer, raw.byteOffset, (raw.length - (raw.length % 2)) / 2), this.pcmSampleRate)) : wavToMulaw(raw);
@@ -273,6 +308,7 @@ export class OpenAiTts implements Tts {
       let bytes = 0;
       let carry = Buffer.alloc(0);
       for await (const piece of res.body as unknown as AsyncIterable<Uint8Array>) {
+        signal?.throwIfAborted();
         const combined = carry.length > 0 ? Buffer.concat([carry, Buffer.from(piece)]) : Buffer.from(piece);
         const even = combined.length - (combined.length % 2);
         if (even === 0) {

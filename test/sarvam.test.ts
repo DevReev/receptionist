@@ -86,4 +86,21 @@ describe('SarvamTts', () => {
       ['tts:rest-start', 'tts:rest-done'],
     );
   });
+
+  it('passes the abort signal to the provider fetch', async () => {
+    let seen: AbortSignal | null = null;
+    const fetchFn = ((_: string, init: { signal?: AbortSignal }) => {
+      seen = init.signal ?? null;
+      return new Promise<Response>((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+      });
+    }) as unknown as typeof fetch;
+    const tts = new SarvamTts({ tts: TTS, fetchFn });
+    const controller = new AbortController();
+    const pending = tts.synthesize('hello mid-synthesis', controller.signal);
+    assert.ok(seen !== null, 'the REST request carries the abort signal');
+    controller.abort('caller-barge-in');
+    await assert.rejects(() => pending, /abort/i);
+    assert.equal((seen as unknown as AbortSignal).aborted, true);
+  });
 });

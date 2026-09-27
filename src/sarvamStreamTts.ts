@@ -128,9 +128,9 @@ export class SarvamStreamingTts implements Tts {
   }
 
   /** Text in, complete 8 kHz mu-law audio out via the REST fallback. */
-  async synthesize(text: string): Promise<SynthesizedAudio> {
+  async synthesize(text: string, signal?: AbortSignal): Promise<SynthesizedAudio> {
     if (!this.fallback) throw new Error('sarvam-tts-no-fallback');
-    return this.fallback.synthesize(text);
+    return this.fallback.synthesize(text, signal);
   }
 
   /** One logical response; phrase text is pushed and a single flush ends it. */
@@ -152,18 +152,47 @@ export class SarvamStreamingTts implements Tts {
       cancelled: false,
     };
     this.response = response;
+    const signal = options.signal;
+    let onAbort: (() => void) | null = null;
+    if (signal) {
+      if (signal.aborted) {
+        this.cancelResponse(response, 'aborted');
+      } else {
+        onAbort = () => this.cancelResponse(response, 'aborted');
+        signal.addEventListener('abort', onAbort, { once: true });
+      }
+    }
+    const detach = (): void => {
+      if (signal && onAbort) signal.removeEventListener('abort', onAbort);
+    };
+    const trackedCancel = (reason: string): void => {
+      detach();
+      this.cancelResponse(response, reason);
+    };
+    // Detach the abort listener once the utterance settles so a later abort
+    // of a reused controller cannot cancel a subsequent response.
+    const originalEnd = response.queue.end.bind(response.queue);
+    const originalFail = response.queue.fail.bind(response.queue);
+    response.queue.end = (): void => {
+      detach();
+      originalEnd();
+    };
+    response.queue.fail = (err: Error): void => {
+      detach();
+      originalFail(err);
+    };
     return {
       generation: response.generation,
       pushText: (text: string) => this.pushText(response, text),
       finishText: () => this.finishText(response),
       audio: () => response.queue.drain(),
-      cancel: (reason: string) => this.cancelResponse(response, reason),
+      cancel: (reason: string) => trackedCancel(reason),
     };
   }
 
   /** Legacy one-string utterance on top of the response session. */
-  async *synthesizeStream(text: string): AsyncGenerator<Buffer> {
-    const response = this.begin({ generation: 0 });
+  async *synthesizeStream(text: string, signal?: AbortSignal): AsyncGenerator<Buffer> {
+    const response = this.begin({ generation: 0, ...(signal ? { signal } : {}) });
     response.pushText(text);
     response.finishText();
     yield* response.audio();

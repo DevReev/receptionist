@@ -261,4 +261,31 @@ describe('OpenAiRealtimeStt', () => {
     assert.equal(closed['bytes'], 800);
     assert.equal(closed['audioMs'], 100);
   });
+
+  it('fails within a bounded connect timeout when the socket never opens', async () => {
+    const h = harness({ connectTimeoutMs: 20 });
+    h.stt.speechStart();
+    h.stt.pushAudio(Buffer.from([1, 2]));
+    await new Promise((r) => setTimeout(r, 50));
+    assert.ok(h.socket.closed, 'the hung socket is closed, never holding the call open');
+    assert.ok(
+      h.traces.some((event) => event.component === 'stt' && event.event === 'connect-timeout'),
+      'the timeout is traced',
+    );
+    await assert.rejects(() => h.stt.finalize(), /openai-realtime-not-streaming/);
+    h.stt.close();
+  });
+
+  it('clears the connect timeout once the socket opens', async () => {
+    const h = harness({ connectTimeoutMs: 20 });
+    h.socket.peerOpen();
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(
+      h.traces.some((event) => event.component === 'stt' && event.event === 'connect-timeout'),
+      false,
+      'an opened socket never times out',
+    );
+    assert.equal(h.socket.closed, false);
+    h.stt.close();
+  });
 });

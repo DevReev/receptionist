@@ -365,4 +365,41 @@ describe('SarvamStreamingTts incremental response', () => {
     assert.deepEqual(await audio.done, []);
     h.tts.close();
   });
+
+  it('aborts the utterance when the speech signal fires', async () => {
+    const h = harnessMulti();
+    h.socket().peerOpen();
+    const controller = new AbortController();
+    const response = h.tts.begin!({ generation: 5, signal: controller.signal });
+    response.pushText('Hello.');
+    response.finishText();
+    const audio = collect(response.audio());
+    h.socket().peerMessage(audioMessage([1]));
+    controller.abort('caller-barge-in');
+    assert.deepEqual(await audio.done, [Buffer.from([1])], 'audio settles with chunks so far');
+    assert.equal(h.sockets[0]!.closed, true, 'the provider socket closes on abort');
+    const next = h.tts.begin!({ generation: 6 });
+    next.pushText('Two.');
+    next.finishText();
+    const nextAudio = collect(next.audio());
+    h.socket().peerOpen();
+    h.socket().peerMessage(audioMessage([7]));
+    h.socket().peerMessage(FINAL);
+    assert.deepEqual(await nextAudio.done, [Buffer.from([7])]);
+    h.tts.close();
+  });
+
+  it('close cancels the streaming utterance without holding the socket', async () => {
+    const h = harness();
+    h.socket.peerOpen();
+    const controller = new AbortController();
+    const response = h.tts.begin!({ generation: 8, signal: controller.signal });
+    response.pushText('Bye.');
+    response.finishText();
+    const audio = collect(response.audio());
+    controller.abort('call-closed');
+    assert.deepEqual(await audio.done, []);
+    assert.equal(h.socket.closed, true);
+    h.tts.close();
+  });
 });

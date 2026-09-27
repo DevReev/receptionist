@@ -16,11 +16,14 @@ export interface OpenAiRealtimeConfig {
   languages?: string[];
   /** How long `finalize` waits for the completed event before rejecting to REST. */
   finalTimeoutMs?: number;
+  /** How long to wait for the socket handshake before failing to the REST path. */
+  connectTimeoutMs?: number;
   /** Pre-speech audio held for the utterance start; 8 kHz mulaw is ~8 bytes/ms. */
   preRollBytes?: number;
 }
 
 const DEFAULT_FINAL_TIMEOUT_MS = 4000;
+const DEFAULT_CONNECT_TIMEOUT_MS = 5000;
 const DEFAULT_PRE_ROLL_BYTES = 8000;
 /** 8 kHz mulaw: 8 bytes per millisecond. */
 const BYTES_PER_MS = 8;
@@ -46,6 +49,7 @@ export class OpenAiRealtimeStt implements RealtimeStt {
   readonly partials = true;
   private readonly socket: RealtimeSocket;
   private readonly finalTimeoutMs: number;
+  private readonly connectTimeoutMs: number;
   private readonly preRollBytes: number;
   private readonly onTrace?: TraceFn;
   private readonly pendingAudio: Buffer[] = [];
@@ -62,6 +66,7 @@ export class OpenAiRealtimeStt implements RealtimeStt {
   private failed = false;
   private closed = false;
   private speechOpen = false;
+  private connectTimer: NodeJS.Timeout | null = null;
   /** Audio appended since the last commit. */
   private utteranceBytes = 0;
   /** Audio appended over the whole call, for the cost trace. */
@@ -77,6 +82,7 @@ export class OpenAiRealtimeStt implements RealtimeStt {
 
   constructor(opts: { config: OpenAiRealtimeConfig; connect?: RealtimeSocketFactory; onTrace?: TraceFn }) {
     this.finalTimeoutMs = opts.config.finalTimeoutMs ?? DEFAULT_FINAL_TIMEOUT_MS;
+    this.connectTimeoutMs = opts.config.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS;
     this.preRollBytes = opts.config.preRollBytes ?? DEFAULT_PRE_ROLL_BYTES;
     this.onTrace = opts.onTrace;
     const update = JSON.stringify({
@@ -102,6 +108,7 @@ export class OpenAiRealtimeStt implements RealtimeStt {
     });
     this.socket.onOpen(() => {
       if (this.closed) return;
+      this.clearConnectTimer();
       this.ready = true;
       this.socket.send(update);
       this.onTrace?.({
@@ -119,6 +126,25 @@ export class OpenAiRealtimeStt implements RealtimeStt {
       this.onTrace?.({ component: 'stt', event: 'socket-close', code, reason });
       if (!this.closed) this.fail(new Error('openai-realtime-closed'));
     });
+    this.armConnectTimer();
+  }
+
+  private armConnectTimer(): void {
+    if (this.connectTimeoutMs <= 0 || this.ready || this.closed || this.failed) return;
+    this.clearConnectTimer();
+    this.connectTimer = setTimeout(() => {
+      this.connectTimer = null;
+      if (this.ready || this.closed || this.failed) return;
+      this.onTrace?.({ component: 'stt', event: 'connect-timeout', ms: this.connectTimeoutMs });
+      this.fail(new Error('openai-realtime-connect-timeout'));
+    }, this.connectTimeoutMs);
+    this.connectTimer.unref?.();
+  }
+
+  private clearConnectTimer(): void {
+    if (!this.connectTimer) return;
+    clearTimeout(this.connectTimer);
+    this.connectTimer = null;
   }
 
   private send(message: Record<string, unknown>): void {
@@ -228,6 +254,7 @@ export class OpenAiRealtimeStt implements RealtimeStt {
   private fail(err: Error): void {
     if (this.failed) return;
     this.failed = true;
+    this.clearConnectTimer();
     this.onTrace?.({ component: 'stt', event: 'stream-error', detail: err.message });
     const waiting = this.waiting;
     this.waiting = null;
@@ -307,6 +334,7 @@ export class OpenAiRealtimeStt implements RealtimeStt {
   close(): void {
     if (this.closed) return;
     this.closed = true;
+    this.clearConnectTimer();
     this.onTrace?.({
       component: 'stt',
       event: 'close',

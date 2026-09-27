@@ -435,4 +435,83 @@ describe('live barge-in', () => {
     assert.equal(proposed.length, 1, 'the in-flight write is never cancelled');
     live.close('test');
   });
+
+  it('aborts the in-flight provider request on barge-in, not just late chunks', async () => {
+    const calls = new CallStore();
+    let captured: AbortSignal | null = null;
+    let abortFired = false;
+    const tts: Tts = {
+      synthesize: async (_text: string, signal?: AbortSignal) => {
+        captured = signal ?? null;
+        signal?.addEventListener('abort', () => {
+          abortFired = true;
+        }, { once: true });
+        await new Promise<void>((_resolve, reject) => {
+          if (signal?.aborted) {
+            reject(new DOMException('aborted', 'AbortError'));
+            return;
+          }
+          signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+        });
+        throw new Error('unreachable');
+      },
+    };
+    const live = new LiveCallSession({
+      identity: { callSid: 'CAabort', streamSid: 'MZabort' },
+      sendAudio: () => {},
+      vad: scriptVad([...speech(30), ...silence(80)]),
+      policy: POLICY,
+      transcriber: queueTranscriber(['excuse me, are you open today']),
+      tts,
+      guide: GUIDE,
+      calls,
+      bargeInMinSpeechMs: 200,
+      clearPlayback: () => {},
+    });
+    void live.open().catch(() => {});
+    await waitFor(() => captured !== null, 'the greeting provider request to start');
+    for (let i = 0; i < 15; i++) await live.receiveAudio(SPEECH_FRAME);
+    await waitFor(() => abortFired, 'barge-in to abort the provider request');
+    assert.equal(captured!.aborted, true, 'the in-flight request aborts instead of only dropping audio');
+    live.close('test');
+  });
+
+  it('call close cancels in-flight speech work so no provider request outlives the session', async () => {
+    const calls = new CallStore();
+    let captured: AbortSignal | null = null;
+    let settled = false;
+    const tts: Tts = {
+      synthesize: async (_text: string, signal?: AbortSignal) => {
+        captured = signal ?? null;
+        try {
+          await new Promise<void>((_resolve, reject) => {
+            if (signal?.aborted) {
+              reject(new DOMException('aborted', 'AbortError'));
+              return;
+            }
+            signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')), { once: true });
+          });
+        } finally {
+          settled = true;
+        }
+        throw new DOMException('aborted', 'AbortError');
+      },
+    };
+    const live = new LiveCallSession({
+      identity: { callSid: 'CAclose', streamSid: 'MZclose' },
+      sendAudio: () => {},
+      vad: scriptVad(silence(5)),
+      policy: POLICY,
+      transcriber: queueTranscriber(['hello']),
+      tts,
+      guide: GUIDE,
+      calls,
+    });
+    void live.open().catch(() => {});
+    await waitFor(() => captured !== null, 'the greeting provider request to start');
+    live.close('test');
+    await waitFor(() => settled, 'the in-flight request to settle');
+    assert.equal(captured!.aborted, true, 'close aborts the provider request');
+    assert.equal(live.isClosed, true);
+  });
 });

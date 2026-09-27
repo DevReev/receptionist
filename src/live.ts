@@ -899,7 +899,7 @@ export class LiveCallSession {
         // paced transport queue and the response-tail mark barrier.
         this.sendResponseAudio(generation, fixedBytes);
       } else if (text !== null) {
-        const response = this.createSpeechResponse(generation);
+        const response = this.createSpeechResponse(generation, speech.abort.signal);
         speech.response = response;
         const collect = opts.fixed && this.fixedCache !== undefined;
         const chunks: Buffer[] = [];
@@ -942,10 +942,10 @@ export class LiveCallSession {
     }
   }
 
-  private createSpeechResponse(generation: number): SpeechResponse {
+  private createSpeechResponse(generation: number, signal?: AbortSignal): SpeechResponse {
     if (this.tts.begin) {
       try {
-        return this.tts.begin({ generation });
+        return this.tts.begin({ generation, ...(signal ? { signal } : {}) });
       } catch {
         // The streaming socket is unavailable (provider reject, socket drop):
         // fall back to the phrase-by-phrase path instead of failing the Turn.
@@ -953,6 +953,7 @@ export class LiveCallSession {
     }
     return bufferedSpeech(this.tts, {
       generation,
+      ...(signal ? { signal } : {}),
       onFallback: (text, detail) => this.logPhase('tts', 'fallback', { chars: text.length, detail }),
     });
   }
@@ -1340,7 +1341,12 @@ export class LiveCallSession {
     this.warmSttAbort?.abort('call-closed');
     this.warmSttAbort = null;
     this.logSession?.({ callSid: this.identity.callSid, kind: 'session', event: 'close', reason });
-    this.activeSpeech?.abort.abort();
+    // Abort the Turn's LLM generation (queued model replies never start after
+    // close) and the active speech signal (in-flight provider TTS requests
+    // abort instead of only dropping late chunks).
+    this.turnAbort?.abort('call-closed');
+    this.turnAbort = null;
+    this.activeSpeech?.abort.abort('call-closed');
     this.activeSpeech?.response.cancel('call-closed');
     this.activeSpeech = null;
     this.realtime?.close();
@@ -2067,12 +2073,17 @@ export class LiveCallSession {
         return { text: '', generation: 0 };
       }
       const generation = this.nextGeneration();
-      const response = this.createSpeechResponse(generation);
+      // Dedicated speech signal: barge-in and close abort the provider TTS
+      // request through it, while the Turn deadline only aborts the LLM
+      // generation — a generation that completes on the deadline edge is
+      // still spoken, so its audio must not be cancelled with the deadline.
+      const speechAbort = new AbortController();
+      const response = this.createSpeechResponse(generation, speechAbort.signal);
       const speech: ActiveSpeech = {
         generation,
         text: '',
         kind: 'response',
-        abort: controller,
+        abort: speechAbort,
         response,
         cancelled: false,
         speculative,
