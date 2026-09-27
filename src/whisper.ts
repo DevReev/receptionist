@@ -33,7 +33,7 @@ export class WhisperTranscriber implements Transcriber {
     this.onTrace = opts.onTrace;
   }
 
-  async transcribe(audio: Buffer, contentType: string): Promise<Transcription> {
+  async transcribe(audio: Buffer, contentType: string, signal?: AbortSignal): Promise<Transcription> {
     const started = Date.now();
     this.onTrace?.({ component: 'stt', event: 'rest-start', bytes: audio.length, model: this.stt.model });
     try {
@@ -52,6 +52,7 @@ export class WhisperTranscriber implements Transcriber {
         method: 'POST',
         headers: { Authorization: `Bearer ${this.stt.apiKey}` },
         body: form,
+        signal,
       });
       if (!res.ok) throw new Error(`whisper-http-${res.status}`);
       const data = (await res.json()) as { text?: unknown; segments?: unknown };

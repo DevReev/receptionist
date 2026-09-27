@@ -96,6 +96,40 @@ describe('WhisperTranscriber', () => {
     assert.equal(events[1]!['chars'], 'hello clinic'.length);
     assert.equal(events[1]!['noSpeech'], false);
   });
+
+  it('passes the abort signal to the provider fetch', async () => {
+    let seen: AbortSignal | null | undefined;
+    const t = new WhisperTranscriber({
+      stt: { apiKey: 'k', baseUrl: 'http://stub-whisper/v1', model: 'stub-model' },
+      fetchFn: (async (_url: string, init: { signal?: AbortSignal | null }) => {
+        seen = init.signal;
+        return jsonResponse({ text: 'hello clinic', segments: [{ no_speech_prob: 0.05 }] });
+      }) as unknown as typeof fetch,
+    });
+    const controller = new AbortController();
+    const out = await t.transcribe(Buffer.from('audio'), 'audio/wav', controller.signal);
+    assert.equal(seen, controller.signal);
+    assert.equal(out.text, 'hello clinic');
+  });
+
+  it('surfaces an aborted fetch as a rest-error', async () => {
+    const events: TraceEvent[] = [];
+    const t = new WhisperTranscriber({
+      stt: { apiKey: 'k', baseUrl: 'http://stub-whisper/v1', model: 'stub-model' },
+      fetchFn: (async (_url: string, init: { signal?: AbortSignal | null }) => {
+        init.signal?.throwIfAborted();
+        return jsonResponse({ text: 'hello clinic', segments: [] });
+      }) as unknown as typeof fetch,
+      onTrace: (e) => events.push(e),
+    });
+    const controller = new AbortController();
+    controller.abort('caller-barge-in');
+    await assert.rejects(() => t.transcribe(Buffer.from('audio'), 'audio/wav', controller.signal));
+    assert.deepEqual(
+      events.map((e) => `${e.component}:${e.event}`),
+      ['stt:rest-start', 'stt:rest-error'],
+    );
+  });
 });
 
 function chatMessage(message: unknown): typeof fetch {

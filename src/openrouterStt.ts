@@ -26,7 +26,7 @@ export class OpenRouterStt implements Transcriber {
     this.onTrace = opts.onTrace;
   }
 
-  async transcribe(audio: Buffer, contentType: string): Promise<Transcription> {
+  async transcribe(audio: Buffer, contentType: string, signal?: AbortSignal): Promise<Transcription> {
     const started = Date.now();
     this.onTrace?.({ component: 'stt', event: 'openrouter-start', bytes: audio.length, model: this.stt.model });
     try {
@@ -40,6 +40,7 @@ export class OpenRouterStt implements Transcriber {
         method: 'POST',
         headers: { Authorization: `Bearer ${this.stt.apiKey}` },
         body: form,
+        signal,
       });
       if (!res.ok) throw new Error(`openrouter-stt-http-${res.status}`);
       const data = (await res.json()) as { text?: unknown; transcript?: unknown };

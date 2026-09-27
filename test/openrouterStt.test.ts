@@ -119,6 +119,21 @@ describe('OpenRouterStt', () => {
     assert.match(String(events[1]!['detail']), /openrouter-stt-http-500/);
     assert.equal(typeof events[1]!['ms'], 'number');
   });
+
+  it('passes the abort signal to the provider fetch', async () => {
+    let seen: AbortSignal | null | undefined;
+    const t = new OpenRouterStt({
+      stt: STT,
+      fetchFn: (async (_u: string, init: { signal?: AbortSignal | null }) => {
+        seen = init.signal;
+        return jsonResponse({ text: 'I want to book an appointment.' });
+      }) as unknown as typeof fetch,
+    });
+    const controller = new AbortController();
+    const out = await t.transcribe(Buffer.from('audio'), 'audio/wav', controller.signal);
+    assert.equal(seen, controller.signal);
+    assert.equal(out.text, 'I want to book an appointment.');
+  });
 });
 
 describe('discoverTranscriptionModels', () => {

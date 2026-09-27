@@ -424,6 +424,7 @@ export async function main(): Promise<void> {
               maxDelayMs: config.echoGateMaxDelayMs,
             },
             turnDeadlineMs: config.turnDeadlineMs,
+            transcribeDeadlineMs: config.sttDeadlineMs,
             fixedCache,
             onProposeBooking: proposeBooking,
             calls,

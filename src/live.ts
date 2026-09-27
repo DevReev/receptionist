@@ -121,6 +121,12 @@ export interface LiveCallOptions {
   speculation?: boolean;
   /** Whole-Turn deadline for the LLM response. <=0 disables. */
   turnDeadlineMs?: number;
+  /**
+   * Bound on one Turn's REST transcription decodes (commit-time hedge, retry,
+   * second opinion). A hung provider resolves the Turn with a reprompt instead
+   * of pinning it. <=0 disables.
+   */
+  transcribeDeadlineMs?: number;
   /** Shared fixed-phrase audio cache; hits skip the provider. */
   fixedCache?: FixedAudioCache;
   /** Injectable reducer for deterministic tests. */
@@ -270,6 +276,10 @@ function isAbortError(err: unknown, signal: AbortSignal): boolean {
   return signal.aborted || (err instanceof Error && err.name === 'AbortError');
 }
 
+function isTranscribeTimeout(err: unknown): boolean {
+  return err instanceof Error && err.message.startsWith('transcribe-timeout');
+}
+
 /** No-provider response used for fixed-cache hits and terminal states. */
 function silentResponse(generation: number): SpeechResponse {
   return {
@@ -288,6 +298,7 @@ function silentResponse(generation: number): SpeechResponse {
  */
 const WARM_AVAILABILITY_MS = 120_000;
 const DEFAULT_TURN_DEADLINE_MS = 6000;
+const DEFAULT_STT_DEADLINE_MS = 5000;
 
 interface ActiveSpeech {
   generation: number;
@@ -354,6 +365,7 @@ export class LiveCallSession {
   private readonly noResponseMs: number;
   private readonly availabilityTimeoutMs: number;
   private readonly turnDeadlineMs: number;
+  private readonly transcribeDeadlineMs: number;
   private readonly fixedCache: FixedAudioCache | undefined;
   private readonly speculationEnabled: boolean;
   /** A partial-started generation awaiting its Turn's final. */
@@ -392,6 +404,14 @@ export class LiveCallSession {
   private activeSpeech: ActiveSpeech | null = null;
   /** Abort controller of the Turn's LLM generation, if one is running. */
   private turnAbort: AbortController | null = null;
+  /**
+   * Abort controller of the Turn's in-flight transcription decodes (hedge,
+   * retry, second opinion). Barge-in and close abort it so a hung provider
+   * cannot pin the Turn; late settlements never reach the session.
+   */
+  private transcribeAbort: AbortController | null = null;
+  /** Abort controller of the on-open STT warm-up decode, if one is running. */
+  private warmSttAbort: AbortController | null = null;
   /** Last Turn interrupted by a Barge-in; its pending generation must not speak. */
   private interruptedTurn = 0;
   /** Turn that already played a holding line; a Turn never stacks two. */
@@ -438,6 +458,7 @@ export class LiveCallSession {
     this.noResponseMs = opts.noResponseMs ?? 0;
     this.availabilityTimeoutMs = opts.availabilityTimeoutMs ?? 0;
     this.turnDeadlineMs = opts.turnDeadlineMs ?? DEFAULT_TURN_DEADLINE_MS;
+    this.transcribeDeadlineMs = opts.transcribeDeadlineMs ?? DEFAULT_STT_DEADLINE_MS;
     this.fixedCache = opts.fixedCache;
     this.speculationEnabled = opts.speculation ?? true;
     this.cueNames = guideBookingNames(this.guide.raw);
@@ -772,16 +793,70 @@ export class LiveCallSession {
   private warmSttRoute(): void {
     const started = Date.now();
     this.trace?.({ component: 'stt', event: 'warmup-start' });
-    this.transcriber.transcribe(encodeWav(new Int16Array(1600)), 'audio/wav').then(
-      () => this.trace?.({ component: 'stt', event: 'warmup-done', ms: Date.now() - started }),
-      (err: unknown) =>
+    const controller = new AbortController();
+    this.warmSttAbort = controller;
+    const done = (): void => {
+      if (this.warmSttAbort === controller) this.warmSttAbort = null;
+    };
+    this.transcriber.transcribe(encodeWav(new Int16Array(1600)), 'audio/wav', controller.signal).then(
+      () => {
+        done();
+        this.trace?.({ component: 'stt', event: 'warmup-done', ms: Date.now() - started });
+      },
+      (err: unknown) => {
+        done();
         this.trace?.({
           component: 'stt',
           event: 'warmup-error',
           ms: Date.now() - started,
           detail: this.errorText(err),
-        }),
+        });
+      },
     );
+  }
+
+  /**
+   * One Turn's REST decode, bounded by the transcription deadline and the
+   * Turn's abort signal. The race holds the only continuation the session
+   * awaits: a decode that settles after an abort or the deadline never reaches
+   * the session, and a Hung provider rejects here instead of pinning the Turn.
+   * `<=0` disables the deadline but still honours cancellation.
+   */
+  private awaitDecode(decode: Promise<Transcription>, signal: AbortSignal): Promise<Transcription> {
+    if (signal.aborted) return Promise.reject(new Error('transcribe-aborted'));
+    const deadlineMs = this.transcribeDeadlineMs;
+    return new Promise<Transcription>((resolve, reject) => {
+      let timer: NodeJS.Timeout | null = null;
+      const done = (): void => {
+        signal.removeEventListener('abort', onAbort);
+        if (timer !== null) {
+          clearTimeout(timer);
+          timer = null;
+        }
+      };
+      const onAbort = (): void => {
+        done();
+        reject(new Error('transcribe-aborted'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      if (deadlineMs > 0) {
+        timer = setTimeout(() => {
+          done();
+          reject(new Error(`transcribe-timeout after ${deadlineMs}ms`));
+        }, deadlineMs);
+        timer.unref?.();
+      }
+      decode.then(
+        (result) => {
+          done();
+          resolve(result);
+        },
+        (err: unknown) => {
+          done();
+          reject(err);
+        },
+      );
+    });
   }
 
   /**
@@ -936,6 +1011,10 @@ export class LiveCallSession {
     // aborted too, so the interrupted Turn never speaks after the Caller has
     // taken the floor.
     this.turnAbort?.abort('caller-barge-in');
+    // Any transcription decode of the interrupted Turn is aborted as well: a
+    // late transcript must never reach the session after the abort.
+    this.transcribeAbort?.abort('caller-barge-in');
+    this.transcribeAbort = null;
     this.activeSpeech = null;
     // The retained candidate becomes the start of the next utterance: the
     // first word is preserved instead of being dropped with the response.
@@ -1254,6 +1333,12 @@ export class LiveCallSession {
     this.cancelNoResponse();
     clearInterval(this.scoreTimer);
     if (this.speculation) this.abortSpeculation(this.speculation, 'call-closed');
+    // In-flight transcription decodes (hedge, second opinion, warm-up) are
+    // aborted so a hung provider cannot outlive the call or reject unhandled.
+    this.transcribeAbort?.abort('call-closed');
+    this.transcribeAbort = null;
+    this.warmSttAbort?.abort('call-closed');
+    this.warmSttAbort = null;
     this.logSession?.({ callSid: this.identity.callSid, kind: 'session', event: 'close', reason });
     this.activeSpeech?.abort.abort();
     this.activeSpeech?.response.cancel('call-closed');
@@ -1351,11 +1436,17 @@ export class LiveCallSession {
     const prePhase = this.dialogue.phase;
     const criticalPrePhase =
       prePhase === 'collecting-patient' || prePhase === 'awaiting-confirmation' || prePhase === 'booking';
+    // One Turn, one transcription controller: barge-in and close abort every
+    // decode of this Turn (hedge, retry, second opinion) instead of letting
+    // them run to completion and dropping the result.
+    const transcribeAbort = new AbortController();
+    this.transcribeAbort = transcribeAbort;
+    const transcribeSignal = transcribeAbort.signal;
     try {
       wav = encodeWav(utterance.audio);
       this.onUtteranceAudio?.({ callSid: this.identity.callSid, turn, wav });
       if (this.secondOpinion && criticalPrePhase) {
-        secondOpinion = this.secondOpinion.transcribe(wav, 'audio/wav');
+        secondOpinion = this.secondOpinion.transcribe(wav, 'audio/wav', transcribeSignal);
         secondOpinion.catch(() => {});
         this.trace?.({ component: 'stt', event: 'second-opinion-start', turn });
       }
@@ -1367,7 +1458,7 @@ export class LiveCallSession {
       let rest: Promise<Transcription> | null = null;
       const startRest = (): Promise<Transcription> => {
         if (rest === null) {
-          rest = this.transcriber.transcribe(wav!, 'audio/wav');
+          rest = this.transcriber.transcribe(wav!, 'audio/wav', transcribeSignal);
           rest.catch((err: unknown) =>
             this.trace?.({ component: 'stt', event: 'hedge-error', turn, detail: this.errorText(err) }),
           );
@@ -1383,6 +1474,8 @@ export class LiveCallSession {
           (err: unknown) => ({ kind: 'final-error' as const, err }),
         );
         const settled = await settledFinal;
+        // The Turn is gone (barge-in, close): a late final must not revive it.
+        if (this.closed || transcribeSignal.aborted) return;
         if (settled.kind === 'final') {
           // A non-empty realtime final is preferred whenever it lands, even
           // when the REST hedge already returned.
@@ -1399,12 +1492,30 @@ export class LiveCallSession {
         }
       }
       // An empty realtime final uses the decode already in flight; a REST
-      // failure with a realtime result never overrides it.
+      // failure with a realtime result never overrides it. The REST wait is
+      // bounded: a hung provider resolves the Turn with a reprompt instead of
+      // pinning it, while a realtime final already in hand still stands.
       if (!tx || !tx.text.trim()) {
         let result: Transcription;
         try {
-          result = await (rest ?? this.transcriber.transcribe(wav, 'audio/wav'));
+          result = await this.awaitDecode(
+            rest ?? this.transcriber.transcribe(wav, 'audio/wav', transcribeSignal),
+            transcribeSignal,
+          );
         } catch (err) {
+          // The Turn is gone (barge-in, close): no late transcript, no late
+          // reprompt, no unhandled rejection.
+          if (this.closed || transcribeSignal.aborted) return;
+          if (isTranscribeTimeout(err)) {
+            // Cancel the hung provider call, then take the normal speakable
+            // recovery path with the timeout reason on the trace.
+            transcribeAbort.abort('transcribe-timeout');
+            this.trace?.({ component: 'stt', event: 'deadline', turn, ms: this.transcribeDeadlineMs });
+            this.logPhase('transcribe', 'timeout', { turn, ms: Date.now() - transcribeStarted });
+            if (speculation) this.abortSpeculation(speculation, 'transcribe-error');
+            await this.miss(text, turn, `transcribe-timeout after ${this.transcribeDeadlineMs}ms`);
+            return;
+          }
           if (!tx) throw err;
           result = tx;
         }
@@ -1414,7 +1525,7 @@ export class LiveCallSession {
           if (result.text.trim()) this.trace?.({ component: 'stt', event: 'hedge-win', turn });
         }
       }
-      if (this.closed) return;
+      if (this.closed || transcribeSignal.aborted) return;
       this.logPhase('transcribe', 'done', {
         turn,
         ms: Date.now() - transcribeStarted,
@@ -1430,7 +1541,7 @@ export class LiveCallSession {
       text = tx.text;
       if (wav) this.onUtteranceTranscribed?.({ callSid: this.identity.callSid, turn, text: tx.text, wav });
     } catch (err) {
-      if (this.closed) return;
+      if (this.closed || transcribeSignal.aborted) return;
       if (speculation) this.abortSpeculation(speculation, 'transcribe-error');
       const detail = err instanceof Error ? `transcribe-error: ${err.message}` : `transcribe-error: ${String(err)}`;
       this.logPhase('transcribe', 'error', { turn, ms: Date.now() - transcribeStarted, detail });
@@ -1477,7 +1588,7 @@ export class LiveCallSession {
       }
     }
     if (!historyPushed) this.calls.pushHistory(this.identity.callSid, { role: 'caller', text });
-    await this.reduceAndAnswer(text, turn, wav, secondOpinion);
+    await this.reduceAndAnswer(text, turn, wav, secondOpinion, transcribeSignal);
   }
 
   /**
@@ -1507,6 +1618,7 @@ export class LiveCallSession {
     turn: number,
     wav: Buffer | null,
     prestartedSecondOpinion: Promise<Transcription> | null = null,
+    transcribeSignal?: AbortSignal,
   ): Promise<void> {
     this.setPhase('PLANNING');
     const before = this.dialogue;
@@ -1570,8 +1682,8 @@ export class LiveCallSession {
     if (patientChanged) {
       const second =
         prestartedSecondOpinion ??
-        (this.secondOpinion && wav ? this.secondOpinion.transcribe(wav, 'audio/wav') : null);
-      if (await this.verifyCriticalFields(excerpt, turn, second, state)) return;
+        (this.secondOpinion && wav ? this.secondOpinion.transcribe(wav, 'audio/wav', transcribeSignal) : null);
+      if (await this.verifyCriticalFields(excerpt, turn, second, state, transcribeSignal)) return;
     }
     this.setDialogue(state);
 
@@ -1710,12 +1822,20 @@ export class LiveCallSession {
     turn: number,
     second: Promise<Transcription> | null,
     state: DialogueState,
+    signal?: AbortSignal,
   ): Promise<boolean> {
     if (!second) return false;
     let result: Transcription;
     try {
-      result = await second;
+      result = await (signal ? this.awaitDecode(second, signal) : second);
     } catch (err) {
+      // The Turn is gone (barge-in, close): stay silent and commit nothing.
+      if (this.closed || signal?.aborted) return true;
+      if (isTranscribeTimeout(err)) {
+        this.trace?.({ component: 'stt', event: 'deadline', turn, scope: 'second-opinion' });
+        this.logPhase('transcribe', 'timeout', { turn, scope: 'second-opinion' });
+        return false;
+      }
       this.trace?.({
         component: 'stt',
         event: 'second-opinion-error',

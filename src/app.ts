@@ -13,7 +13,7 @@ export interface Transcription {
 }
 
 export interface Transcriber {
-  transcribe(audio: Buffer, contentType: string): Promise<Transcription>;
+  transcribe(audio: Buffer, contentType: string, signal?: AbortSignal): Promise<Transcription>;
 }
 
 export interface AssistantReply {

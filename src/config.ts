@@ -94,6 +94,8 @@ export interface Config {
   bargeInConfirmMs: number;
   /** Whole-Turn deadline for the LLM response; <=0 disables. */
   turnDeadlineMs: number;
+  /** Bound on one Turn's REST transcription decodes (hedge, retry, second opinion); <=0 waits forever. */
+  sttDeadlineMs: number;
   /** Shared fixed-phrase cache directory; unset means in-memory only. */
   fixedAudioCacheDir?: string;
   /** Best-effort prewarm budget before the server starts accepting calls. */
@@ -263,6 +265,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     bargeInDipToleranceMs: int(env, 'BARGE_IN_DIP_TOLERANCE_MS', BARGE_IN_DEFAULTS.dipToleranceMs),
     bargeInConfirmMs: int(env, 'BARGE_IN_CONFIRM_MS', BARGE_IN_DEFAULTS.confirmMs),
     turnDeadlineMs: int(env, 'TURN_DEADLINE_MS', 6000),
+    sttDeadlineMs: int(env, 'STT_DEADLINE_MS', 5000),
     fixedAudioCacheDir: env.FIXED_AUDIO_CACHE_DIR,
     fixedPrewarmMs: int(env, 'FIXED_AUDIO_PREWARM_MS', 8000),
     openrouterSttFallback: bool(env, 'OPENROUTER_STT_FALLBACK', false),
