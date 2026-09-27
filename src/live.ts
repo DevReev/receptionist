@@ -1949,6 +1949,7 @@ export class LiveCallSession {
     let fullReply = '';
     let replyGeneration = 0;
     let generationCompleted = false;
+    let deadlineOutcome: 'completed-buffered' | 'cleared' | null = null;
     try {
       const first = await this.firstTokenOrHold(iterator, turn);
       const result = await this.enqueueModelResponse(iterator, first, controller, turn, {
@@ -1961,15 +1962,17 @@ export class LiveCallSession {
       });
       fullReply = result.text;
       replyGeneration = result.generation;
+      deadlineOutcome = result.deadline;
     } catch (err) {
       if (deadline) clearTimeout(deadline);
       if (this.closed || this.activeTurn === null) return;
       if (isAbortError(err, controller.signal)) {
         // A Barge-in owns the Turn: its promoted utterance is already the next
-        // Turn. A deadline abort heard nothing to answer, so reprompt and
-        // return the floor instead of leaving the call silent.
+        // Turn. A deadline abort before any speakable reply buffered heard
+        // nothing to answer, so reprompt and return the floor instead of
+        // leaving the call silent.
         if (this.interruptedTurn === turn || generationCompleted) return;
-        this.logPhase('turn', 'deadline', { turn, ms: this.turnDeadlineMs });
+        this.logPhase('turn', 'deadline', { turn, ms: this.turnDeadlineMs, outcome: 'cleared-reprompt' });
         this.logTurn?.({ callSid: this.identity.callSid, turn, excerpt, reply: REPROMPT_LINE, endCall: false, miss: true });
         this.activeTurn = null;
         await this.speakSafe(REPROMPT_LINE);
@@ -1989,13 +1992,34 @@ export class LiveCallSession {
     // utterance is already the next Turn. A reply waiting behind a hold line
     // is aborted before it ever speaks.
     if (replyGeneration > 0 && replyGeneration <= this.cancelledThrough) return;
-    if (controller.signal.aborted && !generationCompleted) {
-      if (this.interruptedTurn === turn) return;
-      this.logPhase('turn', 'deadline', { turn, ms: this.turnDeadlineMs });
-      this.logTurn?.({ callSid: this.identity.callSid, turn, excerpt, reply: REPROMPT_LINE, endCall: false, miss: true });
+    if (this.interruptedTurn === turn) return;
+    // The Turn deadline is traced exactly once, with the Turn's single
+    // recovery outcome. The mid-stream decision lives in
+    // enqueueModelResponse, which sees what the chunker already pushed to TTS.
+    if (deadlineOutcome !== null) {
+      const outcome = deadlineOutcome === 'cleared' ? 'cleared-reprompt' : 'completed-buffered';
+      this.logPhase('turn', 'deadline', { turn, ms: this.turnDeadlineMs, outcome });
+      if (deadlineOutcome === 'cleared') {
+        this.logTurn?.({ callSid: this.identity.callSid, turn, excerpt, reply: REPROMPT_LINE, endCall: false, miss: true });
+        this.activeTurn = null;
+        await this.speakSafe(REPROMPT_LINE);
+        return;
+      }
+      this.logTurn?.({
+        callSid: this.identity.callSid,
+        turn,
+        excerpt,
+        reply: fullReply,
+        endCall: false,
+        miss: false,
+      });
       this.activeTurn = null;
-      await this.speakSafe(REPROMPT_LINE);
       return;
+    }
+    if (controller.signal.aborted && generationCompleted) {
+      // The deadline fired but the provider finished anyway, so the complete
+      // reply stands: still trace the deadline once, with its outcome.
+      this.logPhase('turn', 'deadline', { turn, ms: this.turnDeadlineMs, outcome: 'completed-full' });
     }
     if (fullReply.trim() === '') {
       this.logPhase('assistant', 'empty', { turn });
@@ -2060,7 +2084,7 @@ export class LiveCallSession {
     controller: AbortController,
     turn: number,
     opts: { speculative?: boolean; commitHistory?: boolean; onGenerationDone?: () => void } = {},
-  ): Promise<{ text: string; generation: number }> {
+  ): Promise<{ text: string; generation: number; deadline: 'completed-buffered' | 'cleared' | null }> {
     const speculative = opts.speculative === true;
     const startedAt = Date.now();
     let firstToken = false;
@@ -2070,7 +2094,7 @@ export class LiveCallSession {
       // taken the floor. An aborted speculation must not speak either.
       if (this.closed || this.interruptedTurn === turn || (speculative && controller.signal.aborted)) {
         if (this.turnAbort === controller) this.turnAbort = null;
-        return { text: '', generation: 0 };
+        return { text: '', generation: 0, deadline: null };
       }
       const generation = this.nextGeneration();
       // Dedicated speech signal: barge-in and close abort the provider TTS
@@ -2094,12 +2118,18 @@ export class LiveCallSession {
       try {
         const chunker = new VoiceChunker();
         let fullReply = '';
+        /** Complete phrases already pushed to TTS: the safe-to-finish prefix. */
+        const pushedPhrases: string[] = [];
         const audioDrain = (async () => {
           for await (const chunk of response.audio()) {
             if (this.closed || speech.cancelled || generation <= this.cancelledThrough) return;
             this.sendResponseAudio(generation, chunk);
           }
         })();        let streamError: Error | undefined;
+        // Set when the Turn deadline stops token flow mid-reply while speech
+        // is still live. The recovery decision below owns the Turn: either the
+        // safe buffered prefix plays out, or playback clears for one reprompt.
+        let deadlineAborted = false;
         try {
           let next = first;
           while (!next.done) {
@@ -2112,7 +2142,10 @@ export class LiveCallSession {
               }
               fullReply += token;
               if (this.activeTurn) this.activeTurn.replySoFar = fullReply;
-              for (const phrase of chunker.push(token)) response.pushText(`${phrase} `);
+              for (const phrase of chunker.push(token)) {
+                pushedPhrases.push(phrase);
+                response.pushText(`${phrase} `);
+              }
             }
             next = await iterator.next();
           }
@@ -2122,11 +2155,65 @@ export class LiveCallSession {
         } catch (err) {
           if (!isAbortError(err, controller.signal) && !speech.cancelled) {
             streamError = err instanceof Error ? err : new Error(String(err));
+          } else if (
+            controller.signal.aborted &&
+            !this.closed &&
+            !speech.cancelled &&
+            generation > this.cancelledThrough
+          ) {
+            // The abort stopped token flow but speech is still live and owned
+            // by this Turn (barge-in and close cancel the speech above), so
+            // this is the Turn deadline: recover exactly once below.
+            deadlineAborted = true;
           }
+        }
+        if (deadlineAborted) {
+          // One coherent recovery, never a truncated reply plus a second
+          // reply. Complete phrases already pushed to TTS are safe to finish;
+          // the incomplete tail fragment stays unspoken either way.
+          const played = pushedPhrases.join(' ').trim();
+          if (played === '') {
+            // Nothing speakable buffered: drop any partial audio and let the
+            // Turn fall back to a single reprompt. The truncated text never
+            // enters history.
+            speech.cancelled = true;
+            response.cancel('turn-deadline');
+            this.clearPlaybackFn?.('turn-deadline');
+            if (this.activeTurn) this.activeTurn.replySoFar = '';
+            return { text: '', generation, deadline: 'cleared' as const };
+          }
+          speech.text = played;
+          if (this.activeTurn) this.activeTurn.replySoFar = played;
+          response.finishText();
+          try {
+            await audioDrain;
+          } catch (err) {
+            throw new Error(ttsDetail(err));
+          }
+          if (this.closed || speech.cancelled || generation <= this.cancelledThrough) {
+            response.cancel('generation-cancelled');
+            return { text: played, generation, deadline: null };
+          }
+          const outcome = await this.finishPlayback(generation);
+          if (outcome.outcome === 'cleared') {
+            this.onCleared(speech, outcome.reason);
+            return { text: played, generation, deadline: null };
+          }
+          this.trace?.({ component: 'twilio', event: 'playback-complete', generation });
+          this.onPlaybackComplete?.(speech.text);
+          this.logPhase('assistant', 'done', { turn, ms: Date.now() - startedAt, chars: played.length });
+          this.logPhase('tts', 'done', { generation, chars: speech.text.length });
+          // A speculative reply's text commits in the keep path, in history
+          // order behind the final Caller utterance.
+          if (opts.commitHistory !== false && speech.text) {
+            this.calls.pushHistory(this.identity.callSid, { role: 'receptionist', text: speech.text });
+          }
+          if (this.activeTurn) this.activeTurn.replySoFar = played;
+          return { text: played, generation, deadline: 'completed-buffered' as const };
         }
         if (this.closed || speech.cancelled || generation <= this.cancelledThrough) {
           response.cancel('generation-cancelled');
-          return { text: fullReply, generation };
+          return { text: fullReply, generation, deadline: null };
         }
         const tail = chunker.flush();
         if (tail) response.pushText(`${tail} `);
@@ -2138,11 +2225,11 @@ export class LiveCallSession {
           throw new Error(ttsDetail(err));
         }
         if (streamError) throw streamError;
-        if (this.closed || speech.cancelled || generation <= this.cancelledThrough) return { text: fullReply, generation };
+        if (this.closed || speech.cancelled || generation <= this.cancelledThrough) return { text: fullReply, generation, deadline: null };
         const result = await this.finishPlayback(generation);
         if (result.outcome === 'cleared') {
           this.onCleared(speech, result.reason);
-          return { text: fullReply, generation };
+          return { text: fullReply, generation, deadline: null };
         }
         this.trace?.({ component: 'twilio', event: 'playback-complete', generation });
         this.onPlaybackComplete?.(speech.text);
@@ -2154,7 +2241,7 @@ export class LiveCallSession {
           this.calls.pushHistory(this.identity.callSid, { role: 'receptionist', text: speech.text });
         }
         if (this.activeTurn) this.activeTurn.replySoFar = fullReply;
-        return { text: fullReply, generation };
+        return { text: fullReply, generation, deadline: null };
       } finally {
         if (this.turnAbort === controller) this.turnAbort = null;
         this.activeSpeech = null;

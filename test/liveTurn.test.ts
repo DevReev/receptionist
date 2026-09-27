@@ -59,6 +59,23 @@ async function feed(live: LiveCallSession, frames: number): Promise<void> {
   await live.flush();
 }
 
+/**
+ * A provider stream that hangs until its abort signal fires, like a stalled
+ * model response halted by the Turn deadline. Resolves never; rejects with an
+ * AbortError on abort so the session's deadline path runs.
+ */
+function hangUntilAbort(signal?: AbortSignal): Promise<never> {
+  return new Promise<never>((_, reject) => {
+    const err = new Error('turn-aborted');
+    err.name = 'AbortError';
+    if (signal?.aborted) {
+      reject(err);
+      return;
+    }
+    signal?.addEventListener('abort', () => reject(err), { once: true });
+  });
+}
+
 describe('live full Turn (ticket 11)', () => {
   it('runs multi-turn conversation inside one session with grounded replies', async () => {
     const calls = new CallStore();
@@ -376,6 +393,103 @@ describe('live full Turn (ticket 11)', () => {
     await feed(live, 100);
     assert.deepEqual(texts, ['We are open Monday to Friday.']);
     assert.deepEqual(turns, [{ reply: 'We are open Monday to Friday. ', miss: false }]);
+  });
+
+  it('finishes the buffered reply when the model stalls after a full sentence (ticket 07)', async () => {
+    const calls = new CallStore();
+    const { tts, texts } = stubTts();
+    const turns: { reply: string; miss: boolean }[] = [];
+    const phases: Record<string, unknown>[] = [];
+    const cleared: string[] = [];
+    const live = new LiveCallSession({
+      identity: { callSid: 'CAstallfull', streamSid: 'MZstallfull' },
+      sendAudio: () => {},
+      vad: scriptVad([...speech(50), ...silence(50)]),
+      policy: POLICY,
+      transcriber: queueTranscriber(['what are your hours']),
+      tts,
+      guide: GUIDE,
+      availability: AVAILABILITY,
+      assistant: {
+        reply: async () => ({ text: '', endCall: false }),
+        // A complete sentence streams, then the model stalls past the Turn
+        // deadline with audio already queued.
+        replyStream: async function* (_ctx: AssistantContext, signal?: AbortSignal) {
+          yield 'We are open ';
+          yield 'Monday to Friday. ';
+          yield await hangUntilAbort(signal);
+        },
+      },
+      calls,
+      turnDeadlineMs: 30,
+      finishPlayback: async () => ({ outcome: 'played', mark: 'reply-1' }),
+      clearPlayback: (reason) => cleared.push(reason),
+      logTurn: (e) => turns.push({ reply: e.reply, miss: e.miss }),
+      logSession: (e) => phases.push(e),
+    });
+    await feed(live, 100);
+    // Exactly one outcome: the safe buffered sentence finishes, no reprompt.
+    assert.deepEqual(texts, ['We are open Monday to Friday.']);
+    assert.deepEqual(turns, [{ reply: 'We are open Monday to Friday.', miss: false }]);
+    assert.deepEqual(cleared, [], 'playback is never cleared on the finish path');
+    const history = calls.get('CAstallfull').history;
+    assert.deepEqual(
+      history.map((h) => h.role),
+      ['caller', 'receptionist'],
+    );
+    assert.equal(history[1]!.text, 'We are open Monday to Friday.', 'history holds exactly what played');
+    const deadlines = phases.filter((p) => p.phase === 'turn' && p.event === 'deadline');
+    assert.equal(deadlines.length, 1, 'the deadline is traced exactly once');
+    assert.equal(deadlines[0]!.outcome, 'completed-buffered');
+  });
+
+  it('clears playback and speaks one reprompt when the model stalls mid-phrase (ticket 07)', async () => {
+    const calls = new CallStore();
+    const { tts, texts } = stubTts();
+    const turns: { reply: string; miss: boolean }[] = [];
+    const phases: Record<string, unknown>[] = [];
+    const cleared: string[] = [];
+    const live = new LiveCallSession({
+      identity: { callSid: 'CAstallpart', streamSid: 'MZstallpart' },
+      sendAudio: () => {},
+      vad: scriptVad([...speech(50), ...silence(50)]),
+      policy: POLICY,
+      transcriber: queueTranscriber(['what are your hours']),
+      tts,
+      guide: GUIDE,
+      availability: AVAILABILITY,
+      assistant: {
+        reply: async () => ({ text: '', endCall: false }),
+        // Only a partial phrase streams — nothing the chunker can speak —
+        // then the model stalls past the Turn deadline.
+        replyStream: async function* (_ctx: AssistantContext, signal?: AbortSignal) {
+          yield 'We are open ';
+          yield 'Monday';
+          yield await hangUntilAbort(signal);
+        },
+      },
+      calls,
+      turnDeadlineMs: 30,
+      finishPlayback: async () => ({ outcome: 'played', mark: 'reply-1' }),
+      clearPlayback: (reason) => cleared.push(reason),
+      logTurn: (e) => turns.push({ reply: e.reply, miss: e.miss }),
+      logSession: (e) => phases.push(e),
+    });
+    await feed(live, 100);
+    // Exactly one outcome: cleared playback plus a single reprompt, never the
+    // truncated fragment followed by a second reply.
+    assert.deepEqual(texts, [REPROMPT_LINE]);
+    assert.deepEqual(turns, [{ reply: REPROMPT_LINE, miss: true }]);
+    assert.deepEqual(cleared, ['turn-deadline']);
+    const history = calls.get('CAstallpart').history;
+    assert.deepEqual(
+      history.map((h) => h.role),
+      ['caller'],
+      'the truncated fragment never enters history',
+    );
+    const deadlines = phases.filter((p) => p.phase === 'turn' && p.event === 'deadline');
+    assert.equal(deadlines.length, 1, 'the deadline is traced exactly once');
+    assert.equal(deadlines[0]!.outcome, 'cleared-reprompt');
   });
 
   it('closes the TTS session when the call closes', () => {
