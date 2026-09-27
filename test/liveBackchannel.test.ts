@@ -285,6 +285,59 @@ describe('live Backchannel absorption', () => {
     live.close('test');
   });
 
+  it('lets a content burst following an absorbed Backchannel take the floor without a silence gap', async () => {
+    const calls = new CallStore();
+    const { tts } = stubTts();
+    const traces: TraceEvent[] = [];
+    let cleared = 0;
+    const stt = new FakePartialStt();
+    const live = new LiveCallSession({
+      identity: { callSid: 'CAbc6', streamSid: 'MZbc6' },
+      sendAudio: () => {},
+      vad: scriptVad(speech(400)),
+      policy: POLICY,
+      transcriber: queueTranscriber(['I need Wednesday morning']),
+      realtime: stt,
+      partialSemantics: true,
+      tts,
+      guide: GUIDE,
+      calls,
+      trace: (event) => traces.push(event),
+      finishPlayback: () =>
+        cleared === 0
+          ? new Promise<PlaybackResult>(() => {})
+          : Promise.resolve({ outcome: 'played', mark: '' }),
+      clearPlayback: () => {
+        cleared += 1;
+      },
+    });
+    void live.open().catch(() => {});
+    await waitFor(() => live.currentPhase === 'SPEAKING', 'the greeting to start');
+    // The acknowledgement is absorbed while energy never dips: no silence gap
+    // separates it from the content burst that follows.
+    for (let i = 0; i < 10; i++) {
+      stt.partial('yeah');
+      await live.receiveAudio(SPEECH_FRAME);
+    }
+    assert.equal(cleared, 0, 'the acknowledgement does not stop the greeting');
+    // The content burst starts immediately: a stale Backchannel classification
+    // must not keep absorbing it past the confirm window (200 ms pre-trigger
+    // + 300 ms hold = 25 frames for the new burst).
+    let frames = 0;
+    for (let i = 0; i < 25 && cleared === 0; i++) {
+      stt.partial('I need Wednesday morning');
+      await live.receiveAudio(SPEECH_FRAME);
+      frames += 1;
+    }
+
+    assert.equal(cleared, 1, 'the content burst takes the floor within the confirm window');
+    assert.ok(frames <= 25, `took the floor after ${frames} frames`);
+    const absorptions = traces.filter((event) => event.component === 'call' && event.event === 'backchannel');
+    assert.equal(absorptions.length, 1, 'only the acknowledgement is absorbed');
+    assert.equal(JSON.stringify(traces).includes('Wednesday'), false, 'raw partial text never reaches traces');
+    live.close('test');
+  });
+
   it('does not absorb affirmatives during a readback: they interrupt it instead', async () => {
     const calls = new CallStore();
     const { tts, texts } = stubTts();

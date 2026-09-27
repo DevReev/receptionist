@@ -23,8 +23,33 @@ describe('partial classification', () => {
       'Okay.',
       ' okay ',
       'Mm-hmm, mm-hmm',
+      // Common English affirmations.
+      'yeah',
+      'Yeah.',
+      'yea',
+      'yep',
+      'yup',
+      'nah',
+      'perfect',
+      'cool',
+      'yes',
+      'yeah yeah',
+      'yeah, cool',
+      'yep, perfect',
     ]) {
       assert.equal(classifyPartial(text), 'backchannel', `"${text}"`);
+    }
+  });
+
+  it('classifies elongated affirmations as Backchannels', () => {
+    for (const text of ['yeeah', 'yepp', 'coool', 'nahh']) {
+      assert.equal(classifyPartial(text), 'backchannel', `"${text}"`);
+    }
+  });
+
+  it('keeps unknown short words as content so they take the floor', () => {
+    for (const text of ['hello', 'sorry', 'stop', 'hello?']) {
+      assert.equal(classifyPartial(text), 'content', `"${text}"`);
     }
   });
 

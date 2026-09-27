@@ -239,6 +239,10 @@ export class TurnTaking {
     if (cls === 'unknown') return;
     this.partial.cls = cls;
     this.partial.text = text.trim();
+    // Content-bearing speech belongs to a new burst: it ends any absorption
+    // the previous burst left behind, so the stale classification cannot keep
+    // absorbing the burst now taking the floor.
+    if (cls === 'content') this.partial.absorbing = false;
     if (!this.partial.confirmPending) return;
     if (cls === 'backchannel' && this.absorptionEnabled) {
       this.absorbBackchannel();
@@ -334,8 +338,13 @@ export class TurnTaking {
         return;
       }
       if (this.candidateSamples === 0) {
-        // A fresh speech burst: partials from the previous one are not evidence.
-        if (!this.partial.absorbing) {
+        // A fresh speech burst: the previous burst's Backchannel verdict is
+        // not evidence for this one. The absorbing flag stays (it ends on a
+        // real silence gap and suppresses duplicate traces), but the
+        // classification resets so the burst earns its own verdict: content
+        // or unknown takes the floor, a Backchannel re-absorbs on its own
+        // partial. Content evidence that arrived ahead of the burst is kept.
+        if (this.partial.cls === 'backchannel') {
           this.partial.cls = 'unknown';
           this.partial.text = '';
         }
