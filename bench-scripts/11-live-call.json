@@ -1,0 +1,197 @@
+{
+  "metrics": {
+    "callSid": "CA132fee8e3e777e11cf583e43f1a66811",
+    "turns": 15,
+    "boundaries": {
+      "provider": 0,
+      "local": 15
+    },
+    "replyLatenciesMs": [
+      2291,
+      1129,
+      1852,
+      2125,
+      4215,
+      2108,
+      2064,
+      2093,
+      1964,
+      1878,
+      406,
+      1838,
+      4023,
+      2132
+    ],
+    "replyLatencyMs": {
+      "samples": 14,
+      "p50": 2064,
+      "p95": 4215
+    },
+    "stopLatenciesMs": [
+      620,
+      621,
+      620,
+      680,
+      500,
+      620
+    ],
+    "stopLatencyMs": {
+      "samples": 6,
+      "p50": 620,
+      "p95": 680
+    },
+    "bargeIns": 6,
+    "selfEchoBargeIns": 0,
+    "backchannelAbsorptions": 0,
+    "backchannelFalseStops": 1,
+    "echoGate": {
+      "decisions": 3545,
+      "echoFrames": 3,
+      "callerFrames": 398,
+      "silentFrames": 3136,
+      "reasons": {
+        "no-reference": 8,
+        "uncorrelated": 393,
+        "silence": 3136,
+        "echo": 3,
+        "double-talk": 5
+      }
+    },
+    "speculation": {
+      "started": 3,
+      "kept": 1,
+      "aborted": 3
+    },
+    "readbackDecisions": 0,
+    "interruptedReadbacks": 0,
+    "bookingAttempts": 0,
+    "bookingsSaved": 0,
+    "bookingsAfterInterruptedReadback": 0,
+    "holdLines": 0,
+    "audioCaptures": [
+      "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn1.wav",
+      "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn2.wav",
+      "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn3.wav",
+      "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn4.wav",
+      "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn5.wav",
+      "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn6.wav",
+      "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn7.wav",
+      "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn8.wav",
+      "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn9.wav",
+      "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn10.wav",
+      "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn11.wav",
+      "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn12.wav",
+      "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn13.wav",
+      "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn14.wav",
+      "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn15.wav"
+    ],
+    "openAt": "2026-09-27T13:56:34.985Z"
+  },
+  "audio": [
+    {
+      "path": "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn1.wav",
+      "bytes": 12204,
+      "durationMs": 760,
+      "rms": 4085,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn10.wav",
+      "bytes": 6124,
+      "durationMs": 380,
+      "rms": 2646,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn11.wav",
+      "bytes": 41324,
+      "durationMs": 2580,
+      "rms": 1808,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn12.wav",
+      "bytes": 33004,
+      "durationMs": 2060,
+      "rms": 1362,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn13.wav",
+      "bytes": 29164,
+      "durationMs": 1820,
+      "rms": 917,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn14.wav",
+      "bytes": 33324,
+      "durationMs": 2080,
+      "rms": 657,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn15.wav",
+      "bytes": 15724,
+      "durationMs": 980,
+      "rms": 1626,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn2.wav",
+      "bytes": 26924,
+      "durationMs": 1680,
+      "rms": 3229,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn3.wav",
+      "bytes": 47084,
+      "durationMs": 2940,
+      "rms": 1459,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn4.wav",
+      "bytes": 6444,
+      "durationMs": 400,
+      "rms": 2776,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn5.wav",
+      "bytes": 10924,
+      "durationMs": 680,
+      "rms": 2605,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn6.wav",
+      "bytes": 44844,
+      "durationMs": 2800,
+      "rms": 1350,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn7.wav",
+      "bytes": 18284,
+      "durationMs": 1140,
+      "rms": 1991,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn8.wav",
+      "bytes": 14764,
+      "durationMs": 920,
+      "rms": 2789,
+      "audible": true
+    },
+    {
+      "path": "debug-audio/CA132fee8e3e777e11cf583e43f1a66811-turn9.wav",
+      "bytes": 12204,
+      "durationMs": 760,
+      "rms": 2661,
+      "audible": true
+    }
+  ]
+}
