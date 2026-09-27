@@ -45,6 +45,14 @@ export interface EchoGateOptions {
 
 /** Correlation trusted enough to learn the return level and delay from. */
 const LEARN_CORRELATION = 0.85;
+/**
+ * Only a near-perfect match re-learns the return level when the inbound is
+ * louder than the predicted Echo. Correlation and the residual carry the same
+ * evidence (residual ratio squared = 1 - r^2 at the best-fit gain): a changed
+ * acoustic path still matches sample-for-sample, while a Caller sharing the
+ * reference's spectral shape cannot.
+ */
+const ECHO_RELEARN_CORRELATION = 0.97;
 /** Inbound RMS below this is silence, whatever the reference is doing. */
 const SILENCE_FLOOR_RMS = 40;
 /** Reference RMS below this is too quiet to explain inbound energy. */
@@ -223,10 +231,17 @@ export class EchoGate {
     }
     this.weakFrames = 0;
     const measuredLossDb = 20 * Math.log10(best.inboundRms / best.referenceRms);
-    // A near-perfect match is Echo even when the level moved: a changed
-    // acoustic path (earpiece to speakerphone) looks exactly like this, and
-    // the level is re-learned rather than locking the gate out forever.
-    if (best.correlation < LEARN_CORRELATION && this.lossDb !== null && measuredLossDb > this.lossDb + this.levelMarginDb) {
+    // Inbound energy far above the predicted Echo (reference * learned gain)
+    // is the Caller talking over it, even at high correlation: only a
+    // near-perfect match re-learns the level as a changed acoustic path
+    // (earpiece to speakerphone), which looks exactly like loud Echo.
+    // Anything less correlated with excess energy is double-talk, and it must
+    // not shift the learned level, so only Echo-classified frames learn below.
+    if (
+      this.lossDb !== null &&
+      measuredLossDb > this.lossDb + this.levelMarginDb &&
+      best.correlation < ECHO_RELEARN_CORRELATION
+    ) {
       return evidence(
         false,
         'double-talk',

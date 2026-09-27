@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { EchoGate } from '../src/echoGate.ts';
 import { encodeMulaw } from '../src/audio.ts';
-import { echoFrame, voice } from './voiceFixtures.ts';
+import { correlatedDoubleTalkFrame, echoFrame, voice } from './voiceFixtures.ts';
 
 const FRAME = 160; // 20 ms of 8 kHz telephony
 const SILENCE = encodeMulaw(new Int16Array(FRAME));
@@ -154,5 +154,34 @@ describe('echo gate', () => {
       if (t >= 32) assert.equal(decision.echo, true, `loud frame ${t}`);
     }
     assert.ok(Math.abs(gate.returnLossDb! + 3) <= 3, `re-learned ${gate.returnLossDb}dB`);
+  });
+
+  it('passes a strongly correlated Caller over Echo as double-talk without shifting the learned level', () => {
+    const ref = voice(FRAME * 60, 3);
+    const other = voice(FRAME * 60, 11);
+    const gate = new EchoGate();
+    for (let t = 0; t < 12; t++) {
+      gate.pushReference(encodeMulaw(frames(ref)[t]!));
+      gate.classify(echoFrame(ref, t, 320, 0.125));
+    }
+    const learned = gate.returnLossDb!;
+    assert.ok(Math.abs(learned + 18) <= 3, `learned ${learned}dB`);
+    // The Caller talks over the Echo with a voice that shares the
+    // reference's spectral shape: correlation well into the old always-Echo
+    // band, but ~+20 dB above the predicted return.
+    let peak = 0;
+    for (let t = 12; t < 24; t++) {
+      gate.pushReference(encodeMulaw(frames(ref)[t]!));
+      const decision = gate.classify(correlatedDoubleTalkFrame(ref, other, t, 320));
+      peak = Math.max(peak, decision.evidence.correlation);
+      assert.equal(decision.echo, false, `correlated caller frame ${t} must take the floor (${decision.reason}, corr ${decision.evidence.correlation})`);
+      assert.equal(decision.reason, 'double-talk', `frame ${t}`);
+      assert.ok(decision.evidence.residualRms !== null, `frame ${t} carries residual evidence`);
+    }
+    assert.ok(peak > 0.85, `fixture must reach the old always-Echo band (peak ${peak})`);
+    assert.ok(
+      Math.abs(gate.returnLossDb! - learned) < 0.5,
+      `a correlated Caller must not shift the learned level (${learned} -> ${gate.returnLossDb})`,
+    );
   });
 });

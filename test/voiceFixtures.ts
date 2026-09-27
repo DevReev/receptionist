@@ -25,3 +25,27 @@ export function echoFrame(ref: Int16Array, frameIndex: number, delaySamples: num
   }
   return out;
 }
+
+/**
+ * Stress fixture for correlated double-talk: the Caller shares the
+ * reference's spectral shape (tonal overlap, same waveform) at full voice
+ * plus independent speech, over the quiet returning Echo. It correlates with
+ * the reference well into the old always-Echo band (>= 0.85) while carrying
+ * ~+20 dB more energy than the learned return, so only residual/level
+ * evidence tells it apart from a louder Echo path.
+ */
+export function correlatedDoubleTalkFrame(
+  ref: Int16Array,
+  other: Int16Array,
+  frameIndex: number,
+  delaySamples: number,
+): Int16Array {
+  const out = new Int16Array(FRAME);
+  for (let i = 0; i < FRAME; i++) {
+    const src = frameIndex * FRAME + i - delaySamples;
+    const s = src >= 0 && src < ref.length ? ref[src]! : 0;
+    const u = other[(frameIndex * FRAME + i) % other.length]!;
+    out[i] = Math.max(-32768, Math.min(32767, Math.round(s * 0.125 + s * 1.0 + u * 0.5)));
+  }
+  return out;
+}

@@ -1,8 +1,8 @@
-import { LIVE_SAMPLE_RATE } from './audio.ts';
+import { encodeMulaw, LIVE_SAMPLE_RATE } from './audio.ts';
 import { EchoGate, rms } from './echoGate.ts';
 import { mixEcho, type EchoMixOptions } from './echoMix.ts';
 import { decodeMulaw } from './mulaw.ts';
-import { ECHO_GATE_BARS } from './turnBench.ts';
+import { ECHO_GATE_BARS, syntheticVoice } from './turnBench.ts';
 
 /** 20 ms of 8 kHz mulaw, the Twilio media cadence. */
 export const ECHO_BENCH_FRAME = LIVE_SAMPLE_RATE / 50;
@@ -21,8 +21,63 @@ export interface EchoBenchCase {
   mix: EchoMixOptions;
 }
 
-export interface EchoBenchCounts {
-  /** Frames with returned Echo and no meaningful Caller energy: the gate must flag these. */
+/**
+ * Playback-tail case: a short reference whose return keeps arriving after
+ * playout ends, then Caller speech once the tail is gone. The late pure-Echo
+ * frames (no concurrent reference) must still be flagged from the retained
+ * reference, and the late Caller must pass.
+ */
+export function playbackTailCase(): EchoBenchCase {
+  const reference = syntheticVoice(LIVE_SAMPLE_RATE * 2, 7);
+  const callerPcm = new Int16Array(LIVE_SAMPLE_RATE * 4);
+  callerPcm.set(decodeMulaw(syntheticVoice(LIVE_SAMPLE_RATE, 3)), LIVE_SAMPLE_RATE * 3);
+  return {
+    name: 'playback-tail',
+    caller: encodeMulaw(callerPcm),
+    reference,
+    mix: { delayMs: 240, attenuationDb: -18 },
+  };
+}
+
+/**
+ * Correlated double-talk case: the Caller shares the reference's spectral
+ * shape at full voice plus independent speech, so it correlates strongly
+ * with the reference while carrying far more energy than the learned return.
+ * The Caller starts mid-reply, after a clean Echo prefix the gate learns the
+ * true return from. Every Caller-dominant frame must pass as double-talk
+ * (uncorrelated or excess-energy), never Echo, without shifting the level.
+ */
+export function correlatedDoubleTalkCase(): EchoBenchCase {
+  const delayMs = 120;
+  const attenuationDb = -18;
+  const delaySamples = Math.round((delayMs / 1000) * LIVE_SAMPLE_RATE);
+  const reference = syntheticVoice(LIVE_SAMPLE_RATE * 4, 7);
+  const refPcm = decodeMulaw(reference);
+  const otherPcm = decodeMulaw(syntheticVoice(LIVE_SAMPLE_RATE * 4, 3));
+  const callerPcm = new Int16Array(refPcm.length);
+  for (let i = 0; i < callerPcm.length; i++) {
+    // Clean Echo for the first 800 ms so the gate learns the true return;
+    // then the Caller talks over it for the rest of the reply.
+    if (i < LIVE_SAMPLE_RATE * 0.8) continue;
+    const at = (j: number): number => {
+      const k = j - delaySamples;
+      return k >= 0 && k < refPcm.length ? refPcm[k]! : 0;
+    };
+    // Same spectral shape, never sample-identical: a smeared copy at full
+    // voice plus independent speech. The smear caps the correlation below the
+    // near-perfect band where a louder Echo path is indistinguishable.
+    const s = 0.5 * at(i) + 0.25 * at(i - 6) + 0.25 * at(i + 6);
+    callerPcm[i] = Math.max(-32768, Math.min(32767, Math.round(s * 2 + otherPcm[i]! * 0.3)));
+  }
+  return {
+    name: 'correlated-double-talk',
+    caller: encodeMulaw(callerPcm),
+    reference,
+    mix: { delayMs, attenuationDb },
+  };
+}
+
+export interface EchoBenchCounts {  /** Frames with returned Echo and no meaningful Caller energy: the gate must flag these. */
   pureEchoFrames: number;
   /** Pure-Echo frames the gate passed as Caller. */
   echoFalsePasses: number;

@@ -976,6 +976,23 @@ export function defaultTurnBenchScenarios(echoVariants: EchoVariant[] = DEFAULT_
     },
     ...echoReturn,
     {
+      // The return keeps arriving after the reply ends: the playback tail is
+      // still gated in listening mode, so it never starts a Turn, and the
+      // Caller's next turn endpoints and is answered promptly anyway.
+      name: 'echo-tail',
+      run: async (ctx) => {
+        await callerTurn(ctx);
+        while (ctx.playing) await ctx.silence(5);
+        await ctx.silence(2);
+        // A long return delay: the genuine tail is as long as the delay,
+        // all of it arriving after playback ends.
+        await ctx.echo(12, { delayMs: 240, attenuationDb: -18 });
+        await ctx.call('are you open saturday', 60);
+        await ctx.awaitReply();
+        await ctx.silence(120);
+      },
+    },
+    {
       name: `double-talk-d${doubleTalkVariant.delayMs}-a${doubleTalkVariant.attenuationDb}`,
       run: async (ctx) => {
         await callerTurn(ctx);

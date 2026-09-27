@@ -1,7 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeMulaw } from '../src/audio.ts';
-import { aggregateEchoBench, classifyEchoMix } from '../src/echoGateBench.ts';
+import { aggregateEchoBench, classifyEchoMix, correlatedDoubleTalkCase, playbackTailCase } from '../src/echoGateBench.ts';
 import { voice } from './voiceFixtures.ts';
 
 const FRAME = 160;
@@ -69,5 +69,20 @@ describe('echo gate fixture bench', () => {
     assert.equal(summary.falsePassRate, 7 / 150);
     assert.equal(summary.falseBlockRate, 4 / 150);
     assert.equal(summary.pass, true);
+  });
+
+  it('flags late Echo from the retained reference after the reference ends, then passes late Caller speech', () => {
+    const counts = classifyEchoMix(playbackTailCase());
+    assert.ok(counts.pureEchoFrames >= 80, `pure echo ${counts.pureEchoFrames}`);
+    assert.equal(counts.echoFalsePasses, 0);
+    assert.ok(counts.callerFrames >= 40, `caller ${counts.callerFrames}`);
+    assert.equal(counts.callerFalseBlocks, 0);
+  });
+
+  it('passes a Caller that correlates strongly with the reference as double-talk, never Echo', () => {
+    const counts = classifyEchoMix(correlatedDoubleTalkCase());
+    assert.ok(counts.callerFrames >= 140, `caller ${counts.callerFrames}`);
+    assert.equal(counts.callerFalseBlocks, 0);
+    assert.equal(counts.echoFalsePasses, 0);
   });
 });

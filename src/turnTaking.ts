@@ -63,6 +63,13 @@ export interface TurnTakingOptions {
   /** How long the energy pre-trigger waits for partial semantics before taking the floor. */
   bargeInConfirmMs?: number;
   /**
+   * Post-reply window where returning Echo is still gated in listening mode.
+   * Playback has ended but the last reference frames are still in the air;
+   * Echo-classified frames here are suppressed from the utterance candidate
+   * instead of being scored as Caller speech. Defaults to 300 ms.
+   */
+  echoTailMs?: number;
+  /**
    * Whether partial transcripts feed the local Turn boundary. When true the
    * caller-adaptive pause plus semantic completeness own it; when false (no
    * partial channel at all) a fixed no-partials floor owns it instead.
@@ -111,6 +118,10 @@ export class TurnTaking {
   private readonly bargeInConfirmMs: number;
   private readonly semanticBoundaries: boolean;
   private readonly echoGate: EchoGate;
+  /** Post-reply window where returning Echo is still gated, in milliseconds. */
+  private readonly echoTailMs: number;
+  /** Tail window left after `startListening`; consumed frame by frame. */
+  private echoTailMsRemaining = 0;
   /** The Caller's own intra-utterance pause rhythm, for the local boundary. */
   private readonly adaptivePause = new AdaptivePause();
   private mode: Floor = 'listening';
@@ -144,6 +155,7 @@ export class TurnTaking {
     this.bargeInConfirmMs = opts.bargeInConfirmMs ?? BARGE_IN_DEFAULTS.confirmMs;
     this.semanticBoundaries = opts.semanticBoundaries ?? true;
     this.echoGate = new EchoGate(opts.echoGate);
+    this.echoTailMs = opts.echoTailMs ?? 300;
   }
 
   /** True while a Caller utterance can end a Turn here. */
@@ -175,6 +187,7 @@ export class TurnTaking {
   startSpeaking(opts: { absorbBackchannels?: boolean } = {}): void {
     this.mode = 'watching-barge-in';
     this.absorptionEnabled = opts.absorbBackchannels ?? true;
+    this.echoTailMsRemaining = 0;
     this.reset();
   }
 
@@ -183,6 +196,9 @@ export class TurnTaking {
     this.mode = 'listening';
     this.absorptionEnabled = true;
     this.reset();
+    // Arm the playback tail: the first listening frames can still carry
+    // returning own voice, which the gate suppresses instead of scoring.
+    this.echoTailMsRemaining = this.echoTailMs;
   }
 
   /** Adopts a Barge-in candidate as the first audio of the new Turn. */
@@ -245,11 +261,29 @@ export class TurnTaking {
     let isEcho = false;
     let silent = false;
     if (this.mode === 'listening') {
-      // Listening frames stream as-is and only feed the Echo gate's history;
-      // the first frame of the next Receptionist speech then correlates over a
-      // full window instead of one noisy 20 ms slice.
-      this.observer.onUpstreamFrame?.(mulaw);
-      this.echoGate.observe(pcm);
+      if (this.echoTailMsRemaining > 0) {
+        // The playback tail: returning own voice after the reply ends is
+        // still classified, and Echo frames are suppressed from the utterance
+        // candidate (and sent upstream as silence) exactly as while speaking.
+        // Anything else — prompt Caller speech included — flows normally, so
+        // the tail can never eat a fast answer or delay the boundary.
+        this.echoTailMsRemaining = Math.max(0, this.echoTailMsRemaining - toMs(mulaw.length));
+        const decision = this.echoGate.classify(pcm);
+        this.observer.onEchoDecision?.(decision);
+        if (decision.echo) {
+          isEcho = true;
+          this.observer.onUpstreamFrame?.(silenceMulaw(mulaw.length));
+        } else {
+          silent = decision.reason === 'silence';
+          this.observer.onUpstreamFrame?.(mulaw);
+        }
+      } else {
+        // Listening frames stream as-is and only feed the Echo gate's history;
+        // the first frame of the next Receptionist speech then correlates over a
+        // full window instead of one noisy 20 ms slice.
+        this.observer.onUpstreamFrame?.(mulaw);
+        this.echoGate.observe(pcm);
+      }
     } else {
       // The Receptionist holds the floor: audio still streams upstream for the
       // whole call, but the gate replaces our own voice returning through the

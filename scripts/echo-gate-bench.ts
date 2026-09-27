@@ -1,7 +1,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { wavToMulaw } from '../src/audio.ts';
 import { loadFixtures } from '../src/benchmark.ts';
-import { aggregateEchoBench, classifyEchoMix, type EchoBenchCaseResult } from '../src/echoGateBench.ts';
+import { aggregateEchoBench, classifyEchoMix, correlatedDoubleTalkCase, playbackTailCase, type EchoBenchCaseResult } from '../src/echoGateBench.ts';
 import { syntheticVoice } from '../src/turnBench.ts';
 
 function numberList(name: string, fallback: string): number[] {
@@ -54,6 +54,17 @@ export async function main(): Promise<void> {
         });
       }
     }
+  }
+  // Synthetic window cases, independent of captured fixtures: the playback
+  // tail (Echo outliving the reference, then late Caller speech) and a Caller
+  // that correlates strongly with the reference while carrying excess energy.
+  for (const extra of [playbackTailCase(), correlatedDoubleTalkCase()]) {
+    cases.push({
+      name: `${extra.name}-d${extra.mix.delayMs}-a${extra.mix.attenuationDb}`,
+      delayMs: extra.mix.delayMs,
+      attenuationDb: extra.mix.attenuationDb,
+      counts: classifyEchoMix(extra),
+    });
   }
   const summary = aggregateEchoBench(cases);
   console.log(

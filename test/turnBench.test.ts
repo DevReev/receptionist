@@ -474,6 +474,44 @@ describe('turn bench behavior scenarios', () => {
     assert.ok(run.metrics.gate.callerFrames >= 10, `caller frames ${run.metrics.gate.callerFrames}`);
     assert.equal(run.metrics.gate.callerFalseBlocks, 0);
   });
+
+  it('suppresses the playback tail after the reply ends without losing the next Caller turn', async () => {
+    const run = await runScenario(
+      {
+        name: 'echo-tail',
+        run: async (ctx) => {
+          await ctx.call('what are your hours', 60);
+          await ctx.awaitReply();
+          while (ctx.playing) await ctx.silence(5);
+          await ctx.silence(2);
+          // A long return delay: the genuine tail is as long as the delay,
+          // all of it arriving after playback ends.
+          await ctx.echo(12, { delayMs: 240, attenuationDb: -18 });
+          await ctx.call('are you open saturday', 60);
+          await ctx.awaitReply();
+          await ctx.silence(100);
+        },
+      },
+      { policy: POLICY },
+    );
+    assert.equal(run.observations.echos.length, 1);
+    assert.equal(run.metrics.selfEchoTurns, 0, 'the tail never starts a Turn');
+    assert.equal(run.observations.utterances.length, 2, 'both Caller turns endpoint');
+    assert.equal(run.observations.replyStarts.length, 2, 'both Caller turns are answered');
+    const span = run.observations.echos[0]!.span;
+    const tail = run.observations.gateDecisions.filter(
+      (decision) => decision.frame >= span.startFrame && decision.frame < span.endFrame,
+    );
+    // Frames whose mix carried no reference are true silence and unscored;
+    // every frame that actually carried the tail must be gated as Echo.
+    const audible = tail.filter((decision) => decision.reason !== 'silence');
+    assert.ok(audible.length >= 6, `tail Echo frames classified ${audible.length}`);
+    assert.equal(
+      audible.filter((decision) => !decision.echo).length,
+      0,
+      'no tail Echo frame passes as Caller',
+    );
+  });
 });
 
 describe('turn bench report', () => {
