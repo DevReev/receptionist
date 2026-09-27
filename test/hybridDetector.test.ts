@@ -52,6 +52,7 @@ describe('semantic completeness from partials', () => {
     'five five five one two three four',
     'thank you',
     'no thanks',
+    'No.',
     'I need an appointment tomorrow morning',
     'what time do you open?',
     'that is all.',
@@ -73,6 +74,23 @@ describe('semantic completeness from partials', () => {
     'is there',
     'what about',
     'where are you',
+    // Phrase starts and dangling verbs: the thought needs its object.
+    'can you tell me',
+    "I'd like to",
+    "I'd like",
+    'I want',
+    'I need',
+    'I was wondering',
+    'I would like to book',
+    'give me',
+    'tell him',
+    // Mid-sentence modifiers and determiners expecting more.
+    'I am not',
+    "I'm",
+    "don't",
+    'better than',
+    'the other',
+    'I need more',
   ];
 
   it('holds only on clear continuation cues', () => {
@@ -82,5 +100,38 @@ describe('semantic completeness from partials', () => {
     for (const text of incomplete) {
       assert.equal(isSemanticallyComplete(text), false, `incomplete: ${text}`);
     }
+  });
+
+  it('does not treat abbreviations as sentence-terminal', () => {
+    for (const text of [
+      'I need to see Dr.',
+      'ask for Mr.',
+      'she is Mrs.',
+      'we live on Main St.',
+      'bring something, e.g.',
+      'the morning slot, i.e.',
+    ]) {
+      assert.equal(isSemanticallyComplete(text), false, `incomplete: ${text}`);
+    }
+    // A bare "No." answers the question; "Room No." is still numbering.
+    assert.equal(isSemanticallyComplete('No.'), true);
+    assert.equal(isSemanticallyComplete('Room No.'), false);
+  });
+
+  it('holds open phone groupings only while the Patient phone is collected', () => {
+    const grouping = ['98765', 'my number is 98765', 'nine eight seven six five', 'my number is nine eight'];
+    for (const text of grouping) {
+      assert.equal(isSemanticallyComplete(text, { collectingPhone: true }), false, `grouping held: ${text}`);
+      assert.equal(isSemanticallyComplete(text), true, `no phone flag, no hold: ${text}`);
+    }
+    // A plausible full number endpoints even while collecting the phone.
+    assert.equal(isSemanticallyComplete('9876543210', { collectingPhone: true }), true);
+    assert.equal(isSemanticallyComplete('my number is 9876543210', { collectingPhone: true }), true);
+    // ...unless a trailing separator or extension says more digits are coming.
+    assert.equal(isSemanticallyComplete('9876543210-', { collectingPhone: true }), false);
+    // Name-shaped partials are untouched by the phone flag.
+    assert.equal(isSemanticallyComplete('John Smith', { collectingPhone: true }), true);
+    // A digit inside a content sentence is not a dictated number.
+    assert.equal(isSemanticallyComplete('I have 2 kids', { collectingPhone: true }), true);
   });
 });

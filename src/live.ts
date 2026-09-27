@@ -764,11 +764,17 @@ export class LiveCallSession {
   /**
    * Single write path for dialogue state. The turn-taking module keys its
    * field-collection floor off the phase, so the local detector knows when the
-   * Caller is dictating a name or phone number.
+   * Caller is dictating a name or phone number. The phone half (name settled,
+   * number still open) additionally arms open-grouping holds for dictated
+   * digits; name collection keeps the floor alone.
    */
   private setDialogue(state: DialogueState): void {
     this.dialogue = state;
-    this.turnTaking.observeDialogueState(state.phase === 'collecting-patient');
+    const collecting = state.phase === 'collecting-patient';
+    this.turnTaking.observeDialogueState(
+      collecting,
+      collecting && state.patient.name !== undefined && state.patient.phone === undefined,
+    );
   }
 
   /** Queue a whole logical response behind whatever is already playing. */

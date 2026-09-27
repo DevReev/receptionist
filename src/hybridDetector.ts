@@ -6,7 +6,8 @@
  * The default until enough pauses are observed is a fixed 300 ms, so the
  * detector never answers faster than the short default but also never waits
  * out a long fixed window. Semantic evidence can only hold the boundary open
- * up to the emergency cap, so an unhelpful partial can never stall a Turn.
+ * up to the emergency cap, and a partial that stopped updating goes stale
+ * well before it, so a lagging provider can never stall a Turn.
  */
 
 import { tokenize } from './backchannel.ts';
@@ -28,6 +29,14 @@ export const HYBRID_DEFAULTS = {
   emergencyMs: 1500,
   /** Floor while the dialogue collects the Patient's name or phone. */
   dialogueFloorMs: 600,
+  /**
+   * A partial older than this is provider lag, not a mid-thought pause: the
+   * boundary treats it as no evidence instead of holding to the emergency
+   * cap. It must clear the longest mid-utterance pause the bench holds open
+   * (1200 ms) with margin, while still releasing a stalled Turn before the
+   * 1500 ms cap.
+   */
+  stalePartialMs: 1300,
   /**
    * Floor when the session has no partial channel: the adaptive pause alone
    * tracks brief intra-word gaps and can fall near the 150 ms clamp, which
@@ -78,7 +87,10 @@ export class AdaptivePause {
 /**
  * Tokens that cannot end an utterance. A trailing one is a clear continuation
  * cue, so the boundary holds briefly for the Caller to finish the thought.
- * Deliberately narrow: only function words and fillers, never content words.
+ * Deliberately narrow: function words, fillers, object pronouns expecting
+ * their clause ("tell me"), dangling transitive verbs ("want", "need"), and
+ * contraction fragments ("don't" tokenizes to "don t"), never content words
+ * that can close a thought on their own.
  */
 const CONTINUATION_TOKENS: ReadonlySet<string> = new Set([
   // Conjunctions and connectives.
@@ -178,6 +190,84 @@ const CONTINUATION_TOKENS: ReadonlySet<string> = new Set([
   'may',
   'might',
   'must',
+  // Negation and stance modifiers: always mid-thought.
+  'not',
+  'never',
+  'just',
+  'also',
+  'still',
+  'even',
+  'only',
+  'quite',
+  'rather',
+  // Determiners and quantifiers expecting their noun.
+  'another',
+  'other',
+  'such',
+  'same',
+  'few',
+  'several',
+  'both',
+  'either',
+  'neither',
+  'much',
+  'many',
+  'more',
+  'most',
+  // Comparatives expecting the other side.
+  'than',
+  // Object pronouns expecting their clause ("can you tell me ...").
+  'me',
+  'us',
+  'him',
+  'them',
+  // Dangling transitive verbs expecting an object or clause ("I want ...",
+  // "I'd like ...", "I was wondering ..."). "you" is deliberately absent:
+  // "thank you" is a complete thought.
+  'tell',
+  'tells',
+  'told',
+  'telling',
+  'like',
+  'likes',
+  'liked',
+  'liking',
+  'want',
+  'wants',
+  'wanted',
+  'wanting',
+  'need',
+  'needs',
+  'needed',
+  'needing',
+  'wondering',
+  // A booking verb without its object ("I'd like to book ...").
+  'book',
+  // Contraction fragments: "don't" tokenizes to "don t", "I'm" to "i m",
+  // "John's" to "john s". A trailing fragment is always mid-word.
+  'don',
+  'doesn',
+  'didn',
+  'isn',
+  'aren',
+  'wasn',
+  'weren',
+  'haven',
+  'hasn',
+  'hadn',
+  'won',
+  'wouldn',
+  'couldn',
+  'shouldn',
+  'mustn',
+  'needn',
+  'd',
+  'll',
+  're',
+  've',
+  'm',
+  's',
+  't',
   // Question words.
   'what',
   'when',
@@ -220,18 +310,102 @@ const SUBJECTS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Semantic completeness of the latest partial: incomplete only on a clear
- * continuation cue (trailing conjunction, preposition, article, filler or
- * auxiliary, or a dangling question), complete otherwise. No partial at all is
- * complete: without evidence the adaptive pause alone owns the boundary.
+ * Abbreviations whose period never ends a sentence: a partial stopping at one
+ * is mid-dictation ("I need to see Dr. ..."). Bare "No." is not one of these;
+ * it is handled as a complete answer below.
  */
-export function isSemanticallyComplete(text: string): boolean {
+const ABBREVIATIONS: ReadonlySet<string> = new Set(['mr', 'mrs', 'ms', 'dr', 'st', 'vs', 'rs', 'eg', 'ie']);
+
+/** Spoken digits that count toward a dictated phone number's grouping. */
+const NUMBER_WORDS: ReadonlySet<string> = new Set([
+  'zero',
+  'oh',
+  'o',
+  'one',
+  'two',
+  'three',
+  'four',
+  'five',
+  'six',
+  'seven',
+  'eight',
+  'nine',
+]);
+
+/** Framing words around a dictated number; everything else is content. */
+const PHONE_PREAMBLE: ReadonlySet<string> = new Set([
+  'my',
+  'number',
+  'phone',
+  'mobile',
+  'cell',
+  'is',
+  'its',
+  'it',
+  'the',
+  'a',
+  'an',
+  'uh',
+  'um',
+  'er',
+  'please',
+  'call',
+  'called',
+]);
+
+/** A dictated UK-style mobile is 10-13 digits; anything shorter is still open. */
+const PHONE_MIN_DIGITS = 10;
+const PHONE_MAX_DIGITS = 13;
+
+/**
+ * Whether a phone-collection partial is still inside an open digit grouping:
+ * mostly digits whose count is short of a plausible number, or a complete
+ * count with a trailing separator or extension cue ("9876543210 - ...").
+ */
+function isOpenPhoneGrouping(trimmed: string, raw: string): boolean {
+  const digitChars = (trimmed.match(/\d/g) ?? []).length;
+  let wordDigits = 0;
+  let contentWords = 0;
+  for (const token of tokenize(trimmed)) {
+    if (NUMBER_WORDS.has(token)) wordDigits += 1;
+    else if (/^\d+$/.test(token)) continue;
+    else if (!PHONE_PREAMBLE.has(token)) contentWords += 1;
+  }
+  const digits = digitChars + wordDigits;
+  if (digits === 0) return false;
+  // A digit inside a content-bearing sentence ("I have 2 kids") is not a
+  // dictated number unless the digits dominate or nothing else is said.
+  if (contentWords > 0 && digits < 3) return false;
+  if (digits < PHONE_MIN_DIGITS) return true;
+  if (digits > PHONE_MAX_DIGITS) return false;
+  return /[\s\-–—,(\[]$/.test(raw) || /\b(ext|x|extension)\.?$/i.test(trimmed);
+}
+
+/**
+ * Semantic completeness of the latest partial: incomplete only on a clear
+ * continuation cue (trailing conjunction, preposition, article, filler,
+ * auxiliary, object pronoun, dangling verb or contraction fragment, a
+ * dangling question, a terminal abbreviation, or an open phone grouping
+ * while the Patient phone is collected), complete otherwise. No partial at
+ * all is complete: without evidence the adaptive pause alone owns the
+ * boundary.
+ */
+export function isSemanticallyComplete(text: string, opts: { collectingPhone?: boolean } = {}): boolean {
   const trimmed = text.trim();
   if (trimmed.length === 0) return true;
-  // Explicit sentence punctuation is a strong completion signal.
-  if (/[.?!]$/.test(trimmed)) return true;
   const tokens = tokenize(trimmed);
   if (tokens.length === 0) return true;
+  // Explicit sentence punctuation is a strong completion signal, unless the
+  // sentence ends on an abbreviation ("Dr.", "e.g."). A bare "No." answers
+  // the question; "Room No." is still numbering something.
+  if (/[.?!]$/.test(trimmed)) {
+    const word = /([A-Za-z.]+)$/.exec(trimmed)?.[1] ?? '';
+    const key = word.toLowerCase().replace(/[^a-z]/g, '');
+    if (ABBREVIATIONS.has(key)) return false;
+    if (key === 'no' && tokens.length > 1) return false;
+    return true;
+  }
+  if (opts.collectingPhone === true && isOpenPhoneGrouping(trimmed, text)) return false;
   const last = tokens[tokens.length - 1]!;
   if (CONTINUATION_TOKENS.has(last)) return false;
   if (tokens.length >= 2) {

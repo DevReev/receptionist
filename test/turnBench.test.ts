@@ -300,7 +300,7 @@ describe('turn bench behavior scenarios', () => {
     );
   });
 
-  it('holds a mid-thought pause open and emits at the emergency cap, not a false cut', async () => {
+  it('holds a mid-thought pause open and emits at the stale budget, not a false cut', async () => {
     const run = await runScenario(
       {
         name: 'long-pause',
@@ -312,11 +312,12 @@ describe('turn bench behavior scenarios', () => {
       { policy: POLICY },
     );
     // "my number is" ends on a continuation cue, so the 1200 ms pause cannot
-    // false-cut; the trailing-silence emergency cap ends the Turn.
+    // false-cut; the trailing silence ends the Turn at the staleness budget
+    // (the scripted partial never refreshes) instead of the emergency cap.
     assert.equal(run.metrics.falseCuts, 0);
     assert.equal(run.metrics.replyLatencyMs.samples, 1);
     const latencyMs = run.metrics.replyLatenciesMs[0]!;
-    assert.ok(latencyMs >= 1400 && latencyMs <= 1600, `reply latency ${latencyMs}ms`);
+    assert.ok(latencyMs >= 1240 && latencyMs <= 1360, `reply latency ${latencyMs}ms`);
   });
 
   it('keeps a pause inside the silence window in one Turn', async () => {

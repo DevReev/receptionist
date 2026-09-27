@@ -198,16 +198,59 @@ describe('live hybrid detector (ticket 07)', () => {
     live.close('test');
   });
 
-  it('lets the default 1.5 s emergency cap end a Turn held by an incomplete partial', async () => {
+  it('releases a stale partial at the staleness budget instead of the emergency cap', async () => {
     const stt = new FakeHybridStt({ finals: [{ text: 'and then', noSpeech: false }] });
     const { live } = liveSession({ callSid: 'CAhyb3', stt });
     for (let i = 0; i < 15; i += 1) await live.receiveAudio(SPEECH_FRAME);
     stt.partial('I would like to book an appointment and');
-    for (let i = 0; i < 74; i += 1) await live.receiveAudio(SILENCE_FRAME);
+    for (let i = 0; i < 65; i += 1) await live.receiveAudio(SILENCE_FRAME);
     assert.equal(stt.finalizeCalls, 0, 'the continuation cue holds well past the floor');
     await live.receiveAudio(SILENCE_FRAME);
     await live.flush();
-    assert.equal(stt.finalizeCalls, 1, '1500 ms of trailing silence emits regardless');
+    assert.equal(stt.finalizeCalls, 1, 'stale evidence releases before 1500 ms of trailing silence');
+    live.close('test');
+  });
+
+  it('holds grouped digits while the dialogue collects the Patient phone', async () => {
+    const stt = new FakeHybridStt({
+      finals: [
+        { text: 'book Wednesday morning', noSpeech: false },
+        { text: 'John Smith', noSpeech: false },
+        { text: '9876543210', noSpeech: false },
+      ],
+    });
+    const { live, texts } = liveSession({ callSid: 'CAhyb6', stt });
+
+    // Turn 1: picks a Slot and moves the dialogue into collecting-patient.
+    for (let i = 0; i < 15; i += 1) await live.receiveAudio(SPEECH_FRAME);
+    stt.partial('book Wednesday morning');
+    for (let i = 0; i < 15; i += 1) await live.receiveAudio(SILENCE_FRAME);
+    await live.flush();
+    await waitFor(() => live.currentPhase === 'LISTENING', 'the name question');
+    assert.ok(texts.some((text) => /name/i.test(text)));
+    assert.equal(live.state.phase, 'collecting-patient');
+
+    // Turn 2: the dictated name endpoints at the 600 ms floor (no phone flag yet).
+    for (let i = 0; i < 15; i += 1) await live.receiveAudio(SPEECH_FRAME);
+    stt.partial('John Smith');
+    for (let i = 0; i < 29; i += 1) await live.receiveAudio(SILENCE_FRAME);
+    assert.equal(stt.finalizeCalls, 1, '580 ms of silence is still inside the collecting floor');
+    await live.receiveAudio(SILENCE_FRAME);
+    await live.flush();
+    await waitFor(() => live.currentPhase === 'LISTENING', 'the phone question');
+    assert.ok(texts.some((text) => /mobile number/i.test(text)));
+    assert.equal(live.state.patient.name, 'John Smith');
+
+    // Turn 3: grouped digits hold past the floor; the completed number endpoints.
+    for (let i = 0; i < 15; i += 1) await live.receiveAudio(SPEECH_FRAME);
+    stt.partial('98765');
+    for (let i = 0; i < 39; i += 1) await live.receiveAudio(SILENCE_FRAME);
+    assert.equal(stt.finalizeCalls, 2, '780 ms of silence never endpoints mid-number');
+    stt.partial('9876543210');
+    await live.receiveAudio(SILENCE_FRAME);
+    await live.flush();
+    assert.equal(stt.finalizeCalls, 3, 'the completed number endpoints');
+    assert.equal(live.state.patient.phone, '9876543210');
     live.close('test');
   });
 

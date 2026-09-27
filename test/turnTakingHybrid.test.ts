@@ -103,13 +103,105 @@ describe('hybrid detector boundaries', () => {
     assert.equal(h.utterances[0]!.durationMs, 900);
   });
 
-  it('emits at the 1.5 s emergency cap whatever the partials say', async () => {
+  it('releases a stale partial at the staleness budget, not the emergency cap', async () => {
     const h = harness();
     await h.feed(Array<Mark>(15).fill('speech'));
     h.turnTaking.observePartial('and');
+    // A partial that never updates is provider lag, not a mid-thought pause:
+    // the boundary emits at the 1300 ms staleness budget (66 frames), not the
+    // 1500 ms emergency cap.
     const emittedAt = await framesToEmit(h, 'silence', 200);
-    assert.equal(emittedAt, 75, '1500 ms of trailing silence emits regardless');
+    assert.equal(emittedAt, 66, 'stale evidence releases before the cap');
     assert.equal(h.utterances.length, 1);
+  });
+
+  it('holds to the emergency cap while fresh partials keep arriving', async () => {
+    const h = harness();
+    await h.feed(Array<Mark>(15).fill('speech'));
+    h.turnTaking.observePartial('and');
+    // Refresh the evidence the way a live provider would: the boundary holds.
+    for (let i = 0; i < 7; i += 1) {
+      await h.feed(Array<Mark>(10).fill('silence'));
+      h.turnTaking.observePartial('and');
+    }
+    assert.equal(h.utterances.length, 0, 'fresh continuation evidence still holds');
+    const emittedAt = await framesToEmit(h, 'silence', 200);
+    assert.equal(emittedAt, 5, 'the cap still ends a Turn the evidence holds open');
+    assert.equal(h.utterances.length, 1);
+  });
+
+  it('holds mid-list phrases past the pause while completed sentences endpoint', async () => {
+    const held = [
+      'can you tell me',
+      "I'd like to",
+      'I want',
+      'I need',
+      'I was wondering',
+      'give me',
+      'I am not',
+      'better than',
+      'the other',
+    ];
+    for (const partial of held) {
+      const h = harness();
+      await h.feed(Array<Mark>(15).fill('speech'));
+      h.turnTaking.observePartial(partial);
+      // 400 ms, past the 300 ms floor: a mid-thought pause must not cut.
+      await h.feed(Array<Mark>(20).fill('silence'));
+      assert.equal(h.utterances.length, 0, `mid-list holds: ${partial}`);
+    }
+    const complete = [
+      'what are your hours',
+      'I would like to book an appointment',
+      'my name is John Smith',
+      'that is all.',
+      'No.',
+    ];
+    for (const partial of complete) {
+      const h = harness();
+      await h.feed(Array<Mark>(15).fill('speech'));
+      h.turnTaking.observePartial(partial);
+      const emittedAt = await framesToEmit(h, 'silence', 100);
+      assert.equal(emittedAt, 15, `completed sentence endpoints at the floor: ${partial}`);
+    }
+  });
+
+  it('holds grouped digits past the pause while collecting the Patient phone', async () => {
+    const h = harness();
+    await h.feed(Array<Mark>(15).fill('speech'));
+    h.turnTaking.observeDialogueState(true, true);
+    h.turnTaking.observePartial('98765');
+    // 800 ms of silence: past the 600 ms dialogue floor, held by the open grouping.
+    await h.feed(Array<Mark>(40).fill('silence'));
+    assert.equal(h.utterances.length, 0, 'grouped digits do not endpoint mid-number');
+    h.turnTaking.observePartial('9876543210');
+    const emittedAt = await framesToEmit(h, 'silence', 100);
+    assert.equal(emittedAt, 1, 'the completed number endpoints at once');
+    assert.equal(h.utterances.length, 1);
+  });
+
+  it('endpoints a dictated name at the dialogue floor without the phone flag', async () => {
+    const h = harness();
+    await h.feed(Array<Mark>(15).fill('speech'));
+    // Name collection: the longer floor only, no grouping hold.
+    h.turnTaking.observeDialogueState(true);
+    h.turnTaking.observePartial('John Smith');
+    const emittedAt = await framesToEmit(h, 'silence', 100);
+    assert.equal(emittedAt, 30, 'name collection keeps the 600 ms floor');
+    assert.equal(h.utterances.length, 1);
+  });
+
+  it('holds a partial ending in an abbreviation past the floor', async () => {
+    const h = harness();
+    await h.feed(Array<Mark>(15).fill('speech'));
+    h.turnTaking.observePartial('I need to see Dr.');
+    await h.feed(Array<Mark>(20).fill('silence'));
+    assert.equal(h.utterances.length, 0, 'Dr. is not sentence-terminal');
+    await h.feed(Array<Mark>(10).fill('speech'));
+    h.turnTaking.observePartial('I need to see Dr. Smith');
+    const emittedAt = await framesToEmit(h, 'silence', 100);
+    assert.equal(emittedAt, 15, 'the finished thought ends at the adaptive floor');
+    assert.equal(h.utterances.length, 1, 'both speech runs belong to one Turn');
   });
 
   it('raises the floor to 600 ms while collecting the Patient name or phone', async () => {

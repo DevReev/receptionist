@@ -132,6 +132,15 @@ export class TurnTaking {
   private partial: PartialEvidence = emptyPartial();
   /** Latest partial of the utterance under capture, for semantic completeness. */
   private lastPartialText = '';
+  /**
+   * Audio frames heard, the sample-count clock partial staleness keys off.
+   * Durations here derive from sample counts, never wall-clock time.
+   */
+  private processedSamples = 0;
+  /** Clock value when the current boundary evidence arrived. */
+  private lastPartialAtSamples = 0;
+  /** While the Patient phone (not name) is collected, open groupings hold. */
+  private collectingPhone = false;
   /** Raised floor from dialogue field state; 0 unless collecting name or phone. */
   private dialogueFloorMs = 0;
   private speechAnnounced = false;
@@ -164,6 +173,7 @@ export class TurnTaking {
   }
 
   receiveAudio(mulaw: Buffer): Promise<void> {
+    if (mulaw.length > 0) this.processedSamples += mulaw.length;
     const run = this.tail.then(() => this.process(mulaw));
     this.tail = run.catch(() => {});
     return run;
@@ -220,10 +230,13 @@ export class TurnTaking {
   /**
    * Dialogue field state the local detector keys off: while the assistant
    * collects the Patient's name or phone the boundary floor rises so dictated
-   * names and grouped digits are not split across Turns.
+   * names and grouped digits are not split across Turns. `collectingPhone`
+   * marks the phone half of that state, where an open digit grouping holds
+   * the boundary past the pause; name collection keeps the floor alone.
    */
-  observeDialogueState(collecting: boolean): void {
+  observeDialogueState(collecting: boolean, collectingPhone = false): void {
     this.dialogueFloorMs = collecting ? HYBRID_DEFAULTS.dialogueFloorMs : 0;
+    this.collectingPhone = collecting && collectingPhone;
   }
 
   /**
@@ -233,7 +246,10 @@ export class TurnTaking {
    * listening they are also the completeness evidence for the boundary.
    */
   observePartial(text: string): void {
-    if (this.mode === 'listening') this.lastPartialText = text;
+    if (this.mode === 'listening') {
+      this.lastPartialText = text;
+      this.lastPartialAtSamples = this.processedSamples;
+    }
     if (this.mode !== 'watching-barge-in' || this.bargeInPending) return;
     const cls = classifyPartial(text);
     if (cls === 'unknown') return;
@@ -390,6 +406,9 @@ export class TurnTaking {
    * Whether the utterance under capture should end here. The local detector
    * waits out the Caller-adaptive pause plus the dialogue floor, with the
    * partial's semantic evidence holding it open only until the emergency cap.
+   * A partial that stopped updating is provider lag, not a mid-thought pause:
+   * past the staleness budget it counts as no evidence, so the adaptive pause
+   * owns the boundary instead of pinning it near the cap.
    */
   private listeningBoundaryDue(): boolean {
     const trailingMs = toMs(this.trailingSilenceSamples);
@@ -402,7 +421,8 @@ export class TurnTaking {
     );
     if (trailingMs < floorMs) return false;
     if (trailingMs >= HYBRID_DEFAULTS.emergencyMs) return true;
-    return isSemanticallyComplete(this.lastPartialText);
+    if (toMs(this.processedSamples - this.lastPartialAtSamples) > HYBRID_DEFAULTS.stalePartialMs) return true;
+    return isSemanticallyComplete(this.lastPartialText, { collectingPhone: this.collectingPhone });
   }
 
   private bufferedMs(): number {
@@ -562,6 +582,7 @@ export class TurnTaking {
     this.preRollSamples = 0;
     this.trailingSilenceSamples = 0;
     this.lastPartialText = '';
+    this.lastPartialAtSamples = this.processedSamples;
     this.clearCandidate();
   }
 }
