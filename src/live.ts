@@ -329,6 +329,16 @@ type SpeculationAbort =
   | 'call-closed';
 
 /**
+ * The cue word a speculation-abort trace may carry. Fixed-vocabulary cues
+ * (booking, date-time) and guide names are the clinic's own words and are
+ * safe; a digit cue is Caller text — a phone or date fragment — so it never
+ * reaches traces. The abort reason already records the evidence class.
+ */
+function traceCue(decision: SpeculationDecision): string | undefined {
+  return decision.reason === 'digits' ? undefined : decision.cue;
+}
+
+/**
  * A reply generation started from a partial, before the Turn's final. The
  * first token pull runs immediately so the model works while the Caller is
  * still speaking; the session either keeps this stream for the Turn or aborts
@@ -1035,7 +1045,7 @@ export class LiveCallSession {
     const decision = classifySpeculation(text, { names: this.cueNames });
     if (this.speculation) {
       if (!decision.speculative) {
-        this.abortSpeculation(this.speculation, 'booking-cue', decision.cue);
+        this.abortSpeculation(this.speculation, 'booking-cue', traceCue(decision));
       } else if (!partialAgrees(this.speculation.partial, text)) {
         this.abortSpeculation(this.speculation, 'rewritten');
         if (this.canSpeculate()) this.startSpeculation(text, decision);
@@ -1133,7 +1143,7 @@ export class LiveCallSession {
       component: 'call',
       event: 'speculation-aborted',
       reason,
-      cue,
+      ...(cue !== undefined ? { cue } : {}),
       chars: spec.partial.length,
       ms: Date.now() - spec.startedAt,
     });
@@ -1589,7 +1599,7 @@ export class LiveCallSession {
         this.abortSpeculation(
           speculation,
           !agrees ? 'final-mismatch' : finalDecision.speculative ? 'deterministic-turn' : 'booking-final',
-          finalDecision.speculative ? undefined : finalDecision.cue,
+          finalDecision.speculative ? undefined : traceCue(finalDecision),
         );
       }
     }

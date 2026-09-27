@@ -7,6 +7,8 @@ import type { Assistant, AssistantContext, BookingOutcome, TurnEvent } from '../
 import type { PartialTranscript, RealtimeStt } from '../src/realtimeStt.ts';
 import type { Tts } from '../src/tts.ts';
 import type { TraceEvent } from '../src/trace.ts';
+import { OpenAiRealtimeStt } from '../src/openaiRealtime.ts';
+import type { RealtimeSocket } from '../src/ws.ts';
 import type { PlaybackResult } from '../src/transport.ts';
 import { FRAME_BYTES, SILENCE_FRAME, SPEECH_FRAME, byteVad } from './fakeStream.ts';
 
@@ -515,6 +517,266 @@ describe('live speculative replies (ticket 09)', () => {
     const aborted = speculationEvents(h.traces, 'speculation-aborted');
     assert.equal(aborted.length, 1);
     assert.equal(aborted[0]!['reason'], 'empty-final');
+    h.live.close('test');
+  });
+});
+
+/** In-memory stand-in for the OpenAI Realtime websocket. No network. */
+class FakeProviderSocket implements RealtimeSocket {
+  readonly sent: string[] = [];
+  private openCb: (() => void) | null = null;
+  private messageCb: ((data: string) => void) | null = null;
+  private closeCb: ((code: number, reason: string) => void) | null = null;
+  private errorCb: ((err: Error) => void) | null = null;
+
+  send(data: string): void {
+    this.sent.push(data);
+  }
+
+  close(): void {}
+
+  onOpen(cb: () => void): void {
+    this.openCb = cb;
+  }
+
+  onMessage(cb: (data: string) => void): void {
+    this.messageCb = cb;
+  }
+
+  onClose(cb: (code: number, reason: string) => void): void {
+    this.closeCb = cb;
+  }
+
+  onError(cb: (err: Error) => void): void {
+    this.errorCb = cb;
+  }
+
+  peerOpen(): void {
+    this.openCb?.();
+  }
+
+  peerMessage(payload: unknown): void {
+    this.messageCb?.(JSON.stringify(payload));
+  }
+
+  sentTypes(): string[] {
+    return this.sent.map((entry) => (JSON.parse(entry) as { type?: string }).type ?? '');
+  }
+}
+
+function providerDelta(socket: FakeProviderSocket, itemId: string, delta: string): void {
+  socket.peerMessage({ type: 'conversation.item.input_audio_transcription.delta', item_id: itemId, delta });
+}
+
+function providerFinal(socket: FakeProviderSocket, itemId: string, transcript: string): void {
+  socket.peerMessage({
+    type: 'conversation.item.input_audio_transcription.completed',
+    item_id: itemId,
+    transcript,
+  });
+}
+
+function liveProviderSession(
+  callSid: string,
+  stt: RealtimeStt,
+  assistant: Assistant | undefined,
+  opts: {
+    finishPlayback?: () => Promise<PlaybackResult>;
+    onClear?: () => void;
+  } = {},
+): Harness {
+  const { tts, texts } = stubTts();
+  const calls = new CallStore();
+  const turns: TurnEvent[] = [];
+  const traces: TraceEvent[] = [];
+  const clears: string[] = [];
+  const proposals = { count: 0 };
+  const live = new LiveCallSession({
+    identity: { callSid, streamSid: `MZ${callSid}` },
+    sendAudio: () => {},
+    vad: byteVad,
+    policy: POLICY,
+    transcriber: { transcribe: async () => ({ text: 'rest transcript', noSpeech: false }) },
+    realtime: stt,
+    tts,
+    guide: GUIDE,
+    availability: () => Promise.resolve(AVAILABILITY),
+    assistant,
+    onProposeBooking: async () => {
+      proposals.count += 1;
+      return { ok: true } as BookingOutcome;
+    },
+    calls,
+    logTurn: (e) => turns.push(e),
+    trace: (e) => traces.push(e),
+    finishPlayback: opts.finishPlayback,
+    clearPlayback: (reason) => {
+      clears.push(reason);
+      opts.onClear?.();
+    },
+  });
+  return {
+    live,
+    stt: stt as FakeSpecStt,
+    calls,
+    texts,
+    turns,
+    traces,
+    clears,
+    get proposals() {
+      return proposals.count;
+    },
+    get availabilityReads() {
+      return 0;
+    },
+  };
+}
+
+/**
+ * One utterance against the real provider channel: Caller speech while the
+ * model streams cumulative deltas with lag, then the trailing silence that
+ * ends the Turn. The completed event stays withheld until the test sends it,
+ * so reply audio that lands first provably beat the final.
+ */
+async function speakProvider(socket: FakeProviderSocket, h: Harness, deltas: string[]): Promise<void> {
+  for (let i = 0; i < 20; i++) await h.live.receiveAudio(SPEECH_FRAME);
+  for (const [index, delta] of deltas.entries()) {
+    providerDelta(socket, 'item_1', delta);
+    if (index < deltas.length - 1) {
+      for (let i = 0; i < 2; i++) await h.live.receiveAudio(SPEECH_FRAME);
+    }
+  }
+  for (let i = 0; i < 15; i++) await h.live.receiveAudio(SILENCE_FRAME);
+}
+
+describe('live speculative replies against real provider lag (ticket 10)', () => {
+  it('answers from cumulative provider partials before the final lands and keeps on agreement', async () => {
+    const socket = new FakeProviderSocket();
+    const stt = new OpenAiRealtimeStt({
+      config: {
+        apiKey: 'sk-openai',
+        url: 'wss://api.openai.com/v1/realtime?intent=transcription',
+        model: 'gpt-live-transcribe',
+        delay: 'minimal',
+      },
+      connect: () => socket,
+    });
+    socket.peerOpen();
+    const { assistant, calls: assistantCalls } = scriptedAssistant(() => 'We are open Monday to Friday.');
+    const h = liveProviderSession('CAspecLive1', stt, assistant);
+
+    await speakProvider(socket, h, ['what are', ' your', ' hours']);
+
+    await waitFor(() => h.texts.length > 0, 'reply audio before the final');
+    assert.ok(socket.sentTypes().includes('input_audio_buffer.commit'), 'the Turn committed while the final was in flight');
+    assert.equal(speculationEvents(h.traces, 'speculation-start').length, 1);
+    assert.deepEqual(h.texts, ['We are open Monday to Friday.']);
+
+    providerFinal(socket, 'item_1', 'what are your hours');
+    await h.live.flush();
+    await waitFor(() => h.live.currentPhase === 'LISTENING', 'listening after the reply');
+
+    assert.equal(assistantCalls.length, 1, 'the agreed speculation is kept, not regenerated');
+    assert.equal(assistantCalls[0]!.speculative, true);
+    assert.equal(h.clears.length, 0, 'nothing was cancelled');
+    assert.equal(h.turns.length, 1);
+    assert.equal(h.turns[0]!.excerpt, 'what are your hours');
+    assert.equal(h.turns[0]!.reply, 'We are open Monday to Friday.');
+    assert.deepEqual(
+      h.calls.get('CAspecLive1').history.map((entry) => `${entry.role}:${entry.text}`),
+      ['caller:what are your hours', 'receptionist:We are open Monday to Friday.'],
+    );
+    assert.equal(speculationEvents(h.traces, 'speculation-kept').length, 1);
+    assert.equal(
+      JSON.stringify(h.traces).includes('what are your hours'),
+      false,
+      'raw partial text never reaches traces',
+    );
+    assert.equal(h.proposals, 0, 'no Booking write ran');
+    h.live.close('test');
+  });
+
+  it('aborts the provider-channel speculation on a mismatched final and regenerates', async () => {
+    const socket = new FakeProviderSocket();
+    const stt = new OpenAiRealtimeStt({
+      config: {
+        apiKey: 'sk-openai',
+        url: 'wss://api.openai.com/v1/realtime?intent=transcription',
+        model: 'gpt-live-transcribe',
+        delay: 'minimal',
+      },
+      connect: () => socket,
+    });
+    socket.peerOpen();
+    const { assistant, calls: assistantCalls } = scriptedAssistant((ctx) =>
+      ctx.transcript.includes('located') ? 'We are on Main Street.' : 'We are open Monday to Friday.',
+    );
+    const barrier = playbackBarrier();
+    const h = liveProviderSession('CAspecLive2', stt, assistant, {
+      finishPlayback: barrier.finishPlayback,
+      onClear: barrier.clear,
+    });
+
+    await speakProvider(socket, h, ['what are', ' your', ' hours']);
+    await waitFor(() => h.texts.length > 0, 'speculative reply audio');
+
+    providerFinal(socket, 'item_1', 'where is the clinic located');
+    await waitFor(() => h.clears.length >= 1, 'the speculative playback is cleared');
+    barrier.release();
+    await h.live.flush();
+    await waitFor(() => h.live.currentPhase === 'LISTENING', 'listening after the regenerated reply');
+
+    assert.equal(assistantCalls.length, 2, 'the mismatch regenerates from the final');
+    assert.equal(assistantCalls[1]!.transcript, 'where is the clinic located');
+    assert.notEqual(assistantCalls[1]!.speculative, true);
+    assert.deepEqual(h.texts, ['We are open Monday to Friday.', 'We are on Main Street.']);
+    assert.deepEqual(
+      h.calls.get('CAspecLive2').history.map((entry) => `${entry.role}:${entry.text}`),
+      ['caller:where is the clinic located', 'receptionist:We are on Main Street.'],
+    );
+    assert.ok(
+      h.calls.get('CAspecLive2').history.every((entry) => !entry.text.includes('Monday to Friday')),
+      'no speculative text reaches history',
+    );
+    assert.equal(h.turns.length, 1);
+    assert.equal(h.turns[0]!.reply, 'We are on Main Street.');
+    const aborted = speculationEvents(h.traces, 'speculation-aborted');
+    assert.equal(aborted.length, 1);
+    assert.equal(aborted[0]!['reason'], 'final-mismatch');
+    assert.equal(h.proposals, 0, 'no Booking write ran');
+    h.live.close('test');
+  });
+
+  it('never traces a digit cue from a Caller number fragment', async () => {
+    const stt = new FakeSpecStt();
+    const { assistant } = scriptedAssistant(() => 'What number was that?');
+    const h = liveSession('CAspecLive3', { stt, assistant });
+
+    for (let i = 0; i < 20; i++) await h.live.receiveAudio(SPEECH_FRAME);
+    stt.partial('my number is');
+    assert.equal(speculationEvents(h.traces, 'speculation-start').length, 1);
+    stt.partial('my number is 9876543210');
+
+    const aborted = speculationEvents(h.traces, 'speculation-aborted');
+    assert.equal(aborted.length, 1);
+    assert.equal(aborted[0]!['reason'], 'booking-cue');
+    assert.equal('cue' in aborted[0]!, false, 'a digit cue never reaches the trace');
+    assert.equal(
+      JSON.stringify(h.traces).includes('9876543210'),
+      false,
+      'the Caller number fragment never reaches traces',
+    );
+
+    await feed(h.live, 15);
+    stt.resolveFinal('my number is 9876543210');
+    await h.live.flush();
+    await waitFor(() => h.live.currentPhase === 'LISTENING', 'listening after the reply');
+    assert.equal(h.turns.length, 1);
+    assert.equal(
+      JSON.stringify(h.traces).includes('9876543210'),
+      false,
+      'the final digits never reach traces either',
+    );
     h.live.close('test');
   });
 });

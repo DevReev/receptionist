@@ -129,3 +129,39 @@ describe('partial/final agreement (ticket 09)', () => {
     assert.equal(partialAgrees('what are your hours', ''), false);
   });
 });
+
+describe('partial/final agreement against real provider lag (ticket 10)', () => {
+  it('keeps through cumulative-prefix growth: short partials extend into the final', () => {
+    // Realtime deltas accumulate per conversation item, so live partials are
+    // prefixes the final extends. Every growth step agrees.
+    assert.equal(partialAgrees('what are', 'what are your hours'), true);
+    assert.equal(partialAgrees('what are your', 'what are your hours'), true);
+    assert.equal(partialAgrees('what are your hours', 'what are your hours please'), true);
+  });
+
+  it('keeps through final normalization and insertions', () => {
+    assert.equal(partialAgrees('what are your hours', 'What are your hours?'), true);
+    assert.equal(partialAgrees('what are your hours', 'what are your opening hours'), true);
+  });
+
+  it('aborts on a corrected word in a short partial, the safe direction', () => {
+    // One substituted word in four changes the overlap below the bar, so a
+    // same-meaning ASR correction ("our" for "your") regenerates rather than
+    // risk keeping a reply built on a reworded ("fees" for "hours") question.
+    assert.equal(partialAgrees('what are our hours', 'what are your hours'), false);
+    assert.equal(partialAgrees('what are your hours', 'what are your fees'), false);
+  });
+
+  it('aborts when the final is reworded past recognition', () => {
+    assert.equal(partialAgrees('where are you located', 'where is the clinic located'), false);
+  });
+
+  it('never keeps a booking-sensitive final, even when it extends the partial', () => {
+    // Lexically the final carries the partial forward, but the keep path also
+    // requires the final itself to classify non-booking.
+    assert.equal(partialAgrees('can i ask you something', 'can i ask you something to reschedule'), true);
+    assert.equal(classifySpeculation('can i ask you something to reschedule').speculative, false);
+    assert.equal(partialAgrees('what are your hours', 'what are your hours tomorrow'), true);
+    assert.equal(classifySpeculation('what are your hours tomorrow').speculative, false);
+  });
+});
