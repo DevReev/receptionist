@@ -140,7 +140,10 @@ describe('list-continuation cues (ticket 12)', () => {
   it('flags only partials that frame a larger list or question pair', () => {
     const cued = [
       'I also wanted to ask about the fee',
+      'I also wanted to ask about the fee and whether you have parking',
       'I have another question about parking',
+      'I have both the fee and parking questions',
+      'I need the fee plus parking info',
       'my first question is about the fee',
       'my second question is about parking',
       'do you have parking as well',
@@ -160,6 +163,20 @@ describe('list-continuation cues (ticket 12)', () => {
     ];
     for (const text of uncued) {
       assert.equal(hasListContinuationCue(text), false, `uncued: ${text}`);
+    }
+  });
+
+  it('ignores lone cue words in finished singletons (ticket 15)', () => {
+    // An additive without list framing is a finished thought, not an open
+    // list: no extra hold past the adaptive floor.
+    const singletons = [
+      'I also need to cancel',
+      'I take both medications',
+      'I need another appointment',
+      'plus I need to cancel',
+    ];
+    for (const text of singletons) {
+      assert.equal(hasListContinuationCue(text), false, `singleton: ${text}`);
     }
   });
 });

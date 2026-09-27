@@ -267,4 +267,15 @@ describe('hybrid detector boundaries', () => {
     assert.equal(emittedAt, 15, 'no list cue, no extra hold');
     assert.equal(h.utterances.length, 1);
   });
+
+  it('endpoints finished singletons carrying lone cue words at the floor (ticket 15)', async () => {
+    for (const partial of ['I also need to cancel', 'I take both medications']) {
+      const h = harness();
+      await h.feed(Array<Mark>(15).fill('speech'));
+      h.turnTaking.observePartial(partial);
+      const emittedAt = await framesToEmit(h, 'silence', 100);
+      assert.equal(emittedAt, 15, `lone cue word, no extra hold: ${partial}`);
+      assert.equal(h.utterances.length, 1);
+    }
+  });
 });

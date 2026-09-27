@@ -1026,5 +1026,21 @@ export function defaultTurnBenchScenarios(echoVariants: EchoVariant[] = DEFAULT_
         await ctx.silence(120);
       },
     },
+    {
+      // Ticket 15 contrast: finished singletons that merely contain a cue
+      // word ("also", "both") endpoint at the normal floor — no 800 ms list
+      // hold. Both replies land near the adaptive floor, while the mid-list
+      // pause above still costs its one bounded beat.
+      // Appended last so the fixture-indexed scenarios above keep their audio.
+      name: 'singleton-cue-sentence',
+      run: async (ctx) => {
+        await ctx.call('I also need to cancel', 80);
+        await ctx.awaitReply();
+        await ctx.silence(120);
+        await ctx.call('I take both medications', 80);
+        await ctx.awaitReply();
+        await ctx.silence(120);
+      },
+    },
   ];
 }

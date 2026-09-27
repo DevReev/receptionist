@@ -391,22 +391,39 @@ function isOpenPhoneGrouping(trimmed: string, raw: string): boolean {
 }
 
 /**
- * Words that frame a partial as one item of a larger list or question pair:
- * additives ("also", "another", "both", "plus"), enumerators ("first",
- * "second", "third"), and the plural ("questions"). Deliberately narrow:
- * single-question phrasing ("I wanted to ask about the fee", "do you have
- * parking") carries none of these and endpoints at the floor. Bare "and" is
- * excluded on purpose: mid-list it arrives with the continuation ("... and
+ * Words that frame a partial as one item of a larger list or question pair
+ * on their own: enumerators awaiting a sibling ("first", "second", "third")
+ * and the plural ("questions", as in "I have two questions"). Deliberately
+ * narrow: single-question phrasing ("I wanted to ask about the fee", "do you
+ * have parking") carries none of these and endpoints at the floor. Bare "and"
+ * is excluded on purpose: mid-list it arrives with the continuation ("... and
  * whether ..."), so it cannot predict one, and elsewhere it joins single
  * items ("the fee and parking").
  */
-const LIST_CONTINUATION_TOKENS: ReadonlySet<string> = new Set([
-  'also',
-  'additionally',
-  'another',
-  'both',
-  'plus',
+const LIST_CONTINUATION_TOKENS: ReadonlySet<string> = new Set(['questions', 'first', 'second', 'third']);
+
+/**
+ * Additives that only frame a list together with question-pair structure:
+ * "also" in "I also wanted to ask about the fee" projects the pair, while a
+ * lone "also" in "I also need to cancel" closes a finished singleton.
+ */
+const LIST_ADDITIVE_TOKENS: ReadonlySet<string> = new Set(['also', 'additionally', 'another']);
+
+/**
+ * The question-pair structure an additive needs to project more list:
+ * question framing ("ask", "question", "wondering", "whether") or an
+ * enumerator awaiting its sibling.
+ */
+const LIST_FRAME_TOKENS: ReadonlySet<string> = new Set([
+  'ask',
+  'asked',
+  'asking',
+  'asks',
+  'question',
   'questions',
+  'wonder',
+  'wondering',
+  'whether',
   'first',
   'second',
   'third',
@@ -420,11 +437,28 @@ const LIST_CONTINUATION_PHRASES: ReadonlyArray<readonly string[]> = [['as', 'wel
  * pair. A hold cue only, never completeness evidence: a complete sentence
  * with one of these holds the boundary one extra bounded beat past the floor
  * so a mid-list pause ("I also wanted to ask about the fee — [pause] — and
- * whether you have parking") stays one Turn. Empty text carries no cue.
+ * whether you have parking") stays one Turn. Empty text carries no cue. The
+ * cue is positional: an additive ("also", "another") counts only beside
+ * question-pair structure, "both" only with its "and" sibling, and "plus"
+ * only joining or trailing (never sentence-initial), so finished singletons
+ * ("I also need to cancel", "I take both medications") endpoint at the floor.
  */
 export function hasListContinuationCue(text: string): boolean {
   const tokens = tokenize(text);
+  if (tokens.length === 0) return false;
   if (tokens.some((token) => LIST_CONTINUATION_TOKENS.has(token))) return true;
+  if (
+    tokens.some((token) => LIST_ADDITIVE_TOKENS.has(token)) &&
+    tokens.some((token) => LIST_FRAME_TOKENS.has(token))
+  ) {
+    return true;
+  }
+  // "both" frames a pair only with its sibling ("both the fee and parking");
+  // a lone "both" ("I take both medications") is a finished singleton.
+  if (tokens.includes('both') && tokens.includes('and')) return true;
+  // "plus" frames more list only joining two items or trailing with more to
+  // come ("the fee plus parking"); sentence-initial it opens no structure.
+  if (tokens.indexOf('plus') > 0) return true;
   return LIST_CONTINUATION_PHRASES.some((phrase) => {
     if (phrase.length > tokens.length) return false;
     for (let i = 0; i + phrase.length <= tokens.length; i++) {
@@ -432,6 +466,18 @@ export function hasListContinuationCue(text: string): boolean {
     }
     return false;
   });
+}
+
+/**
+ * Dialogue field-collection state travelling from the controller to the local
+ * detector: whether the Patient's name or phone is being collected, and the
+ * phone half of that state (name settled, number still open), where an open
+ * digit grouping holds the boundary past the pause. Name collection keeps the
+ * floor alone.
+ */
+export interface FieldCollection {
+  collecting?: boolean;
+  collectingPhone?: boolean;
 }
 
 /**
