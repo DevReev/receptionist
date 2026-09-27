@@ -906,12 +906,12 @@ export class LiveCallSession {
         const audioDrain = (async () => {
           try {
             for await (const chunk of response.audio()) {
-              if (this.closed || speech.cancelled || generation !== this.generation) return;
+              if (this.closed || speech.cancelled || generation <= this.cancelledThrough) return;
               this.sendResponseAudio(generation, chunk);
               if (collect) chunks.push(chunk);
             }
           } catch (err) {
-            if (speech.cancelled || generation !== this.generation) return;
+            if (speech.cancelled || generation <= this.cancelledThrough) return;
             throw err;
           }
         })();
@@ -920,7 +920,7 @@ export class LiveCallSession {
         await audioDrain;
         if (collect && chunks.length > 0) this.fixedCache?.set(text, Buffer.concat(chunks));
       }
-      if (speech.cancelled || this.closed || generation !== this.generation) return;
+      if (speech.cancelled || this.closed || generation <= this.cancelledThrough) return;
       const result = await this.finishPlayback(generation);
       if (result.outcome === 'cleared') {
         this.onCleared(speech, result.reason);
@@ -2096,14 +2096,14 @@ export class LiveCallSession {
         let fullReply = '';
         const audioDrain = (async () => {
           for await (const chunk of response.audio()) {
-            if (this.closed || speech.cancelled || generation !== this.generation) return;
+            if (this.closed || speech.cancelled || generation <= this.cancelledThrough) return;
             this.sendResponseAudio(generation, chunk);
           }
         })();        let streamError: Error | undefined;
         try {
           let next = first;
           while (!next.done) {
-            if (this.closed || speech.cancelled || generation !== this.generation) break;
+            if (this.closed || speech.cancelled || generation <= this.cancelledThrough) break;
             const token = next.value;
             if (token) {
               if (!firstToken) {
@@ -2124,7 +2124,7 @@ export class LiveCallSession {
             streamError = err instanceof Error ? err : new Error(String(err));
           }
         }
-        if (this.closed || speech.cancelled || generation !== this.generation) {
+        if (this.closed || speech.cancelled || generation <= this.cancelledThrough) {
           response.cancel('generation-cancelled');
           return { text: fullReply, generation };
         }
@@ -2138,7 +2138,7 @@ export class LiveCallSession {
           throw new Error(ttsDetail(err));
         }
         if (streamError) throw streamError;
-        if (this.closed || speech.cancelled || generation !== this.generation) return { text: fullReply, generation };
+        if (this.closed || speech.cancelled || generation <= this.cancelledThrough) return { text: fullReply, generation };
         const result = await this.finishPlayback(generation);
         if (result.outcome === 'cleared') {
           this.onCleared(speech, result.reason);
