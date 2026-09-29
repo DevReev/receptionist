@@ -7,6 +7,7 @@ _Avoid_: caller, customer
 - **Clinic guide** (`clinic.md`): hand-edited source of truth for human-facing hours / locations / services+fees / doctors / booking rules / emergency boundary / FAQs. Live availability still comes only from Picktime. Never use it as a substitute for a live Slot.
 - **Availability**: the set of bookable Slots. Read from the Picktime page only.
 - **Slot**: a single live bookable date/time for one service + doctor + Location.
+- **Slot range**: a run of consecutive Slots at one Location on one day; the unit Availability is offered to the Caller in.
 - **Location**: a Picktime booking venue, such as Bobby Clinic or Bobby Hospital; it is required when creating a Booking and may filter Availability.
 - **Hold**: a temporary reservation of a Slot that expires unless confirmed into a Booking.
 _Avoid_: lock, block
