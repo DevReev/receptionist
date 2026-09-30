@@ -116,6 +116,8 @@ export interface Config {
   sarvam: SarvamEnv;
   /** Picktime Tool API the assistant reads Availability from and books through. */
   appointments: AppointmentsEnv;
+  /** Clone REST API a flipped Location books through (spec §10 parallel run). */
+  cloneBookings: { baseUrl: string };
   llmApiKey: string;
   /** Assistant primary/fallback routing: Groq gpt-oss first, OpenRouter fallback. */
   assistant: AssistantEnv;
@@ -292,6 +294,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     appointments: {
       baseUrl: optional(env, 'APPOINTMENTS_API_URL', 'https://receptionist-3r3d.onrender.com'),
       windowWorkingDays: appointmentsWindowWorkingDays,
+    },
+    cloneBookings: {
+      baseUrl: optional(env, 'BOOKING_API_URL', 'http://127.0.0.1:3101'),
     },
     sarvam: {
       apiKey: sarvamApiKey,

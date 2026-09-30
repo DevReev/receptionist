@@ -20,8 +20,10 @@ import {
 } from './app.ts';
 import { FallbackAssistant } from './assistantFallback.ts';
 import { AppointmentsClient } from './appointments.ts';
+import { CloneBookingsClient } from './cloneBookings.ts';
 import { CallStore } from './calls.ts';
 import { deriveSttPrompt, loadClinicGuide, type ClinicGuide } from './clinic.ts';
+import { resolveBookingTarget } from './routing.ts';
 import { loadConfig, type Config } from './config.ts';
 import { LOCAL_ENDPOINT_FALLBACKS, type EndpointPolicy } from './endpoint.ts';
 import { FixedAudioCache } from './fixedAudio.ts';
@@ -302,6 +304,12 @@ export async function main(): Promise<void> {
       console.log(JSON.stringify({ ts: new Date().toISOString(), ...event }));
     },
   });
+  const cloneBookings = new CloneBookingsClient({
+    clone: config.cloneBookings,
+    onEvent: (event) => {
+      console.log(JSON.stringify({ ts: new Date().toISOString(), ...event }));
+    },
+  });
   const proposeBooking = async (args: {
     callSid: string;
     turn: number;
@@ -311,12 +319,26 @@ export async function main(): Promise<void> {
     // No patient name/phone in logs: identity stays in the Turn excerpt.
     const { service, location, date, time } = args.slot;
     const started = Date.now();
+    // Parallel-run routing (spec §10): the clinic guide toggle decides which
+    // system books this Location. A flipped Location writes to the clone;
+    // everything else keeps the Picktime path. The guide file is tiny, so a
+    // flip takes effect on the next booking with no restart.
+    let target: 'picktime' | 'clone' = 'picktime';
+    try {
+      target = resolveBookingTarget((await loadClinicGuide(config.guidePath)).raw, location);
+    } catch {
+      target = 'picktime';
+    }
     console.log(
-      JSON.stringify({ ts: new Date().toISOString(), kind: 'booking', event: 'start', callSid: args.callSid, turn: args.turn, service, location, date, time }),
+      JSON.stringify({ ts: new Date().toISOString(), kind: 'booking', event: 'start', callSid: args.callSid, turn: args.turn, service, location, date, time, target }),
     );
-    const outcome = await appointments.book(args.slot, {
-      idempotencyKey: `${args.callSid}:${args.slot.location}:${args.slot.date}T${args.slot.time}`,
-    });
+    const idempotencyKey = `${args.callSid}:${args.slot.location}:${args.slot.date}T${args.slot.time}`;
+    const outcome =
+      target === 'clone'
+        ? await cloneBookings.book(args.slot, { idempotencyKey })
+        : await appointments.book(args.slot, {
+          idempotencyKey,
+        });
     console.log(
       JSON.stringify({
         ts: new Date().toISOString(),

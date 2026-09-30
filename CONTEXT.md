@@ -5,15 +5,15 @@
 _Avoid_: caller, customer
 - **Receptionist**: the system (Twilio number → STT → LLM → TTS → Picktime automation).
 - **Clinic guide** (`clinic.md`): hand-edited source of truth for human-facing hours / locations / services+fees / doctors / booking rules / emergency boundary / FAQs. Live availability still comes only from Picktime. Never use it as a substitute for a live Slot.
-- **Availability**: the set of bookable Slots. Read from the Picktime page only.
+- **Availability**: the set of bookable Slots. Read live per Location — Picktime page or clone API, per the `## Locations` routing toggle in the clinic guide.
 - **Slot**: a single live bookable date/time for one service + doctor + Location.
 - **Slot range**: a run of consecutive Slots at one Location on one day; the unit Availability is offered to the Caller in.
-- **Location**: a Picktime booking venue, such as Bobby Clinic or Bobby Hospital; it is required when creating a Booking and may filter Availability.
+- **Location**: a booking venue, such as Bobby Clinic or Bobby Hospital; it is required when creating a Booking and may filter Availability. Each Location carries a routing target (`picktime` | `clone`) in the clinic guide's `## Locations` toggle — the rule for which system books it during parallel run.
 - **Hold**: a temporary reservation of a Slot that expires unless confirmed into a Booking.
 _Avoid_: lock, block
 - **Dry run**: a hold+release check that never saves.
 _Avoid_: test booking
-- **Booking**: confirmed appointment. Written via Picktime page automation (no public Picktime API). Public operation name: `book_appointment`.
+- **Booking**: confirmed appointment. Written through the routed system — Picktime page automation or the clone API (hold → confirm). Public operation name: `book_appointment`.
 - **Picktime page**: the single configured booking page from env for v1; it currently exposes one service, one doctor, and two Locations.
 - **Endpointing**: deciding the caller has stopped speaking; the Receptionist replies only after it. The local detector always owns it: the Caller-adaptive pause plus partial-transcript completeness.
 _Avoid_: silence timeout

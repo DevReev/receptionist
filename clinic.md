@@ -14,8 +14,8 @@
 
 ## Locations
 
-- **Bobby Clinic** — Picktime label: `Bobby Clinic, Bobby Clinic, Bangalore`.
-- **Bobby Hospital** — Picktime label: `Bobby Hospital, Bobby Hospital, Bangalore`.
+- **Bobby Clinic** — Picktime label: `Bobby Clinic, Bobby Clinic, Bangalore` — books on: picktime.
+- **Bobby Hospital** — Picktime label: `Bobby Hospital, Bobby Hospital, Bangalore` — books on: picktime.
 - Picktime did not provide a more detailed street address, landmark, or contact number in the directory response. Do not invent one.
 
 ## Hours and availability
