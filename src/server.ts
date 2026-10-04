@@ -20,6 +20,7 @@ import {
 } from './app.ts';
 import { FallbackAssistant } from './assistantFallback.ts';
 import { AppointmentsClient } from './appointments.ts';
+import { createAvailabilityReader } from './availability.ts';
 import { CloneBookingsClient } from './cloneBookings.ts';
 import { CallStore } from './calls.ts';
 import { deriveSttPrompt, loadClinicGuide, type ClinicGuide } from './clinic.ts';
@@ -310,6 +311,19 @@ export async function main(): Promise<void> {
       console.log(JSON.stringify({ ts: new Date().toISOString(), ...event }));
     },
   });
+  // Availability fan-out (ticket 01): per-Location routing like the booking
+  // write — clone Locations read the clone's GET /availability day-by-day,
+  // Picktime Locations keep the Picktime block. Fail-closed to Picktime on a
+  // guide read error, so a bad edit never silences availability.
+  const readAvailability = createAvailabilityReader({
+    appointments,
+    clone: cloneBookings,
+    loadGuideRaw: () => loadClinicGuide(config.guidePath).then((g) => g.raw),
+    windowWorkingDays: config.appointments.windowWorkingDays,
+    onEvent: (event) => {
+      console.log(JSON.stringify({ ts: new Date().toISOString(), ...event }));
+    },
+  });
   const proposeBooking = async (args: {
     callSid: string;
     turn: number;
@@ -381,7 +395,7 @@ export async function main(): Promise<void> {
       accountSid: config.twilioAccountSid,
       authToken: config.twilioAuthToken,
     }),
-    availability: () => appointments.availabilityBlock(),
+    availability: readAvailability,
     logFailure,
     logTurn,
     onProposeBooking: proposeBooking,
@@ -432,7 +446,7 @@ export async function main(): Promise<void> {
             guide,
             loadGuide: () => loadClinicGuide(config.guidePath),
             assistant: liveAssistant,
-            availability: () => appointments.availabilityBlock(),
+            availability: readAvailability,
             holdAfterMs: config.speakHoldMs,
             noResponseMs: config.noResponseMs,
             availabilityTimeoutMs: config.appointmentsWaitMs,

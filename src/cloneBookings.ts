@@ -28,7 +28,7 @@ interface NamedRow {
   display_name?: string | null;
 }
 
-interface AvailabilitySlot {
+export interface CloneAvailabilitySlot {
   start_utc: string;
   local_int: string;
   timezone: string;
@@ -112,6 +112,51 @@ export class CloneBookingsClient {
     this.onEvent?.({ kind: 'clone-bookings', ...event });
   }
 
+  /** Public catalogue read: all clone Locations (`GET /locations`). */
+  async listLocations(): Promise<NamedRow[]> {
+    const locations = envelopeData((await getJson(this.fetchFn, `${this.baseUrl}/locations`)).json);
+    return Array.isArray(locations) ? (locations as NamedRow[]) : [];
+  }
+
+  /** Public catalogue read: roster rows for one clone Location. */
+  async listDoctors(locationId: string): Promise<NamedRow[]> {
+    const raw = await getJson(this.fetchFn, `${this.baseUrl}/locations/${locationId}/doctors`);
+    const roster = envelopeData(raw.json);
+    return Array.isArray(roster) ? (roster as NamedRow[]) : [];
+  }
+
+  /** Public catalogue read: Procedures for one clone Location. */
+  async listProcedures(locationId: string): Promise<NamedRow[]> {
+    const raw = await getJson(this.fetchFn, `${this.baseUrl}/locations/${locationId}/procedures`);
+    const procedures = envelopeData(raw.json);
+    return Array.isArray(procedures) ? (procedures as NamedRow[]) : [];
+  }
+
+  /**
+   * One day of clone availability: `GET /availability` for a single
+   * Location + roster + Procedure + date. Returns the wire's
+   * `local_int + timezone` Slots (plus slot-ranges upstream); empty when
+   * closed or unparsable. This is the same read the booking re-check uses.
+   */
+  async fetchDaySlots(
+    locationId: string,
+    rosterId: string,
+    procedureId: string,
+    date: string,
+  ): Promise<CloneAvailabilitySlot[]> {
+    const availUrl =
+      `${this.baseUrl}/availability?location_id=${encodeURIComponent(locationId)}` +
+      `&roster_id=${encodeURIComponent(rosterId)}` +
+      `&procedure_id=${encodeURIComponent(procedureId)}` +
+      `&date=${encodeURIComponent(date)}`;
+    const avail = await getJson(this.fetchFn, availUrl);
+    const availData = envelopeData(avail.json) as { slots?: CloneAvailabilitySlot[] } | null;
+    const slots = Array.isArray(availData?.slots) ? availData!.slots! : [];
+    return slots.filter(
+      (s) => typeof s?.local_int === 'string' && typeof s?.start_utc === 'string',
+    );
+  }
+
   /**
    * Book one slot on the clone: resolve Location → roster → Procedure by
    * name, re-check the requested time against live availability, then
@@ -119,8 +164,8 @@ export class CloneBookingsClient {
    */
   async book(slot: ProposedSlot, opts: { idempotencyKey: string }): Promise<BookingOutcome> {
     try {
-      const locations = envelopeData((await getJson(this.fetchFn, `${this.baseUrl}/locations`)).json);
-      if (!Array.isArray(locations)) {
+      const locations = await this.listLocations();
+      if (locations.length === 0) {
         return { ok: false, reason: 'the booking system could not be reached; the clinic will confirm shortly' };
       }
       const location = (locations as NamedRow[]).find((l) =>
@@ -131,37 +176,28 @@ export class CloneBookingsClient {
         return { ok: false, reason: `unknown location; ask the caller to choose ${names}` };
       }
 
-      const [rosterRaw, proceduresRaw] = await Promise.all([
-        getJson(this.fetchFn, `${this.baseUrl}/locations/${location.id}/doctors`),
-        getJson(this.fetchFn, `${this.baseUrl}/locations/${location.id}/procedures`),
+      const [roster, procedures] = await Promise.all([
+        this.listDoctors(location.id),
+        this.listProcedures(location.id),
       ]);
-      const roster = envelopeData(rosterRaw.json);
-      const procedures = envelopeData(proceduresRaw.json);
-      if (!Array.isArray(roster) || roster.length === 0 || !Array.isArray(procedures)) {
+      if (roster.length === 0 || procedures.length === 0) {
         return { ok: false, reason: 'the booking system could not complete that; the clinic will confirm shortly' };
       }
       // No auto-select (spec §2, Picktime `auto_select_staff:false`
       // precedent): with several roster rows the caller must choose — the
       // voice dialogue asks, mirroring the Picktime `pick-a-doctor` contract.
-      if ((roster as NamedRow[]).length > 1) {
+      if (roster.length > 1) {
         return { ok: false, reason: 'more than one doctor is live; ask the caller which doctor they want' };
       }
-      const doctor = (roster as NamedRow[])[0]!;
-      const procedure = (procedures as NamedRow[]).find((p) =>
+      const doctor = roster[0]!;
+      const procedure = procedures.find((p) =>
         nameMatches(String(p.name ?? ''), slot.service),
       );
       if (!procedure) {
         return { ok: false, reason: 'unknown service; offer only the services listed in the clinic guide' };
       }
 
-      const availUrl =
-        `${this.baseUrl}/availability?location_id=${encodeURIComponent(location.id)}` +
-        `&roster_id=${encodeURIComponent(doctor.id)}` +
-        `&procedure_id=${encodeURIComponent(procedure.id)}` +
-        `&date=${encodeURIComponent(slot.date)}`;
-      const avail = await getJson(this.fetchFn, availUrl);
-      const availData = envelopeData(avail.json) as { slots?: AvailabilitySlot[] } | null;
-      const slots = Array.isArray(availData?.slots) ? availData!.slots! : [];
+      const slots = await this.fetchDaySlots(location.id, doctor.id, procedure.id, slot.date);
       const wantHm = normalizeTime(slot.time).replace(':', '');
       const match = slots.find((s) => s.local_int.endsWith(wantHm));
       if (!match) {
